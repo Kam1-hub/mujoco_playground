@@ -82,6 +82,7 @@ packages = ["g1_env", "learning"]
 train-g1-jax = "learning.train_jax_ppo:run"
 train-g1-rsl = "learning.train_rsl_rl:run"
 train-g1-sac-brax = "learning.train_jax_sac_brax:run"
+train-g1-sac = "learning.train_jax_sac_lift:run"
 
 [tool.ruff]
 lint.select = [
