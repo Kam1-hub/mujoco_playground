@@ -38,6 +38,8 @@
 | `python scripts\check_g1_env_api.py --env_name G1JoystickRoughTerrain` | BLOCKED_BY_DEPENDENCY | Failed at `import jax`; full traceback below. |
 | `.\.venv\Scripts\python.exe scripts\check_g1_env_api.py --env_name G1JoystickFlatTerrain` | BLOCKED_BY_DEPENDENCY | Imports/config/registry pass; `registry.load` blocked because `mujoco_menagerie` is absent and download is not allowed by default. |
 | `.\.venv\Scripts\python.exe scripts\check_g1_env_api.py --env_name G1JoystickRoughTerrain` | BLOCKED_BY_DEPENDENCY | Same as flat env. |
+| `.\.venv\Scripts\python.exe -c "import g1_env; from g1_env import registry; print(registry.ALL_ENVS)"` | PASS | Printed `('G1JoystickFlatTerrain', 'G1JoystickRoughTerrain')`. |
+| `.\.venv\Scripts\python.exe -c "from g1_env import registry; c=registry.get_default_config(...); ..."` | PASS | Printed `0.02 0.002 1000 1 0.5 warp`. |
 | `python -m compileall scripts` | PASS | `scripts/check_g1_env_api.py` compiled successfully. |
 
 ## Results
@@ -57,7 +59,7 @@
 - obs type: dict, static.
 - obs keys: `state`, `privileged_state`, static.
 - state shape: statically `3 + 3 + 3 + 3 + 29 + 29 + 29 + 4 = 103`.
-- privileged_state shape: statically `state(103) + gyro(3) + accelerometer(3) + gravity(3) + linvel(3) + global_angvel(3) + joint_angles(29) + joint_vel(29) + root_height(1) + actuator_force(29) + contact(2) + feet_vel(12) + feet_air_time(2) = 221`.
+- privileged_state shape: statically likely `state(103) + gyro(3) + accelerometer(3) + gravity(3) + linvel(3) + global_angvel(3) + joint_angles(29) + joint_vel(29) + root_height(1) + actuator_force(29) + contact(2) + feet_vel(6) + feet_air_time(2) = 216`. Runtime not validated. The source comment says `4*3` for `feet_vel`, but constants/XML define two feet linear-velocity sensors.
 - replay transition shape: NOT VALIDATED until SAC replay implementation.
 
 ## Runtime Metrics
@@ -77,6 +79,7 @@
 - Domain randomization: both G1 envs have `g1_randomize.domain_randomize` registered.
 - Actor obs: `obs["state"]` is the correct default.
 - Critic obs: `obs["privileged_state"]` is available statically and should be the default for Route B.
+- Runtime-light registry/config probes pass under `.venv`; full `registry.load/reset/step` is not validated because the menagerie assets are absent.
 - SelectObsWrapper: needed for Route A if upstream Brax SAC does not support dict observations.
 - TruncationWrapper/fallback: needed for Route B because raw G1 source does not set `info["truncation"]`.
 - ActionScaleAdapter: external scaling should default to identity. The G1 env already applies `env_cfg.action_scale` internally.
