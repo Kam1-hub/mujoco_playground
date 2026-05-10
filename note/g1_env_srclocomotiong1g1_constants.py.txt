@@ -1,0 +1,1485 @@
+【1. 这段代码在 pipeline 中的位置】
+
+`g1_constants.py` 属于 **G1 机器人模型/常量层**，同时也是 **任务环境层与 XML/MJCF 模型层之间的连接层**。
+
+它本身不实现：
+
+```text
+reset
+step
+observation
+privileged observation
+reward
+termination
+domain randomization
+PPO training
+wrapper
+```
+
+它的作用是给上层 Python 代码提供一套“名字表”和“路径表”：
+
+```text
+任务名 task
+→ XML 文件路径
+
+Python 里的 feet / hand / root body / sensor 名称
+→ XML/MJCF 里的 site / geom / body / sensor 名称
+
+restricted_joint_range=True
+→ 29 个执行器/关节的受限角度范围
+```
+
+它连接的是：
+
+```text
+locomotion registry
+→ Joystick(task="flat_terrain" / "rough_terrain")
+→ consts.task_to_xml(task)
+→ G1Env(xml_path=...)
+→ mujoco.MjModel
+→ mjx.Model
+```
+
+所以这个文件不是“训练逻辑”，而是 **G1 环境能正确找到 XML、body、site、geom、sensor、joint range 的基础常量表**。
+
+---
+
+【2. 核心作用】
+
+这个文件主要做五类事情。
+
+第一，定义 G1 资源根路径：
+
+```python
+ROOT_PATH = mjx_env.ROOT_PATH / "locomotion" / "g1"
+```
+
+它把通用 `mjx_env.ROOT_PATH` 延伸到 G1 专用目录。
+
+第二，定义两个任务对应的 XML：
+
+```python
+FEET_ONLY_FLAT_TERRAIN_XML
+FEET_ONLY_ROUGH_TERRAIN_XML
+```
+
+分别指向：
+
+```text
+xmls/scene_mjx_feetonly_flat_terrain.xml
+xmls/scene_mjx_feetonly_rough_terrain.xml
+```
+
+第三，提供 `task_to_xml(task_name)`：
+
+```python
+"flat_terrain"  → scene_mjx_feetonly_flat_terrain.xml
+"rough_terrain" → scene_mjx_feetonly_rough_terrain.xml
+```
+
+这正是 `Joystick.__init__()` 选择 XML 的入口。`Joystick` 里调用的是：
+
+```python
+xml_path=consts.task_to_xml(task).as_posix()
+```
+
+也就是说，前面 registry 注册的：
+
+```text
+G1JoystickFlatTerrain
+G1JoystickRoughTerrain
+```
+
+最终会在这里分流到不同 XML。这个连接可以从 `locomotion.__init__.py` 和 `joystick.py` 一起确认：registry 中 flat/rough 都是 `Joystick`，区别只是 `task="flat_terrain"` 或 `task="rough_terrain"`；`Joystick` 再通过 `consts.task_to_xml(task)` 找 XML。 
+
+第四，定义 XML 中重要对象的名称：
+
+```text
+FEET_SITES
+HAND_SITES
+FEET_GEOMS
+ROOT_BODY
+sensor prefix
+```
+
+这些名字会被 `joystick.py` 和 `base.py` 用来查 MuJoCo model 里的 site、geom、body、sensor。
+
+第五，定义 `RESTRICTED_JOINT_RANGE`，也就是 29 个关节/执行器的受限范围。这个常量不是默认一定启用，而是在 `base.py::G1Env.__init__()` 里，当 `self._config.restricted_joint_range` 为真时才会覆盖 `mj_model.jnt_range[1:]` 和 `mj_model.actuator_ctrlrange[:]`。
+
+---
+
+【3. 关键对象/函数/变量】
+
+### 3.1 `ROOT_PATH`
+
+```python
+ROOT_PATH = mjx_env.ROOT_PATH / "locomotion" / "g1"
+```
+
+这是 G1 专用资源根目录。
+
+上游来源：
+
+```text
+mjx_env.ROOT_PATH
+```
+
+在 `mjx_env.py` 中，`ROOT_PATH` 是 `_src` 目录。当前文件把它扩展为：
+
+```text
+g1_env/_src/locomotion/g1
+```
+
+下游用途：
+
+```text
+base.py::get_assets()
+→ consts.ROOT_PATH / "xmls"
+→ consts.ROOT_PATH / "xmls" / "assets"
+```
+
+也就是说，`ROOT_PATH` 决定了项目内部 XML 和 assets 从哪里加载。`base.py` 中确实使用 `consts.ROOT_PATH / "xmls"` 和 `consts.ROOT_PATH / "xmls" / "assets"` 收集资源。
+
+数据流：
+
+```text
+mjx_env.ROOT_PATH
+→ g1_constants.ROOT_PATH
+→ base.py::get_assets()
+→ mujoco.MjModel.from_xml_string(..., assets=...)
+```
+
+---
+
+### 3.2 `FEET_ONLY_FLAT_TERRAIN_XML`
+
+```python
+FEET_ONLY_FLAT_TERRAIN_XML = (
+    ROOT_PATH / "xmls" / "scene_mjx_feetonly_flat_terrain.xml"
+)
+```
+
+这是 flat terrain 任务对应的 scene XML。
+
+它不是 G1 主机器人 XML，而是一个 **场景 XML**。从文件名看，它应该包含机器人模型，并额外定义平坦地形。根据 filemap，项目中也确实存在：
+
+```text
+scene_mjx_feetonly_flat_terrain.xml
+```
+
+并说明它包含 `g1_mjx_feetonly.xml` 和平面地板。
+
+在 pipeline 中：
+
+```text
+env_name = "G1JoystickFlatTerrain"
+→ task="flat_terrain"
+→ task_to_xml("flat_terrain")
+→ FEET_ONLY_FLAT_TERRAIN_XML
+→ G1Env 加载 XML
+```
+
+---
+
+### 3.3 `FEET_ONLY_ROUGH_TERRAIN_XML`
+
+```python
+FEET_ONLY_ROUGH_TERRAIN_XML = (
+    ROOT_PATH / "xmls" / "scene_mjx_feetonly_rough_terrain.xml"
+)
+```
+
+这是 rough terrain 任务对应的 scene XML。
+
+根据 filemap，项目中对应 XML 是粗糙地形场景，包含高度场地形和岩石纹理。
+
+在 pipeline 中：
+
+```text
+env_name = "G1JoystickRoughTerrain"
+→ task="rough_terrain"
+→ task_to_xml("rough_terrain")
+→ FEET_ONLY_ROUGH_TERRAIN_XML
+→ G1Env 加载 XML
+```
+
+关键点：
+
+```text
+Flat 和 Rough 的 Python 任务类是同一个 Joystick
+区别主要通过这里选择不同 XML 场景实现
+```
+
+当前 `g1_constants.py` 只能确认它们指向两个不同 XML。具体地形差异要继续看两个 XML 文件。
+
+---
+
+### 3.4 `task_to_xml(task_name)`
+
+```python
+def task_to_xml(task_name: str) -> epath.Path:
+  return {
+      "flat_terrain": FEET_ONLY_FLAT_TERRAIN_XML,
+      "rough_terrain": FEET_ONLY_ROUGH_TERRAIN_XML,
+  }[task_name]
+```
+
+这是当前文件最重要的函数。
+
+输入：
+
+```text
+task_name: str
+```
+
+有效取值只有：
+
+```text
+flat_terrain
+rough_terrain
+```
+
+输出：
+
+```text
+epath.Path
+```
+
+即对应 XML 路径。
+
+它被 `Joystick.__init__()` 调用：
+
+```python
+xml_path=consts.task_to_xml(task).as_posix()
+```
+
+因此完整链条是：
+
+```text
+locomotion._envs["G1JoystickFlatTerrain"]
+→ functools.partial(Joystick, task="flat_terrain")
+→ Joystick.__init__(task="flat_terrain")
+→ consts.task_to_xml("flat_terrain")
+→ scene_mjx_feetonly_flat_terrain.xml
+→ G1Env.__init__(xml_path=...)
+```
+
+rough terrain 同理：
+
+```text
+locomotion._envs["G1JoystickRoughTerrain"]
+→ functools.partial(Joystick, task="rough_terrain")
+→ Joystick.__init__(task="rough_terrain")
+→ consts.task_to_xml("rough_terrain")
+→ scene_mjx_feetonly_rough_terrain.xml
+→ G1Env.__init__(xml_path=...)
+```
+
+需要注意：
+
+```text
+task_to_xml 使用 dict[task_name] 直接索引
+如果传入未知 task，会抛 KeyError
+没有自定义错误信息
+```
+
+这不是大问题，但调试时要知道：如果你新增任务名，例如 `"stairs"`，但忘记在这里加映射，报错会发生在 `task_to_xml()`。
+
+---
+
+### 3.5 `FEET_SITES`
+
+```python
+FEET_SITES = [
+    "left_foot",
+    "right_foot",
+]
+```
+
+这是脚部 site 名称列表。
+
+在 `joystick.py::_post_init()` 中，它被用于：
+
+```python
+self._feet_site_id = np.array(
+    [self._mj_model.site(name).id for name in consts.FEET_SITES]
+)
+```
+
+下游用途：
+
+```text
+data.site_xpos[self._feet_site_id]
+→ 获取左右脚 site 位置
+→ p_fz = foot z height
+→ swing_peak 统计
+→ feet_phase reward
+→ feet_clearance / feet_height 等脚部 reward
+```
+
+这说明当前环境把脚部抽象成两个 site：
+
+```text
+left_foot
+right_foot
+```
+
+对应维度：
+
+```text
+feet site 数量 = 2
+feet height = 2 维
+contact = 2 维
+feet_air_time = 2 维
+swing_peak = 2 维
+```
+
+这也解释了 `joystick.py` 里多处出现：
+
+```python
+jp.zeros(2)
+```
+
+例如：
+
+```text
+feet_air_time
+last_contact
+swing_peak
+contact
+```
+
+---
+
+### 3.6 `HAND_SITES`
+
+```python
+HAND_SITES = [
+    "left_palm",
+    "right_palm",
+]
+```
+
+这是手部 site 名称列表。
+
+在 `joystick.py::_post_init()` 中，它被用于：
+
+```python
+self._hands_site_id = np.array(
+    [self._mj_model.site(name).id for name in consts.HAND_SITES]
+)
+```
+
+但从当前已经看到的 `joystick.py` 来看，`_hands_site_id` 后续没有明显参与 reward 或 observation。手相关的碰撞惩罚主要用的是 geom/sensor：
+
+```text
+left_hand_collision
+right_hand_collision
+left_hand_left_thigh_found
+right_hand_right_thigh_found
+```
+
+因此：
+
+```text
+HAND_SITES 当前更像是保留/扩展用 site 索引
+不一定参与当前默认 reward
+```
+
+不能仅凭这个文件说手部 site 影响训练结果，需要看 `joystick.py` 的调用情况。当前看到的主线里，手部碰撞影响训练，但 `HAND_SITES` 本身未明显参与。
+
+---
+
+### 3.7 `LEFT_FEET_GEOMS` / `RIGHT_FEET_GEOMS` / `FEET_GEOMS`
+
+```python
+LEFT_FEET_GEOMS = ["left_foot"]
+RIGHT_FEET_GEOMS = ["right_foot"]
+FEET_GEOMS = LEFT_FEET_GEOMS + RIGHT_FEET_GEOMS
+```
+
+这些是脚部 geom 名称。
+
+在 `joystick.py::_post_init()` 中：
+
+```python
+self._feet_geom_id = np.array(
+    [self._mj_model.geom(name).id for name in consts.FEET_GEOMS]
+)
+```
+
+但是注意：
+
+```text
+当前 joystick.py 中 _feet_geom_id 后续没有明显直接使用
+```
+
+真正的脚-地接触判断是通过 sensor：
+
+```python
+self._feet_floor_found_sensor = [
+    self._mj_model.sensor(foot_geom + "_floor_found").id
+    for foot_geom in ["left_foot", "right_foot"]
+]
+```
+
+这里虽然没有直接用 `consts.FEET_GEOMS`，但名称是一致的：
+
+```text
+left_foot
+right_foot
+```
+
+所以这几个常量体现了命名约定：
+
+```text
+foot geom name = foot site name = sensor name 前缀的一部分
+```
+
+对应关系：
+
+```text
+left_foot
+→ geom("left_foot")
+→ sensor("left_foot_floor_found")
+
+right_foot
+→ geom("right_foot")
+→ sensor("right_foot_floor_found")
+```
+
+---
+
+### 3.8 `ROOT_BODY`
+
+```python
+ROOT_BODY = "torso_link"
+```
+
+这是 G1 环境中作为 root/torso 的 body 名称。
+
+在 `joystick.py::_post_init()` 中：
+
+```python
+self._torso_body_id = self._mj_model.body(consts.ROOT_BODY).id
+self._torso_mass = self._mj_model.body_subtreemass[self._torso_body_id]
+```
+
+因此：
+
+```text
+ROOT_BODY
+→ body("torso_link")
+→ torso body id
+→ torso subtree mass
+```
+
+当前已看到的 `joystick.py` 里，`_torso_mass` 后续没有明显使用，但 `ROOT_BODY` 至少用于绑定 torso body id。
+
+同时，`joystick.py` 中还大量使用字符串 `"torso"` 作为 sensor frame：
+
+```text
+get_gravity(data, "torso")
+get_global_linvel(data, "torso")
+get_global_angvel(data, "torso")
+```
+
+注意这里有两个不同层级的名字：
+
+```text
+ROOT_BODY = "torso_link"
+用于 MuJoCo body 名称查询
+
+frame = "torso"
+用于 sensor 名称拼接，例如 upvector_torso / global_angvel_torso
+```
+
+不要混淆：
+
+```text
+body name: torso_link
+sensor frame suffix: torso
+```
+
+---
+
+### 3.9 sensor prefix 常量
+
+```python
+GRAVITY_SENSOR = "upvector"
+GLOBAL_LINVEL_SENSOR = "global_linvel"
+GLOBAL_ANGVEL_SENSOR = "global_angvel"
+LOCAL_LINVEL_SENSOR = "local_linvel"
+ACCELEROMETER_SENSOR = "accelerometer"
+GYRO_SENSOR = "gyro"
+```
+
+这些是传感器名前缀。
+
+它们不是完整 sensor 名称，而是会在 `base.py` 中和 `frame` 拼起来：
+
+```python
+f"{consts.GRAVITY_SENSOR}_{frame}"
+f"{consts.GLOBAL_LINVEL_SENSOR}_{frame}"
+f"{consts.GLOBAL_ANGVEL_SENSOR}_{frame}"
+f"{consts.LOCAL_LINVEL_SENSOR}_{frame}"
+f"{consts.ACCELEROMETER_SENSOR}_{frame}"
+f"{consts.GYRO_SENSOR}_{frame}"
+```
+
+所以如果 `frame="pelvis"`，实际 sensor 名称类似：
+
+```text
+upvector_pelvis
+global_linvel_pelvis
+global_angvel_pelvis
+local_linvel_pelvis
+accelerometer_pelvis
+gyro_pelvis
+```
+
+如果 `frame="torso"`，实际 sensor 名称类似：
+
+```text
+upvector_torso
+global_linvel_torso
+global_angvel_torso
+local_linvel_torso
+accelerometer_torso
+gyro_torso
+```
+
+在 `base.py` 中，传感器读取函数都通过 `mjx_env.get_sensor_data()` 从 `data.sensordata` 中按名称取 slice。
+
+数据流：
+
+```text
+g1_constants.GYRO_SENSOR = "gyro"
+→ base.py.get_gyro(data, "pelvis")
+→ sensor_name = "gyro_pelvis"
+→ mjx_env.get_sensor_data(mj_model, data, "gyro_pelvis")
+→ data.sensordata[sensor_adr : sensor_adr + sensor_dim]
+→ joystick.py observation / reward
+```
+
+这些常量对 `joystick.py` 的影响很大：
+
+```text
+get_gyro(data, "pelvis")
+→ policy observation 中 noisy_gyro
+→ tracking_ang_vel reward
+
+get_gravity(data, "torso")
+→ termination
+→ orientation cost
+
+get_local_linvel(data, "pelvis")
+→ tracking_lin_vel reward
+→ policy observation 中 noisy_linvel
+
+get_global_linvel(data, "pelvis"/"torso")
+→ lin_vel_z cost
+→ feet_slip / feet_phase mask
+
+get_global_angvel(data, "torso")
+→ ang_vel_xy cost
+
+get_accelerometer(data, "pelvis")
+→ privileged_state
+```
+
+所以这部分是 observation / reward / termination 的底层命名接口。
+
+---
+
+### 3.10 `RESTRICTED_JOINT_RANGE`
+
+这是 29 个关节/执行器的受限范围表。
+
+结构如下：
+
+```text
+Left leg:       6
+Right leg:      6
+Waist:          3
+Left shoulder:  7
+Right shoulder: 7
+总计:           29
+```
+
+也就是：
+
+```text
+6 + 6 + 3 + 7 + 7 = 29
+```
+
+这和前面 `joystick.py` 里的 29 维 action / qpos[7:] / actuator_force 是一致的。`base.py` 中会在 `restricted_joint_range=True` 时使用它：
+
+```python
+self._mj_model.jnt_range[1:] = consts.RESTRICTED_JOINT_RANGE
+self._mj_model.actuator_ctrlrange[:] = consts.RESTRICTED_JOINT_RANGE
+```
+
+所以它影响两类范围：
+
+```text
+1. mj_model.jnt_range[1:]
+   → 除 freejoint 外的普通关节范围
+
+2. mj_model.actuator_ctrlrange[:]
+   → actuator 控制输入范围
+```
+
+注意：
+
+```text
+jnt_range[1:] 跳过第一个 joint
+```
+
+这与 G1 floating base 设计一致：第一个 joint 通常是 freejoint，qpos 7 维，qvel 6 维，不应该用普通关节范围限制。
+
+数据流：
+
+```text
+joystick.default_config.restricted_joint_range
+→ G1Env.__init__
+→ if self._config.restricted_joint_range:
+      mj_model.jnt_range[1:] = RESTRICTED_JOINT_RANGE
+      mj_model.actuator_ctrlrange[:] = RESTRICTED_JOINT_RANGE
+→ mjx.put_model(mj_model)
+→ mjx_model
+→ action ctrl range / joint limit 影响后续仿真
+```
+
+当前默认配置中：
+
+```python
+restricted_joint_range=False
+```
+
+所以默认不会启用这组 restricted range。这个默认值在 `joystick.py::default_config()` 中可以确认。
+
+---
+
+【4. 数据流：输入 → 处理 → 输出】
+
+### 4.1 从 env_name 到 XML
+
+```text
+外部训练脚本传入 env_name = "G1JoystickFlatTerrain"
+→ registry.load(env_name)
+→ locomotion.load(env_name)
+→ _envs["G1JoystickFlatTerrain"]
+→ functools.partial(Joystick, task="flat_terrain")
+→ Joystick.__init__(task="flat_terrain")
+→ consts.task_to_xml("flat_terrain")
+→ scene_mjx_feetonly_flat_terrain.xml
+→ G1Env.__init__(xml_path=...)
+→ mujoco.MjModel.from_xml_string(...)
+→ mjx.put_model(...)
+→ mjx.Model
+```
+
+rough terrain：
+
+```text
+env_name = "G1JoystickRoughTerrain"
+→ task="rough_terrain"
+→ consts.task_to_xml("rough_terrain")
+→ scene_mjx_feetonly_rough_terrain.xml
+→ G1Env
+→ MjModel
+→ mjx.Model
+```
+
+这说明：
+
+```text
+Flat/Rough 的分歧点在 task_to_xml()
+```
+
+而不是在 registry 里定义两个不同类。
+
+---
+
+### 4.2 从 sensor prefix 到 observation/reward
+
+以 gyro 为例：
+
+```text
+GYRO_SENSOR = "gyro"
+→ base.py.get_gyro(data, "pelvis")
+→ sensor_name = "gyro_pelvis"
+→ mjx_env.get_sensor_data(...)
+→ gyro vector
+→ joystick.py::_get_obs
+→ noisy_gyro
+→ obs["state"]
+```
+
+以 local linvel 为例：
+
+```text
+LOCAL_LINVEL_SENSOR = "local_linvel"
+→ base.py.get_local_linvel(data, "pelvis")
+→ sensor_name = "local_linvel_pelvis"
+→ data.sensordata slice
+→ joystick.py::_reward_tracking_lin_vel
+→ tracking_lin_vel reward
+```
+
+以 torso upvector 为例：
+
+```text
+GRAVITY_SENSOR = "upvector"
+→ base.py.get_gravity(data, "torso")
+→ sensor_name = "upvector_torso"
+→ joystick.py::_get_termination
+→ fall_termination = upvector_torso[-1] < 0
+```
+
+---
+
+### 4.3 从 `FEET_SITES` 到脚部 reward
+
+```text
+FEET_SITES = ["left_foot", "right_foot"]
+→ joystick.py::_post_init()
+→ self._feet_site_id = [site("left_foot").id, site("right_foot").id]
+→ data.site_xpos[self._feet_site_id]
+→ foot_z
+→ swing_peak
+→ feet_phase / feet_clearance / feet_height reward
+```
+
+---
+
+### 4.4 从 `RESTRICTED_JOINT_RANGE` 到 action/control 限制
+
+```text
+RESTRICTED_JOINT_RANGE, shape ≈ (29, 2)
+→ base.py::G1Env.__init__
+→ if restricted_joint_range:
+      mj_model.jnt_range[1:] = RESTRICTED_JOINT_RANGE
+      mj_model.actuator_ctrlrange[:] = RESTRICTED_JOINT_RANGE
+→ mjx.put_model(...)
+→ MJX simulation 使用修改后的 joint/control range
+→ joystick.py::_post_init()
+→ self._lowers, self._uppers = self.mj_model.jnt_range[1:].T
+→ soft joint limit reward 使用新范围
+```
+
+所以它不只是 actuator ctrlrange，也会影响 `joystick.py` 中的 soft joint limit 惩罚。
+
+---
+
+【5. 与其他文件的连接】
+
+### 5.1 与 `locomotion.__init__.py`
+
+`locomotion.__init__.py` 定义：
+
+```python
+"G1JoystickFlatTerrain": functools.partial(
+    g1_joystick.Joystick, task="flat_terrain"
+)
+
+"G1JoystickRoughTerrain": functools.partial(
+    g1_joystick.Joystick, task="rough_terrain"
+)
+```
+
+这两个 task 字符串必须能被 `g1_constants.task_to_xml()` 识别。当前 `task_to_xml()` 正好只支持：
+
+```text
+flat_terrain
+rough_terrain
+```
+
+所以二者匹配。
+
+连接关系：
+
+```text
+locomotion env registry
+→ task string
+→ g1_constants.task_to_xml
+→ XML path
+```
+
+如果你新增环境，除了在 registry 中注册新 task，还必须在 `task_to_xml()` 中增加映射。
+
+---
+
+### 5.2 与 `joystick.py`
+
+`joystick.py` 是当前文件最重要的下游使用者。
+
+使用点包括：
+
+```text
+1. consts.task_to_xml(task)
+   → 选择 XML
+
+2. consts.FEET_SITES
+   → 查左右脚 site id
+
+3. consts.HAND_SITES
+   → 查左右手 site id
+
+4. consts.FEET_GEOMS
+   → 查脚 geom id
+
+5. consts.ROOT_BODY
+   → 查 torso/root body id
+
+6. sensor prefix 通过 base.py 间接使用
+   → get_gyro / get_gravity / get_local_linvel 等
+
+7. restricted joint range 通过 base.py 影响 joint range
+   → joystick.py 后续读取 mj_model.jnt_range[1:]
+```
+
+尤其是 `_post_init()` 中，`Joystick` 会大量通过这些常量去查 MuJoCo model 中的对象。如果 XML 里的名称和这里不一致，环境初始化会直接失败。
+
+---
+
+### 5.3 与 `base.py`
+
+`base.py` 使用当前文件的两类常量。
+
+第一类是路径：
+
+```python
+consts.ROOT_PATH / "xmls"
+consts.ROOT_PATH / "xmls" / "assets"
+```
+
+用于加载项目内部 XML 和 assets。
+
+第二类是 sensor prefix：
+
+```python
+f"{consts.GRAVITY_SENSOR}_{frame}"
+f"{consts.GLOBAL_LINVEL_SENSOR}_{frame}"
+...
+```
+
+第三类是 restricted joint range：
+
+```python
+self._mj_model.jnt_range[1:] = consts.RESTRICTED_JOINT_RANGE
+self._mj_model.actuator_ctrlrange[:] = consts.RESTRICTED_JOINT_RANGE
+```
+
+所以 `g1_constants.py` 是 `base.py` 加载 G1 模型和读取 G1 传感器的配置来源。
+
+---
+
+### 5.4 与 `mjx_env.py`
+
+当前文件直接 import：
+
+```python
+from g1_env._src import mjx_env
+```
+
+并使用：
+
+```python
+mjx_env.ROOT_PATH
+```
+
+所以路径链条是：
+
+```text
+mjx_env.ROOT_PATH
+→ g1_constants.ROOT_PATH
+→ base.py::get_assets()
+→ XML/assets 加载
+```
+
+`mjx_env.py` 还提供底层 `get_sensor_data()`，但 sensor 名称前缀由当前文件定义。
+
+---
+
+### 5.5 与 XML 文件
+
+当前文件和 XML 是强耦合关系。
+
+它要求 XML 中存在这些对象：
+
+```text
+site:
+  left_foot
+  right_foot
+  left_palm
+  right_palm
+
+geom:
+  left_foot
+  right_foot
+  floor
+  left_hand_collision
+  right_hand_collision
+  left_shin
+  right_shin
+  left_thigh
+  right_thigh
+
+body:
+  torso_link
+
+sensor:
+  upvector_torso
+  upvector_pelvis
+  global_linvel_torso
+  global_linvel_pelvis
+  global_angvel_torso
+  global_angvel_pelvis
+  local_linvel_pelvis
+  accelerometer_pelvis
+  gyro_pelvis
+  left_foot_floor_found
+  right_foot_floor_found
+  right_foot_left_foot_found
+  left_foot_right_shin_found
+  right_foot_left_shin_found
+  left_hand_left_thigh_found
+  right_hand_right_thigh_found
+  left_foot_force
+  right_foot_force
+```
+
+严格说，不是所有这些名字都在 `g1_constants.py` 中完整列出；一部分是在 `joystick.py` 中直接硬编码。但当前文件提供了其中的核心命名规范。要完全确认这些对象存在，必须继续看 XML，尤其是：
+
+```text
+sensor.xml
+g1_mjx_feetonly.xml
+scene_mjx_feetonly_flat_terrain.xml
+scene_mjx_feetonly_rough_terrain.xml
+```
+
+---
+
+【6. 对训练/仿真/推理的影响】
+
+### 6.1 决定 flat/rough 加载哪个模型场景
+
+`task_to_xml()` 是 flat/rough 环境分流点。
+
+如果任务名是：
+
+```text
+flat_terrain
+```
+
+加载：
+
+```text
+scene_mjx_feetonly_flat_terrain.xml
+```
+
+如果任务名是：
+
+```text
+rough_terrain
+```
+
+加载：
+
+```text
+scene_mjx_feetonly_rough_terrain.xml
+```
+
+因此它直接影响：
+
+```text
+地形类型
+floor / hfield 定义
+contact 行为
+render 场景
+训练难度
+```
+
+但它不直接改变 reward。当前 Python 任务逻辑仍然是同一个 `Joystick` 类。
+
+---
+
+### 6.2 决定 observation/reward/termination 能否正确读到 sensor
+
+例如：
+
+```text
+GYRO_SENSOR = "gyro"
+```
+
+如果 XML 中实际 sensor 名称不是：
+
+```text
+gyro_pelvis
+```
+
+而是别的名字，那么：
+
+```text
+base.py.get_gyro(data, "pelvis")
+→ mj_model.sensor("gyro_pelvis")
+→ 失败
+```
+
+所以这些 sensor prefix 是 observation 和 reward 能否运行的基础。
+
+---
+
+### 6.3 决定脚部相关 reward 的脚数量和 site 名称
+
+`FEET_SITES` 只有两个：
+
+```text
+left_foot
+right_foot
+```
+
+这使当前任务逻辑自然围绕双足接触/摆动设计：
+
+```text
+contact: 2 维
+feet_air_time: 2 维
+swing_peak: 2 维
+phase: 2 维
+```
+
+这符合 G1 humanoid 左右脚步态任务。
+
+---
+
+### 6.4 决定 restricted joint range 模式下的控制范围
+
+如果 `restricted_joint_range=True`，`RESTRICTED_JOINT_RANGE` 会改变模型 joint range 和 actuator ctrlrange。
+
+这会影响：
+
+```text
+action target 是否容易被 actuator ctrlrange 限制
+关节是否更早触发 joint limit
+soft joint limit reward 的上下界
+训练动作空间有效范围
+```
+
+默认配置是 `False`，所以默认训练不使用这组 restricted range。
+
+---
+
+【7. shape / 维度 / 频率 / action 含义】
+
+这个文件本身能确认的维度信息主要是：
+
+```text
+FEET_SITES 数量 = 2
+HAND_SITES 数量 = 2
+FEET_GEOMS 数量 = 2
+RESTRICTED_JOINT_RANGE 数量 = 29
+```
+
+`RESTRICTED_JOINT_RANGE` 的 29 个范围按结构分组为：
+
+```text
+左腿 6
+右腿 6
+腰部 3
+左臂 7
+右臂 7
+总计 29
+```
+
+这和 `joystick.py` 中的 29 维 action / joint qpos 是一致的。
+
+但这个文件本身没有给出：
+
+```text
+ctrl_dt
+sim_dt
+episode_length
+reward scale
+observation dim
+privileged_state dim
+action_scale
+PPO 参数
+```
+
+这些需要看：
+
+```text
+joystick.py
+mjx_env.py
+locomotion_params.py
+```
+
+尤其是：
+
+```text
+ctrl_dt / sim_dt / reward scale / action_scale
+→ joystick.py::default_config()
+
+n_substeps
+→ mjx_env.MjxEnv.n_substeps
+
+PPO 超参数
+→ locomotion_params.py
+```
+
+---
+
+【8. 容易误解或需要注意的点】
+
+### 8.1 这个文件不定义“机器人模型”，只定义模型路径和命名常量
+
+不要把 `g1_constants.py` 理解成 G1 模型本体。真正的模型在 XML：
+
+```text
+g1_mjx_feetonly.xml
+scene_mjx_feetonly_flat_terrain.xml
+scene_mjx_feetonly_rough_terrain.xml
+sensor.xml
+```
+
+当前文件只是 Python 侧使用这些 XML 的索引表。
+
+---
+
+### 8.2 flat/rough 的差异不在 `Joystick` 类里，而在 XML 路径
+
+从前面 `locomotion.__init__.py` 和 `Joystick.__init__()` 可以看出：
+
+```text
+G1JoystickFlatTerrain
+G1JoystickRoughTerrain
+```
+
+都使用同一个 `Joystick` 类。
+
+真正的区别是：
+
+```text
+task="flat_terrain" / "rough_terrain"
+→ task_to_xml()
+→ 不同 scene XML
+```
+
+所以如果你想理解 flat/rough 的差异，不要继续在 `joystick.py` 里找大段分支，应该看 XML。
+
+---
+
+### 8.3 `task_to_xml()` 对非法 task 没有友好报错
+
+它直接：
+
+```python
+return {...}[task_name]
+```
+
+如果传入：
+
+```text
+"stairs"
+"flat"
+"rough"
+```
+
+会直接 `KeyError`。
+
+如果你后续新增环境，建议同步改：
+
+```text
+locomotion.__init__._envs
+g1_constants.task_to_xml
+XML 文件
+可能还有 randomizer/config
+```
+
+---
+
+### 8.4 sensor prefix 和 XML sensor 名称强耦合
+
+当前文件定义：
+
+```text
+upvector
+global_linvel
+global_angvel
+local_linvel
+accelerometer
+gyro
+```
+
+`base.py` 会自动拼接：
+
+```text
+{prefix}_{frame}
+```
+
+所以 XML 里必须严格使用这个命名风格。
+
+如果 XML 用的是：
+
+```text
+pelvis_gyro
+```
+
+而不是：
+
+```text
+gyro_pelvis
+```
+
+代码会失败。
+
+这是一个真实的移植风险：更换 XML 或改 sensor 命名时，必须同步改这里或 `base.py`。
+
+---
+
+### 8.5 `ROOT_BODY = "torso_link"` 与 sensor frame `"torso"` 不是同一个名字系统
+
+这是一个容易混淆点。
+
+```text
+ROOT_BODY = "torso_link"
+```
+
+用于：
+
+```text
+mj_model.body("torso_link")
+```
+
+而：
+
+```text
+get_gravity(data, "torso")
+```
+
+用于：
+
+```text
+sensor("upvector_torso")
+```
+
+所以：
+
+```text
+body 名称是 torso_link
+sensor suffix 是 torso
+```
+
+这两个需要分别在 XML 中存在。
+
+---
+
+### 8.6 `RESTRICTED_JOINT_RANGE` 的 shape 假设很强
+
+`base.py` 使用：
+
+```python
+self._mj_model.jnt_range[1:] = consts.RESTRICTED_JOINT_RANGE
+self._mj_model.actuator_ctrlrange[:] = consts.RESTRICTED_JOINT_RANGE
+```
+
+这隐含假设：
+
+```text
+非 freejoint 的 joint 数量 = 29
+actuator 数量 = 29
+二者顺序和 RESTRICTED_JOINT_RANGE 顺序一致
+```
+
+如果你换 XML、删 arm、删 waist、换 actuator 顺序，这里可能：
+
+```text
+shape mismatch
+或者更危险：shape 对了，但范围错配到错误关节
+```
+
+所以迁移到其他 G1 XML 或其他机器人时，这个常量必须重新校对。
+
+---
+
+### 8.7 当前常量不包含所有 joystick.py 中硬编码的名字
+
+例如 `joystick.py` 中还直接使用了：
+
+```text
+imu_in_torso
+imu_in_pelvis
+floor
+left_hand_collision
+right_hand_collision
+left_shin
+right_shin
+left_thigh
+right_thigh
+left_foot_force
+right_foot_force
+```
+
+这些没有全部集中在 `g1_constants.py`。
+
+工程上这意味着：
+
+```text
+g1_constants.py 不是唯一命名表
+joystick.py 内部仍有硬编码 XML 名称
+```
+
+所以如果你要改 XML 名称，不能只查 `g1_constants.py`，还要全局搜索字符串。
+
+---
+
+【9. 需要继续查看的文件】
+
+### 9.1 `g1_env/_src/locomotion/g1/xmls/scene_mjx_feetonly_flat_terrain.xml`
+
+要确认：
+
+```text
+1. 是否 include g1_mjx_feetonly.xml
+2. 是否 include sensor.xml
+3. floor geom 是否叫 "floor"
+4. 平面地形如何定义
+5. camera / light / worldbody 配置
+```
+
+原因：
+
+`task_to_xml("flat_terrain")` 指向它。它是 flat terrain 环境的实际模型入口。
+
+---
+
+### 9.2 `g1_env/_src/locomotion/g1/xmls/scene_mjx_feetonly_rough_terrain.xml`
+
+要确认：
+
+```text
+1. rough terrain 是否使用 hfield
+2. hfield.png / rocky_texture.png 如何引用
+3. floor geom 名称是否仍然是 "floor"
+4. 是否 include 同一套 G1 主模型和 sensor.xml
+5. rough terrain 是否改变 contact / friction / geom 配置
+```
+
+原因：
+
+`task_to_xml("rough_terrain")` 指向它。它决定 rough 任务到底和 flat 差在哪里。
+
+---
+
+### 9.3 `g1_env/_src/locomotion/g1/xmls/g1_mjx_feetonly.xml`
+
+要确认：
+
+```text
+1. 29 个 actuators 的顺序
+2. 29 个 joints 的顺序
+3. keyframe "knees_bent" 的 qpos
+4. body 名称是否包含 "torso_link"
+5. site 名称是否包含 left_foot / right_foot / left_palm / right_palm
+6. geom 名称是否包含 left_foot / right_foot / left_shin / right_shin 等
+7. actuator ctrlrange 和 joint range 原始值
+```
+
+原因：
+
+`RESTRICTED_JOINT_RANGE` 的顺序必须和这里的 joint/actuator 顺序一致。
+
+---
+
+### 9.4 `g1_env/_src/locomotion/g1/xmls/sensor.xml`
+
+要确认：
+
+```text
+1. upvector_torso / upvector_pelvis 是否存在
+2. gyro_pelvis 是否存在
+3. accelerometer_pelvis 是否存在
+4. local_linvel_pelvis 是否存在
+5. global_linvel_pelvis / global_linvel_torso 是否存在
+6. global_angvel_pelvis / global_angvel_torso 是否存在
+7. left_foot_force / right_foot_force 是否存在
+8. 各种 *_found contact sensor 是否存在
+```
+
+原因：
+
+`g1_constants.py` 只定义 prefix，`base.py` 拼 sensor name，`mjx_env.get_sensor_data()` 根据完整名字读取 `data.sensordata`。如果 XML sensor 名字不匹配，observation/reward/termination 直接失败。
+
+---
+
+### 9.5 `joystick.py`
+
+虽然已经读过，但和 `g1_constants.py` 应交叉复核。
+
+重点复核：
+
+```text
+1. 哪些常量来自 g1_constants.py
+2. 哪些 XML 名称仍然在 joystick.py 中硬编码
+3. FEET_SITES / HAND_SITES / FEET_GEOMS 是否实际参与 reward
+4. ROOT_BODY 是否只用于 torso mass
+5. restricted joint range 是否影响 soft joint limit
+```
+
+---
+
+### 9.6 `base.py`
+
+重点复核：
+
+```text
+1. consts.ROOT_PATH 如何进入 get_assets()
+2. consts.RESTRICTED_JOINT_RANGE 何时生效
+3. sensor prefix 如何拼成完整 sensor name
+4. XML 加载是否依赖 Menagerie
+```
+
+---
+
+【10. 当前文件在整个 pipeline 中的定位总结】
+
+可以把 `g1_constants.py` 记成一句话：
+
+```text
+它是 G1 Python 环境代码与 XML/MJCF 模型之间的命名和路径适配层。
+```
+
+它不计算 reward，不推进仿真，不采样 action，但它决定：
+
+```text
+1. flat / rough task 加载哪个 XML
+2. G1 资源路径在哪里
+3. Python 代码如何找到 feet / hands / root body
+4. Python 代码如何拼出 sensor 名称
+5. restricted_joint_range 模式下 29 个关节/执行器范围是多少
+```
+
+最重要的数据流是：
+
+```text
+env_name
+→ locomotion registry
+→ Joystick(task="flat_terrain" / "rough_terrain")
+→ g1_constants.task_to_xml(task)
+→ XML scene file
+→ G1Env
+→ MuJoCo / MJX model
+```
+
+以及：
+
+```text
+sensor prefix constants
+→ base.py sensor wrapper
+→ mjx_env.get_sensor_data
+→ joystick.py obs / reward / termination
+```
+
+后续如果你要修改环境、换 XML、增加 terrain、删减关节、增加传感器，`g1_constants.py` 是必须同步检查的文件。

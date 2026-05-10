@@ -1,0 +1,511 @@
+【1. 这段代码在 pipeline 中的位置】
+
+这个 `registry.py` 属于 **环境注册层 / public API façade 层**。
+
+它不是 G1 任务环境本体，也不是 reward、observation、termination、domain randomization 的实现文件。它更像是一个统一入口，把外部训练脚本、wrapper、实验脚本和内部 `locomotion` 模块连接起来。源码中明确写着它是 “Registry for G1 environments”，并且主要把调用转发给 `g1_env._src.locomotion`。
+
+可以把它理解成：
+
+```text
+外部训练脚本 / 测试脚本
+→ g1_env.registry
+→ g1_env._src.locomotion
+→ 具体 G1 环境类 / 配置 / domain randomizer
+```
+
+---
+
+【2. 核心作用】
+
+这个文件只做三件事：
+
+第一，暴露所有可用的 G1 环境名：
+
+```python
+ALL_ENVS = locomotion.ALL_ENVS
+```
+
+也就是说，真正的环境列表不在这里定义，而是在 `locomotion` 模块里定义。`registry.py` 只是转发。
+
+第二，提供默认配置入口：
+
+```python
+get_default_config(env_name)
+→ locomotion.get_default_config(env_name)
+```
+
+输入是 `env_name`，输出应该是该环境对应的默认 `ConfigDict`。但这个文件本身没有展示配置内容。
+
+第三，提供环境加载入口：
+
+```python
+load(env_name, config=None, config_overrides=None)
+→ locomotion.load(env_name, config, config_overrides)
+```
+
+它返回的是 `mjx_env.MjxEnv` 类型，也就是一个 MJX 环境实例。
+
+第四，提供 domain randomizer 获取入口：
+
+```python
+get_domain_randomizer(env_name)
+→ locomotion.get_domain_randomizer(env_name)
+```
+
+返回值可能是 `None`，也可能是一个 domain randomizer 函数。
+
+---
+
+【3. 关键对象/函数/变量】
+
+**`ALL_ENVS`**
+
+这是所有可用 G1 环境名的集合，来自：
+
+```python
+locomotion.ALL_ENVS
+```
+
+它通常会被训练脚本、测试脚本、CLI 参数校验使用。例如：
+
+```text
+用户指定 env_name
+→ 判断 env_name 是否在 ALL_ENVS 中
+→ 决定加载哪个 G1 任务环境
+```
+
+但这个文件没有展示具体有哪些环境名，需要继续看 `g1_env/_src/locomotion`。
+
+---
+
+**`get_default_config(env_name)`**
+
+作用：根据环境名拿默认配置。
+
+数据流：
+
+```text
+env_name
+→ registry.get_default_config(env_name)
+→ locomotion.get_default_config(env_name)
+→ 默认 ConfigDict
+```
+
+这一步很关键，因为 PPO 训练通常不直接手写所有参数，而是：
+
+```text
+先拿默认 config
+→ 再用命令行 / 脚本覆盖部分参数
+→ 再创建 env
+→ 再交给训练后端
+```
+
+这个函数本身不决定 reward scale、episode length、action scale、obs 维度，只是把请求转发给 `locomotion`。
+
+---
+
+**`load(env_name, config=None, config_overrides=None)`**
+
+这是这个文件最关键的函数。
+
+它的输入：
+
+```python
+env_name: str
+config: Optional[ml_collections.ConfigDict]
+config_overrides: Optional[Dict[str, Union[str, int, list[Any]]]]
+```
+
+它的输出：
+
+```python
+mjx_env.MjxEnv
+```
+
+也就是说，外部代码最终拿到的是一个符合 `MjxEnv` 接口的环境对象。
+
+典型数据流是：
+
+```text
+env_name
++ config
++ config_overrides
+→ registry.load(...)
+→ locomotion.load(...)
+→ 具体 G1 locomotion env
+→ mjx_env.MjxEnv 实例
+```
+
+这个文件没有展示 `reset()` / `step()`，但返回类型指向 `mjx_env.MjxEnv`，说明下游训练后端应该通过这个环境对象进行 rollout。
+
+---
+
+**`DomainRandomizer`**
+
+源码里定义为：
+
+```python
+DomainRandomizer = Optional[
+    Callable[[mjx.Model, jax.Array], Tuple[mjx.Model, mjx.Model]]
+]
+```
+
+这说明 domain randomizer 的接口大致是：
+
+```text
+输入：
+- mjx.Model
+- jax.Array 随机数 / 随机 key / 随机参数
+
+输出：
+- Tuple[mjx.Model, mjx.Model]
+```
+
+这里需要谨慎：这个文件只能确认它的类型签名，不能确认两个返回的 `mjx.Model` 分别代表什么。常见可能是随机化后的 model 和 in_axes / batched model 相关对象，但这只是根据 MJX/Brax 常见写法的推断，不能当成源码事实。要确认必须看 `locomotion.get_domain_randomizer` 以及具体 randomizer 实现。
+
+---
+
+【4. 数据流：输入 → 处理 → 输出】
+
+这个文件对应的主数据流可以写成：
+
+```text
+训练脚本传入 env_name
+→ registry.get_default_config(env_name)
+→ locomotion.get_default_config(env_name)
+→ 得到默认配置 config
+→ 训练脚本修改 config 或传入 config_overrides
+→ registry.load(env_name, config, config_overrides)
+→ locomotion.load(...)
+→ 创建具体 G1 环境
+→ 返回 mjx_env.MjxEnv
+→ PPO / wrapper / evaluator 调用 env.reset / env.step
+```
+
+domain randomization 相关的数据流是：
+
+```text
+env_name
+→ registry.get_domain_randomizer(env_name)
+→ locomotion.get_domain_randomizer(env_name)
+→ 返回 randomizer 或 None
+→ 训练后端 / wrapper 在创建 batched env 或 rollout 时接入 randomizer
+```
+
+不过最后一步是否真的接入训练，需要看训练脚本或 wrapper。`registry.py` 只提供入口，不负责调用 randomizer。
+
+---
+
+【5. 与其他文件的连接】
+
+这个文件直接依赖两个内部模块：
+
+```python
+from g1_env._src import locomotion
+from g1_env._src import mjx_env
+```
+
+所以后续阅读应该接这两个方向。
+
+**优先看 `g1_env/_src/locomotion`**
+
+原因：
+
+* `ALL_ENVS` 真正在那里定义；
+* `get_default_config(env_name)` 真正在那里实现；
+* `load(env_name, config, config_overrides)` 真正在那里实现；
+* `get_domain_randomizer(env_name)` 真正在那里实现；
+* 具体 env_name 到环境类的映射也大概率在那里。
+
+你要重点找类似这样的结构：
+
+```python
+ALL_ENVS = (...)
+_ENV_MAP = {...}
+_CONFIG_MAP = {...}
+def load(...)
+def get_default_config(...)
+def get_domain_randomizer(...)
+```
+
+如果有这些，就能确认：
+
+```text
+env_name
+→ 对应哪个任务类
+→ 对应哪个 config
+→ 对应哪个 randomizer
+```
+
+---
+
+**然后看 `g1_env/_src/mjx_env.py`**
+
+原因：
+
+`registry.load()` 的返回类型是 `mjx_env.MjxEnv`。
+
+你需要确认：
+
+* `MjxEnv` 的 `reset()` 接口；
+* `MjxEnv` 的 `step()` 接口；
+* state 数据结构；
+* obs / reward / done / metrics 的组织方式；
+* 是否兼容 Brax env API；
+* 是否内部持有 `mjx.Model`、`mjx.Data`、`mujoco.MjModel`；
+* control timestep 和 sim timestep 如何处理。
+
+这个文件会决定训练后端到底怎样和环境交互。
+
+---
+
+【6. 对训练/仿真/推理的影响】
+
+这个文件本身不直接影响物理仿真结果，也不直接影响训练曲线。它不定义：
+
+* robot XML；
+* action space；
+* observation；
+* reward；
+* termination；
+* reset 随机化；
+* domain randomization 具体内容；
+* PPO 超参数。
+
+但是它对工程 pipeline 很关键，因为它是**统一入口**。
+
+训练脚本通常不应该直接 import 某个具体环境类，而是通过 registry：
+
+```python
+env = registry.load(env_name, config, config_overrides)
+```
+
+这样做的好处是：
+
+```text
+训练脚本只关心 env_name
+registry / locomotion 负责找到具体环境类
+具体环境类负责 reset / step / reward / obs
+训练后端负责 PPO
+```
+
+所以它是 pipeline 的“路由器”，不是“计算节点”。
+
+---
+
+【7. 容易误解或需要注意的点】
+
+**第一，不要把 `registry.py` 当成环境实现。**
+
+它没有实现 G1 走路任务，也没有实现任何 reward。看到 `load()` 不等于这里创建了完整环境，真正逻辑在：
+
+```text
+locomotion.load(...)
+```
+
+---
+
+**第二，`ALL_ENVS` 不是在这里维护的。**
+
+这里只是：
+
+```python
+ALL_ENVS = locomotion.ALL_ENVS
+```
+
+所以如果你想新增一个环境，不应该优先改 `registry.py`，而应该找 `locomotion.ALL_ENVS` 和环境映射表。
+
+---
+
+**第三，`config_overrides` 的覆盖规则不在这里。**
+
+这个文件只把 `config_overrides` 传下去。覆盖顺序、支持哪些 key、是否支持嵌套字段、是否会覆盖默认 config，都需要看 `locomotion.load()`。
+
+这是一个常见工程陷阱：
+
+```text
+你以为命令行覆盖了参数
+→ 实际 locomotion.load 没有正确 merge
+→ 训练仍然使用默认参数
+```
+
+这个文件无法确认是否存在该问题。
+
+---
+
+**第四，domain randomization 是否真的参与训练，不能只看这里。**
+
+这里提供：
+
+```python
+get_domain_randomizer(env_name)
+```
+
+但它没有调用 randomizer。
+
+要确认 domain randomization 是否真正生效，需要继续看：
+
+```text
+训练入口
+→ wrapper
+→ PPO backend
+→ 是否调用 registry.get_domain_randomizer
+→ 是否把 randomizer 传给 env / training function
+```
+
+否则可能出现：
+
+```text
+randomizer 写好了
+但训练脚本没有接入
+```
+
+---
+
+**第五，类型签名暗示这里是 JAX / MJX pipeline，而不是 Torch-native 环境。**
+
+它 import 了：
+
+```python
+import jax
+from mujoco import mjx
+```
+
+并且 `DomainRandomizer` 接收 `mjx.Model` 和 `jax.Array`。这说明这个 registry 面向的是 MJX/JAX 风格环境，而不是传统 PyTorch/RSL-RL 原生 IsaacGym 那种环境接口。
+
+如果后面要接 RSL-RL，需要重点看 wrapper 层如何做：
+
+```text
+MJX/JAX env
+→ wrapper
+→ Torch tensor / RSL-RL VecEnv 接口
+```
+
+这里没有提供转换逻辑。
+
+---
+
+【8. 需要继续查看的文件】
+
+按优先级：
+
+1. **`g1_env/_src/locomotion/__init__.py` 或 `g1_env/_src/locomotion.py`**
+
+   用来确认：
+
+   ```text
+   env_name → env class
+   env_name → default config
+   env_name → domain randomizer
+   ```
+
+2. **具体 G1 locomotion 任务环境文件**
+
+   可能名字类似：
+
+   ```text
+   joystick.py
+   walk.py
+   g1_env.py
+   base.py
+   locomotion/g1/*.py
+   ```
+
+   用来确认：
+
+   * action 含义；
+   * observation 构造；
+   * privileged observation；
+   * reward；
+   * termination；
+   * reset 逻辑；
+   * command 采样。
+
+3. **`g1_env/_src/mjx_env.py`**
+
+   用来确认环境基类接口：
+
+   ```text
+   reset
+   step
+   render
+   mj_model / mjx_model
+   control timestep
+   n_substeps
+   ```
+
+4. **domain randomization 文件**
+
+   可能名字类似：
+
+   ```text
+   domain_randomization.py
+   randomize.py
+   ```
+
+   用来确认：
+
+   * 随机化 mass / friction / damping / actuator / terrain；
+   * randomizer 返回的两个 `mjx.Model` 分别是什么；
+   * 是否 batched；
+   * 是否和训练 backend 接上。
+
+5. **training script**
+
+   可能名字类似：
+
+   ```text
+   train.py
+   train_jax_ppo.py
+   train_rsl_rl.py
+   ```
+
+   用来确认：
+
+   ```text
+   registry.load(...)
+   registry.get_domain_randomizer(...)
+   PPO backend
+   config_overrides
+   checkpoint
+   eval
+   ```
+
+---
+
+【9. 对这个文件的总体判断】
+
+这个 `registry.py` 是 G1 RL pipeline 的**轻量入口层**。它的价值不是实现复杂逻辑，而是让外部代码用统一方式访问：
+
+```text
+可用环境名
+默认配置
+环境实例
+domain randomizer
+```
+
+可以把它记成四个符号：
+
+```python
+ALL_ENVS
+get_default_config
+load
+get_domain_randomizer
+```
+
+后续读代码时，看到训练脚本里出现：
+
+```python
+registry.load(...)
+```
+
+就要立刻顺藤摸瓜到：
+
+```text
+registry.py
+→ locomotion.load
+→ 具体 G1 env class
+→ mjx_env.MjxEnv
+```
+
+当前文件是关键连接点，但不是核心算法节点。核心算法和任务逻辑都在下游文件里。

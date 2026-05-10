@@ -1,0 +1,750 @@
+【1. 这段代码在 pipeline 中的位置】
+
+这个文件属于 **环境注册层 / locomotion registry 层**。
+
+它比你上一个 `registry.py` 更靠近真实环境实现。上一个 `registry.py` 是对外 façade；这个 `g1_env._src.locomotion.__init__.py` 是真正维护：
+
+```text
+env_name → 环境构造器
+env_name → 默认 config
+env_name → domain randomizer
+```
+
+的地方。源码里 `_envs`、`_cfgs`、`_randomizer` 三个字典分别完成这三类映射。
+
+---
+
+【2. 核心作用】
+
+这个文件的核心作用是：**根据字符串形式的环境名，找到对应的 G1 任务环境、默认配置和 domain randomizer。**
+
+它接收的主要输入是：
+
+```python
+env_name: str
+config: Optional[ConfigDict]
+config_overrides: Optional[Dict]
+```
+
+它产生的主要输出是：
+
+```python
+mjx_env.MjxEnv
+```
+
+也就是一个可被训练脚本 / PPO backend / wrapper 使用的 MJX 环境对象。
+
+它本身不实现 G1 的 reset、step、reward、observation、termination，而是把环境实例化请求转发给：
+
+```python
+g1_joystick.Joystick
+```
+
+其中内置了两个任务名：
+
+```python
+"G1JoystickFlatTerrain"  → Joystick(task="flat_terrain")
+"G1JoystickRoughTerrain" → Joystick(task="rough_terrain")
+```
+
+所以目前这套 registry 中，真正注册的环境只有两个：
+
+```text
+G1JoystickFlatTerrain
+G1JoystickRoughTerrain
+```
+
+---
+
+【3. 关键对象/函数/变量】
+
+### 3.1 `_envs`
+
+```python
+_envs = {
+    "G1JoystickFlatTerrain": functools.partial(
+        g1_joystick.Joystick, task="flat_terrain"
+    ),
+    "G1JoystickRoughTerrain": functools.partial(
+        g1_joystick.Joystick, task="rough_terrain"
+    ),
+}
+```
+
+这是最关键的映射表。
+
+它说明：
+
+```text
+env_name
+→ g1_joystick.Joystick
+→ task 参数区分 flat_terrain / rough_terrain
+```
+
+注意：这里不是直接保存环境实例，而是保存“环境构造器”。真正实例化发生在 `load()` 中：
+
+```python
+return _envs[env_name](config=config, config_overrides=config_overrides)
+```
+
+也就是说：
+
+```text
+"G1JoystickFlatTerrain"
+→ functools.partial(Joystick, task="flat_terrain")
+→ Joystick(task="flat_terrain", config=..., config_overrides=...)
+```
+
+这意味着 `Joystick` 类本身应该支持如下构造参数：
+
+```python
+Joystick(task=..., config=..., config_overrides=...)
+```
+
+后面读 `g1_env/_src/locomotion/g1/joystick.py` 时要重点确认这一点。
+
+---
+
+### 3.2 `_cfgs`
+
+```python
+_cfgs = {
+    "G1JoystickFlatTerrain": g1_joystick.default_config,
+    "G1JoystickRoughTerrain": g1_joystick.default_config,
+}
+```
+
+两个环境共用同一个 `default_config` 函数。
+
+这说明 flat terrain 和 rough terrain 的默认配置来源相同，差异大概率不是通过不同 config 函数体现，而是通过：
+
+```python
+task="flat_terrain"
+task="rough_terrain"
+```
+
+传给 `Joystick` 后，在 `Joystick` 内部根据 task 分支处理。
+
+需要注意：这只是根据当前文件的结构推断。具体 rough terrain 是否额外改 terrain、reward、command、reset，必须看 `joystick.py`。
+
+---
+
+### 3.3 `_randomizer`
+
+```python
+_randomizer = {
+    "G1JoystickFlatTerrain": g1_randomize.domain_randomize,
+    "G1JoystickRoughTerrain": g1_randomize.domain_randomize,
+}
+```
+
+两个环境也共用同一个 domain randomizer：
+
+```text
+env_name
+→ g1_randomize.domain_randomize
+```
+
+这个文件只能确认 randomizer 的入口函数是 `g1_randomize.domain_randomize`，不能确认它具体随机化了什么。要看：
+
+```text
+g1_env/_src/locomotion/g1/randomize.py
+```
+
+---
+
+### 3.4 `__getattr__(name)`
+
+```python
+def __getattr__(name):
+  if name == "ALL_ENVS":
+    return tuple(_envs.keys())
+  raise AttributeError(...)
+```
+
+这段代码动态暴露 `ALL_ENVS`。
+
+所以外部代码可以写：
+
+```python
+locomotion.ALL_ENVS
+```
+
+得到：
+
+```python
+("G1JoystickFlatTerrain", "G1JoystickRoughTerrain")
+```
+
+但注意，它不是一个显式定义的全局变量，而是通过模块级 `__getattr__` 动态返回的。
+
+这对你读代码有一个影响：如果你用 IDE 或静态搜索 `ALL_ENVS =`，可能找不到定义，因为它是动态属性。
+
+---
+
+### 3.5 `register_environment(...)`
+
+```python
+def register_environment(env_name, env_class, cfg_class) -> None:
+  _envs[env_name] = env_class
+  _cfgs[env_name] = cfg_class
+```
+
+这是扩展入口。
+
+如果你以后想新增一个 G1 环境，例如：
+
+```text
+G1JoystickStairs
+G1StandStill
+G1Run
+G1TeacherStudent
+```
+
+理论上可以通过这个函数注册新的环境名、环境类和默认 config。
+
+但这里有一个重要限制：`register_environment()` 只更新 `_envs` 和 `_cfgs`，没有更新 `_randomizer`。
+
+所以新增环境后：
+
+```python
+get_domain_randomizer(new_env_name)
+```
+
+大概率会返回 `None`，除非你额外手动改 `_randomizer`。
+
+---
+
+### 3.6 `get_default_config(env_name)`
+
+```python
+def get_default_config(env_name: str) -> config_dict.ConfigDict:
+  if env_name not in _cfgs:
+    raise ValueError(...)
+  return _cfgs[env_name]()
+```
+
+它做的是：
+
+```text
+env_name
+→ 查 _cfgs
+→ 调用 default_config()
+→ 返回 ConfigDict
+```
+
+注意：这里返回的是 `default_config()` 的调用结果，不是函数本身。
+
+---
+
+### 3.7 `load(...)`
+
+这是当前文件的核心函数。
+
+```python
+def load(env_name, config=None, config_overrides=None) -> mjx_env.MjxEnv:
+  mjx_env.ensure_menagerie_exists()
+  if env_name not in _envs:
+    raise ValueError(...)
+  config = config or get_default_config(env_name)
+  return _envs[env_name](config=config, config_overrides=config_overrides)
+```
+
+它做了四步：
+
+```text
+1. 确认 MuJoCo Menagerie 资源存在
+2. 检查 env_name 是否已注册
+3. 如果没有传 config，就取默认 config
+4. 调用对应环境构造器，返回 MjxEnv
+```
+
+这里的 `ensure_menagerie_exists()` 很重要。它说明 G1 XML / MJCF 模型资源很可能来自 MuJoCo Menagerie 或依赖 Menagerie 目录结构。
+
+这一步属于资源准备，不是训练逻辑。
+
+---
+
+### 3.8 `get_domain_randomizer(env_name)`
+
+```python
+def get_domain_randomizer(env_name):
+  if env_name not in _randomizer:
+    print(...)
+    return None
+  return _randomizer[env_name]
+```
+
+它做的是：
+
+```text
+env_name
+→ 查 _randomizer
+→ 返回 domain_randomize 函数或 None
+```
+
+这里不会直接执行 domain randomization，只是返回函数。
+
+是否真正接入训练，要看 training script / wrapper 是否调用了它。
+
+---
+
+【4. 数据流：输入 → 处理 → 输出】
+
+### 4.1 加载 flat terrain 环境
+
+```text
+训练脚本传入 env_name = "G1JoystickFlatTerrain"
+→ registry.load(...)
+→ locomotion.load(...)
+→ mjx_env.ensure_menagerie_exists()
+→ get_default_config("G1JoystickFlatTerrain")
+→ g1_joystick.default_config()
+→ _envs["G1JoystickFlatTerrain"]
+→ functools.partial(g1_joystick.Joystick, task="flat_terrain")
+→ Joystick(task="flat_terrain", config=config, config_overrides=config_overrides)
+→ 返回 mjx_env.MjxEnv
+```
+
+### 4.2 加载 rough terrain 环境
+
+```text
+训练脚本传入 env_name = "G1JoystickRoughTerrain"
+→ registry.load(...)
+→ locomotion.load(...)
+→ mjx_env.ensure_menagerie_exists()
+→ get_default_config("G1JoystickRoughTerrain")
+→ g1_joystick.default_config()
+→ _envs["G1JoystickRoughTerrain"]
+→ functools.partial(g1_joystick.Joystick, task="rough_terrain")
+→ Joystick(task="rough_terrain", config=config, config_overrides=config_overrides)
+→ 返回 mjx_env.MjxEnv
+```
+
+### 4.3 获取 domain randomizer
+
+```text
+env_name
+→ registry.get_domain_randomizer(env_name)
+→ locomotion.get_domain_randomizer(env_name)
+→ g1_randomize.domain_randomize 或 None
+→ 训练脚本 / PPO wrapper 决定是否使用
+```
+
+---
+
+【5. 与其他文件的连接】
+
+这个文件连接了四类关键文件。
+
+### 5.1 上游：对外 `registry.py`
+
+你之前看的文件中：
+
+```python
+ALL_ENVS = locomotion.ALL_ENVS
+get_default_config(...) → locomotion.get_default_config(...)
+load(...) → locomotion.load(...)
+get_domain_randomizer(...) → locomotion.get_domain_randomizer(...)
+```
+
+所以对外 registry 只是转发；当前这个 `locomotion.__init__.py` 才是真正维护 G1 locomotion 环境注册表的地方。
+
+---
+
+### 5.2 下游：`g1_env/_src/locomotion/g1/joystick.py`
+
+这是下一步最应该看的文件。
+
+当前文件已经明确告诉你，真正环境类是：
+
+```python
+g1_joystick.Joystick
+```
+
+而且它接收：
+
+```python
+task="flat_terrain"
+task="rough_terrain"
+config=config
+config_overrides=config_overrides
+```
+
+所以 `joystick.py` 里应该重点看：
+
+```text
+Joystick.__init__
+reset
+step
+_get_obs / _get_privileged_obs
+_get_reward
+termination
+command sampling
+terrain handling
+task 分支
+default_config
+```
+
+---
+
+### 5.3 下游：`g1_env/_src/locomotion/g1/randomize.py`
+
+当前文件已经明确指定：
+
+```python
+g1_randomize.domain_randomize
+```
+
+所以后面要看：
+
+```text
+domain_randomize(model, rng)
+→ 随机化哪些物理参数
+→ 返回的两个 mjx.Model 分别是什么
+→ 是否支持 batch
+→ 是否被 Brax PPO 接入
+```
+
+---
+
+### 5.4 下游：`g1_env/_src/mjx_env.py`
+
+当前文件调用了：
+
+```python
+mjx_env.ensure_menagerie_exists()
+```
+
+并且 `load()` 返回类型是：
+
+```python
+mjx_env.MjxEnv
+```
+
+所以 `mjx_env.py` 需要看两部分：
+
+```text
+1. ensure_menagerie_exists()
+   - Menagerie 路径在哪里
+   - 是否会下载 / clone / 检查资源
+   - 是否有路径硬编码
+
+2. MjxEnv
+   - reset/step 接口
+   - state 数据结构
+   - mj_model / mjx_model 的持有方式
+   - timestep / control timestep
+   - 是否兼容 Brax env API
+```
+
+---
+
+【6. 对训练/仿真/推理的影响】
+
+这个文件对训练的影响主要体现在“选择哪个环境”和“接入哪个 config / randomizer”。
+
+它不会直接改变 reward，但是它决定 reward 所在的环境类是哪一个。
+
+它不会直接改变 terrain，但是它把：
+
+```python
+task="flat_terrain"
+task="rough_terrain"
+```
+
+传给 `Joystick`，而这个参数很可能决定 terrain 类型、观测内容、reset 逻辑或 reward 分支。
+
+它不会直接执行 domain randomization，但是它决定训练脚本通过 env_name 能拿到哪个 randomizer。
+
+也就是说，它是一个 **pipeline 分发节点**：
+
+```text
+同一个训练入口
+→ 不同 env_name
+→ 不同 task
+→ 不同环境实例
+→ 可能不同 terrain / obs / reward / reset
+```
+
+---
+
+【7. shape / 维度 / 频率 / reward scale 信息】
+
+这个文件本身没有给出：
+
+```text
+observation 维度
+privileged observation 维度
+action 维度
+control frequency
+simulation timestep
+episode length
+reward scale
+termination 条件
+PPO step 数
+num_envs
+batch size
+```
+
+这些都需要继续看：
+
+```text
+g1_joystick.default_config
+g1_joystick.Joystick
+mjx_env.MjxEnv
+training script
+```
+
+当前文件唯一能确认的是：
+
+```text
+可用环境数量：2
+环境名：
+- G1JoystickFlatTerrain
+- G1JoystickRoughTerrain
+
+任务类型：
+- flat_terrain
+- rough_terrain
+
+两个环境共用：
+- g1_joystick.default_config
+- g1_randomize.domain_randomize
+```
+
+---
+
+【8. 容易误解或需要注意的点】
+
+### 8.1 `G1JoystickFlatTerrain` 和 `G1JoystickRoughTerrain` 不一定是两个完全不同的环境类
+
+从当前文件看，它们都实例化同一个类：
+
+```python
+g1_joystick.Joystick
+```
+
+区别只是 `task` 参数不同。
+
+所以不要理解成：
+
+```text
+FlatTerrainEnv 类
+RoughTerrainEnv 类
+```
+
+更准确是：
+
+```text
+Joystick 类
++ task="flat_terrain"
+或
++ task="rough_terrain"
+```
+
+---
+
+### 8.2 两个环境共用同一个默认 config
+
+当前文件中二者都指向：
+
+```python
+g1_joystick.default_config
+```
+
+所以如果你发现 flat 和 rough 的参数不同，不要优先在 `_cfgs` 中找，而要去 `Joystick` 内部看是否根据 `task` 修改配置或行为。
+
+---
+
+### 8.3 `config_overrides` 没有在这里 merge
+
+`load()` 只是把 `config_overrides` 传给环境构造器：
+
+```python
+_envs[env_name](config=config, config_overrides=config_overrides)
+```
+
+所以覆盖逻辑不在 registry 层。
+
+你要去 `Joystick.__init__` 或其父类看：
+
+```text
+config_overrides 是怎么应用的
+覆盖发生在 default_config 前还是后
+是否支持嵌套 key
+是否会静默忽略错误 key
+```
+
+这是 config 层很容易出错的地方。
+
+---
+
+### 8.4 `ensure_menagerie_exists()` 是潜在移植风险点
+
+这行代码：
+
+```python
+mjx_env.ensure_menagerie_exists()
+```
+
+说明加载环境时依赖外部模型资源。
+
+潜在风险包括：
+
+```text
+Menagerie 路径不存在
+资源未下载
+相对路径失效
+XML 引用 mesh / texture 文件失败
+WSL2 / Windows 路径差异
+agent 改错资源目录
+```
+
+但具体风险是否存在，要看 `ensure_menagerie_exists()` 的实现。当前文件只能确认它被调用了，不能确认它如何处理资源。
+
+---
+
+### 8.5 新增环境时，domain randomizer 不会自动注册
+
+`register_environment()` 只做：
+
+```python
+_envs[env_name] = env_class
+_cfgs[env_name] = cfg_class
+```
+
+没有：
+
+```python
+_randomizer[env_name] = ...
+```
+
+所以你后续如果自己新增 teacher-student、stairs、push recovery 等任务，可能会出现：
+
+```text
+环境能 load
+config 能拿到
+但 get_domain_randomizer 返回 None
+```
+
+这会导致训练看起来能跑，但 domain randomization 没有接入。
+
+---
+
+### 8.6 `_envs` 的类型和注解不完全一致
+
+`register_environment()` 的类型注解写的是：
+
+```python
+env_class: Type[mjx_env.MjxEnv]
+```
+
+但内置 `_envs` 里保存的是：
+
+```python
+functools.partial(g1_joystick.Joystick, task="flat_terrain")
+```
+
+也就是 callable，不是严格意义上的 class。
+
+这不一定是 bug，因为 Python 可以正常调用 partial；但对静态类型检查、IDE 跳转、自动补全可能不友好。
+
+---
+
+【9. 需要继续查看的文件】
+
+下一步建议按这个顺序看。
+
+### 第一优先级：`g1_env/_src/locomotion/g1/joystick.py`
+
+你要确认：
+
+```text
+Joystick 是不是任务环境主类
+task 参数如何影响 flat / rough
+default_config 里有什么
+reset 如何初始化机器人状态
+step 如何推进 MJX
+observation 如何拼接
+privileged observation 是否存在
+reward 项有哪些
+termination 条件是什么
+action 表示什么
+```
+
+这是 G1 locomotion pipeline 的核心文件。
+
+---
+
+### 第二优先级：`g1_env/_src/mjx_env.py`
+
+你要确认：
+
+```text
+MjxEnv 基类接口
+mjx.Model / mjx.Data 如何创建
+MuJoCo XML 如何加载
+Menagerie 路径如何保证存在
+step 的 dt / n_substeps
+State 数据结构
+```
+
+这个文件决定环境如何和 MJX 接起来。
+
+---
+
+### 第三优先级：`g1_env/_src/locomotion/g1/randomize.py`
+
+你要确认：
+
+```text
+domain_randomize 随机化哪些参数
+是否随机化 mass / friction / damping / actuator
+返回 Tuple[mjx.Model, mjx.Model] 的两个模型分别是什么
+是否和 PPO 的 domain randomization API 匹配
+```
+
+---
+
+### 第四优先级：training script / wrapper
+
+你要确认：
+
+```text
+哪里调用 registry.load
+哪里调用 get_domain_randomizer
+Brax PPO 如何接 env
+RSL-RL 如何接 env
+JAX env 是否转换成 Torch tensor
+privileged obs 是否只训练使用
+```
+
+---
+
+【10. 当前文件在整个 pipeline 中的定位总结】
+
+可以把目前两个 registry 文件串起来：
+
+```text
+外部训练脚本
+→ g1_env.registry.load(env_name, config, config_overrides)
+→ g1_env._src.locomotion.load(env_name, config, config_overrides)
+→ mjx_env.ensure_menagerie_exists()
+→ _envs[env_name]
+→ g1_joystick.Joystick(task="flat_terrain" / "rough_terrain")
+→ 具体 G1 MJX 环境实例
+→ PPO / wrapper 调用 reset / step
+```
+
+domain randomization 路径是：
+
+```text
+外部训练脚本
+→ g1_env.registry.get_domain_randomizer(env_name)
+→ g1_env._src.locomotion.get_domain_randomizer(env_name)
+→ g1_randomize.domain_randomize
+→ 训练后端决定是否应用到 mjx.Model
+```
+
+这个文件是 **G1 locomotion 环境注册表**，是关键连接节点，但不是环境动力学、reward、observation 的实现节点。后续真正进入 pipeline 主体，需要读 `joystick.py`。

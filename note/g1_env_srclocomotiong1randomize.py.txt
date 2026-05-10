@@ -1,0 +1,785 @@
+【1. 这段代码在 pipeline 中的位置】
+
+这个 `randomize.py` 属于 **domain randomization 层**。
+
+它不是环境注册层，也不是 `reset / step / reward / observation` 的主体逻辑。它的作用是：在训练时对 MJX 的 `mjx.Model` 做物理参数随机化，让同一个 policy 在不同动力学参数下训练，从而提高鲁棒性。文件开头说明它是 “Utilities for randomization”，核心函数只有 `domain_randomize(model, rng)`。
+
+在前面的 `locomotion.__init__.py` 中，这个函数被注册为：
+
+```python
+_randomizer = {
+    "G1JoystickFlatTerrain": g1_randomize.domain_randomize,
+    "G1JoystickRoughTerrain": g1_randomize.domain_randomize,
+}
+```
+
+也就是说，flat terrain 和 rough terrain 都共用这一套动力学随机化函数。
+
+---
+
+【2. 核心作用】
+
+这个文件接收：
+
+```python
+model: mjx.Model
+rng: jax.Array
+```
+
+输出：
+
+```python
+randomized_model, in_axes
+```
+
+其中：
+
+```text
+model
+→ 被替换部分物理参数
+→ 得到带 batch 维度的 randomized mjx.Model
+
+in_axes
+→ 告诉 JAX/MJX 哪些 model 字段沿 batch 维度变化
+→ 用于 vmap / batched simulation
+```
+
+它随机化的内容包括：
+
+```text
+接触摩擦
+关节 frictionloss
+关节 armature
+body mass
+torso 附加质量
+初始 qpos0
+```
+
+核心目的：
+
+```text
+同一个 G1 机器人 XML / MJX model
+→ 生成一批动力学参数不同的 model
+→ 每个并行环境使用不同动力学
+→ PPO rollout 时 policy 看到更多动力学扰动
+→ 提高 sim-to-real / 跨模型鲁棒性
+```
+
+---
+
+【3. 关键对象/函数/变量】
+
+### 3.1 `FLOOR_GEOM_ID = 0`
+
+源码定义了：
+
+```python
+FLOOR_GEOM_ID = 0
+```
+
+但在当前文件里没有被使用。
+
+这说明它可能是从原始 MuJoCo Playground 代码中保留下来的常量，或者后续版本曾经/准备使用它来指定地面 geom。当前文件中实际摩擦随机化不是通过 `FLOOR_GEOM_ID` 做的，而是直接改：
+
+```python
+model.pair_friction.at[0:2, 0:2]
+```
+
+所以不要误以为 `FLOOR_GEOM_ID` 在这里参与了计算。
+
+---
+
+### 3.2 `TORSO_BODY_ID = 16`
+
+源码定义：
+
+```python
+TORSO_BODY_ID = 16
+```
+
+后面用于：
+
+```python
+body_mass = body_mass.at[TORSO_BODY_ID].set(
+    body_mass[TORSO_BODY_ID] + dmass
+)
+```
+
+作用：给 torso body 单独加一个随机质量扰动。
+
+这属于典型 domain randomization：模拟机器人躯干负载、建模误差、结构质量偏差等。
+
+需要注意：`16` 是硬编码 body id。它强依赖 MJCF / XML 中 body 的顺序。如果你换了 G1 XML、修改了 body 层级、换了 Menagerie 模型版本，这个 id 可能不再指向 torso。
+
+---
+
+### 3.3 `domain_randomize(model, rng)`
+
+这是唯一核心函数。
+
+结构是：
+
+```python
+def domain_randomize(model: mjx.Model, rng: jax.Array):
+  @jax.vmap
+  def rand_dynamics(rng):
+      ...
+  randomized_fields = rand_dynamics(rng)
+  in_axes = ...
+  model = model.tree_replace(...)
+  return model, in_axes
+```
+
+重点是内部用了：
+
+```python
+@jax.vmap
+def rand_dynamics(rng):
+    ...
+```
+
+这意味着 `rng` 不是单个随机 key，而应该是一批随机 key。
+
+更具体地说，源码没有直接写 `rng.shape`，但由于 `rand_dynamics` 被 `jax.vmap` 包起来，合理推断它期望输入类似：
+
+```text
+rng: [num_randomizations, 2]
+```
+
+也就是多个 JAX PRNGKey。具体 batch size 来自哪里，需要看训练脚本或 PPO backend 如何调用 `get_domain_randomizer()`。
+
+---
+
+【4. 随机化了哪些物理量】
+
+### 4.1 floor / foot friction
+
+源码注释：
+
+```python
+# Floor / foot friction: =U(0.4, 1.0).
+```
+
+代码：
+
+```python
+friction = jax.random.uniform(key, minval=0.4, maxval=1.0)
+pair_friction = model.pair_friction.at[0:2, 0:2].set(friction)
+```
+
+含义：
+
+```text
+随机采样 friction ∈ [0.4, 1.0]
+→ 写入 model.pair_friction[0:2, 0:2]
+```
+
+这会影响脚与地面之间的接触摩擦。摩擦越低，越容易打滑；摩擦越高，接触更稳定。
+
+需要注意：这里改的是 `pair_friction` 的前两行前两列。它假设相关 floor-foot contact pair 位于 `pair_friction[0:2, 0:2]`。这个假设是否稳定，要结合 MJCF 里的 `<pair>` 定义确认。
+
+---
+
+### 4.2 `dof_frictionloss[6:]`
+
+源码注释写：
+
+```python
+# Scale static friction: *U(0.9, 1.1).
+```
+
+但实际代码是：
+
+```python
+frictionloss = model.dof_frictionloss[6:] * jax.random.uniform(
+    key, shape=(29,), minval=0.5, maxval=2.0
+)
+dof_frictionloss = model.dof_frictionloss.at[6:].set(frictionloss)
+```
+
+这里有一个明显注意点：**注释和代码不一致**。
+
+注释说是乘以 `U(0.9, 1.1)`，但代码实际使用的是：
+
+```text
+U(0.5, 2.0)
+```
+
+所以以源码执行为准：关节 frictionloss 被缩放到原来的 0.5 到 2.0 倍。
+
+`[6:]` 表示跳过前 6 个自由度。对 floating-base humanoid 来说，前 6 个 dof 通常是自由基座的 6D 速度自由度，后面才是机器人关节 dof。这里的 `shape=(29,)` 说明它假设 G1 有 29 个关节 dof 需要随机化。
+
+---
+
+### 4.3 `dof_armature[6:]`
+
+源码：
+
+```python
+armature = model.dof_armature[6:] * jax.random.uniform(
+    key, shape=(29,), minval=1.0, maxval=1.05
+)
+dof_armature = model.dof_armature.at[6:].set(armature)
+```
+
+含义：
+
+```text
+关节 armature
+→ 乘以 U(1.0, 1.05)
+→ 写回 dof_armature[6:]
+```
+
+`armature` 可以理解为关节侧附加惯量。这个随机化幅度很小，只增加 0% 到 5%。
+
+实际影响：
+
+```text
+关节等效惯量略有变化
+→ 同样控制输入下的加速度响应略有不同
+→ policy 不会过度依赖单一精确动力学模型
+```
+
+---
+
+### 4.4 `body_mass`
+
+源码：
+
+```python
+dmass = jax.random.uniform(
+    key, shape=(model.nbody,), minval=0.9, maxval=1.1
+)
+body_mass = model.body_mass.at[:].set(model.body_mass * dmass)
+```
+
+含义：
+
+```text
+每个 body 的质量
+→ 分别乘以 U(0.9, 1.1)
+```
+
+这是全身 link mass 随机化。
+
+作用：
+
+```text
+大腿、小腿、手臂、躯干等 link 质量发生扰动
+→ 质心、惯性、接触响应都会改变
+→ policy 训练时看到不同质量分布
+```
+
+---
+
+### 4.5 torso 额外质量
+
+源码：
+
+```python
+dmass = jax.random.uniform(key, minval=-1.0, maxval=1.0)
+body_mass = body_mass.at[TORSO_BODY_ID].set(
+    body_mass[TORSO_BODY_ID] + dmass
+)
+```
+
+含义：
+
+```text
+body_mass[16]
+→ 额外加上 U(-1.0, 1.0) kg
+```
+
+这里不是乘法缩放，而是加法扰动。
+
+注意点：
+
+```text
+body_mass[16] 是否一定是 torso
+→ 取决于 XML body 顺序
+→ 需要看 MJCF 模型确认
+```
+
+---
+
+### 4.6 `qpos0[7:]`
+
+源码：
+
+```python
+qpos0 = model.qpos0
+qpos0 = qpos0.at[7:].set(
+    qpos0[7:]
+    + jax.random.uniform(key, shape=(29,), minval=-0.05, maxval=0.05)
+)
+```
+
+含义：
+
+```text
+默认初始关节位置 qpos0[7:]
+→ 加上 U(-0.05, 0.05)
+```
+
+这里 `[7:]` 通常对应跳过 floating base 的 `qpos`：
+
+```text
+root position: 3
+root quaternion: 4
+合计：7
+```
+
+后面的 29 维是关节位置。
+
+实际影响：
+
+```text
+每个随机化 model 的默认初始关节姿态略有不同
+→ reset 初始姿态存在扰动
+→ policy 不只适应唯一初始构型
+```
+
+---
+
+【5. 数据流：输入 → 处理 → 输出】
+
+整体数据流：
+
+```text
+mjx.Model
++ 一批 rng keys
+→ domain_randomize(model, rng)
+→ rand_dynamics 被 jax.vmap 批量执行
+→ 生成 batch 化的 pair_friction / dof_frictionloss / dof_armature / body_mass / qpos0
+→ model.tree_replace(...)
+→ randomized mjx.Model
++ in_axes
+→ 返回给 Brax / MJX training backend
+```
+
+更具体：
+
+```text
+原始 model.pair_friction
+→ 随机设置 [0:2, 0:2]
+→ batched pair_friction
+
+原始 model.dof_frictionloss[6:]
+→ 乘以 U(0.5, 2.0)
+→ batched dof_frictionloss
+
+原始 model.dof_armature[6:]
+→ 乘以 U(1.0, 1.05)
+→ batched dof_armature
+
+原始 model.body_mass
+→ 全 body 乘以 U(0.9, 1.1)
+→ torso 额外加 U(-1, 1)
+→ batched body_mass
+
+原始 model.qpos0[7:]
+→ 加 U(-0.05, 0.05)
+→ batched qpos0
+```
+
+---
+
+【6. `in_axes` 的作用】
+
+这段代码后半部分很关键：
+
+```python
+in_axes = jax.tree_util.tree_map(lambda x: None, model)
+in_axes = in_axes.tree_replace({
+    "pair_friction": 0,
+    "dof_frictionloss": 0,
+    "dof_armature": 0,
+    "body_mass": 0,
+    "qpos0": 0,
+})
+```
+
+它先把整个 `model` 的所有字段都标成 `None`，意思是：
+
+```text
+默认情况下，model 的字段不沿 batch 维度变化
+```
+
+然后只把随机化过的字段标成 `0`：
+
+```text
+pair_friction: batch axis = 0
+dof_frictionloss: batch axis = 0
+dof_armature: batch axis = 0
+body_mass: batch axis = 0
+qpos0: batch axis = 0
+```
+
+这说明返回的 `model` 不是普通单模型，而是部分字段带 batch 维度的 model。
+
+可以理解为：
+
+```text
+大部分 model 参数：
+  所有并行环境共享
+
+被随机化的 model 参数：
+  每个并行环境各有一份
+```
+
+这正是 MJX / JAX 批量仿真的常见组织方式。
+
+---
+
+【7. 与其他文件的连接】
+
+### 7.1 被 `locomotion.__init__.py` 注册
+
+当前文件不会自己被训练脚本直接调用，而是先在 locomotion registry 中被注册：
+
+```python
+_randomizer = {
+    "G1JoystickFlatTerrain": g1_randomize.domain_randomize,
+    "G1JoystickRoughTerrain": g1_randomize.domain_randomize,
+}
+```
+
+所以外部调用链是：
+
+```text
+registry.get_domain_randomizer(env_name)
+→ locomotion.get_domain_randomizer(env_name)
+→ g1_randomize.domain_randomize
+```
+
+---
+
+### 7.2 需要训练入口真正接入
+
+这个文件只是定义 randomizer。是否生效，要看训练入口是否做了类似：
+
+```python
+randomizer = registry.get_domain_randomizer(env_name)
+train_fn(..., randomization_fn=randomizer)
+```
+
+或者 Brax PPO 是否接收了这个函数。
+
+所以完整链条应该是：
+
+```text
+env_name
+→ get_domain_randomizer(env_name)
+→ domain_randomize
+→ PPO backend / wrapper 接收 randomizer
+→ 创建 batched randomized model
+→ rollout 时使用随机化动力学
+```
+
+如果训练脚本没有调用 `get_domain_randomizer()`，那么这个文件存在也不会影响训练。
+
+---
+
+【8. 对训练/仿真/推理的影响】
+
+### 8.1 对训练的影响
+
+训练时启用后，会让 policy 在以下扰动下学习：
+
+```text
+地面/脚接触摩擦变化
+关节 frictionloss 变化
+关节 armature 变化
+全身 link mass 变化
+torso 负载变化
+默认初始姿态变化
+```
+
+这会让训练更难，但通常更鲁棒。
+
+具体表现可能是：
+
+```text
+训练早期收敛更慢
+reward 曲线波动更大
+最终策略对模型误差更稳定
+更不容易只适配一个精确 XML
+```
+
+---
+
+### 8.2 对仿真的影响
+
+它直接改的是 `mjx.Model`，也就是仿真模型参数，而不是 policy 输入。
+
+所以它影响的是：
+
+```text
+同样 action
+→ 不同动力学响应
+→ 不同 next state
+→ 不同 reward / termination
+```
+
+而不是：
+
+```text
+直接改变 observation
+直接改变 reward scale
+直接改变 policy 网络
+```
+
+---
+
+### 8.3 对推理 / 部署的影响
+
+这个文件通常只用于训练阶段。
+
+部署或 evaluation 时是否使用 randomization，要看脚本是否传入 randomizer。
+
+常见逻辑是：
+
+```text
+训练：
+  使用 domain randomization
+
+评估：
+  可以用固定 nominal model
+  也可以用 randomized model 做 robustness evaluation
+
+真实部署：
+  不再使用 mjx.Model randomization
+  policy 已经训练好
+```
+
+当前文件本身没有区分 train/eval/deploy，这个切换需要看训练脚本。
+
+---
+
+【9. shape / 维度信息】
+
+这个文件明确暴露出几个维度假设：
+
+```text
+dof_frictionloss[6:] 的随机化 shape = (29,)
+dof_armature[6:] 的随机化 shape = (29,)
+qpos0[7:] 的随机化 shape = (29,)
+body_mass 的随机化 shape = (model.nbody,)
+```
+
+这些意味着代码假设：
+
+```text
+G1 有 29 个被随机化的关节 dof
+dof 前 6 维是 floating base
+qpos 前 7 维是 floating base position + quaternion
+```
+
+这对 G1 humanoid 是合理结构，但它是硬编码假设。
+
+如果你更换模型，比如：
+
+```text
+减少手臂自由度
+换成 G1 EDU / G1 其他版本
+修改 XML joint 数量
+使用固定基座模型
+```
+
+这段代码很可能 shape 不匹配。
+
+---
+
+【10. 容易误解或需要注意的点】
+
+### 10.1 这是 dynamics randomization，不是 terrain randomization
+
+虽然它会随机化 floor/foot friction，但它没有生成 rough terrain，也没有改 heightfield。
+
+所以它不是：
+
+```text
+地形随机化
+障碍物随机化
+命令随机化
+传感器噪声随机化
+push disturbance
+```
+
+它只是物理参数随机化。
+
+rough terrain 的高度图、terrain 几何、height samples 等内容如果存在，应在 `joystick.py` 或 terrain 相关文件里找。
+
+---
+
+### 10.2 注释和代码存在不一致
+
+这里：
+
+```python
+# Scale static friction: *U(0.9, 1.1).
+```
+
+但代码实际是：
+
+```python
+minval=0.5, maxval=2.0
+```
+
+所以解释训练行为时必须以代码为准。
+
+这可能是原始注释没更新，也可能是作者故意扩大范围后忘了改注释。
+
+---
+
+### 10.3 `FLOOR_GEOM_ID` 没有使用
+
+当前文件定义了：
+
+```python
+FLOOR_GEOM_ID = 0
+```
+
+但没有实际使用。
+
+所以不要根据这个常量推断当前 friction randomization 的索引逻辑。实际用的是：
+
+```python
+pair_friction.at[0:2, 0:2]
+```
+
+---
+
+### 10.4 `TORSO_BODY_ID = 16` 是硬编码风险
+
+如果模型 body 顺序变化，`16` 不一定仍是 torso。
+
+更稳健的写法一般是通过 body name 查 id，但当前源码没有这样做。
+
+因此如果你后面移植 XML，要特别检查：
+
+```text
+body_mass[16] 是否仍然对应 torso
+```
+
+---
+
+### 10.5 29 维关节假设是移植风险
+
+这些地方都写死了 `shape=(29,)`：
+
+```python
+dof_frictionloss[6:]
+dof_armature[6:]
+qpos0[7:]
+```
+
+所以当前 randomizer 是 G1-specific 的，不是通用 humanoid randomizer。
+
+如果后面你做 teacher-student、改 action space、裁剪关节、锁住某些关节，这里也要同步改。
+
+---
+
+### 10.6 randomizer 是否生效取决于训练入口
+
+只看当前文件不能确认训练时已经使用了 domain randomization。
+
+必须继续检查：
+
+```text
+train.py / train_jax_ppo.py / wrapper
+```
+
+看是否调用：
+
+```python
+registry.get_domain_randomizer(env_name)
+```
+
+以及是否把返回的函数传给 Brax PPO 或 MJX rollout 构造过程。
+
+---
+
+【11. 需要继续查看的文件】
+
+下一步建议看这几个文件：
+
+### 11.1 training script
+
+目标：确认 randomizer 是否真的接入训练。
+
+重点搜索：
+
+```text
+get_domain_randomizer
+domain_randomize
+randomization_fn
+randomization
+in_axes
+ppo.train
+```
+
+你要确认：
+
+```text
+domain_randomize 是否只定义了
+还是实际传入了 PPO backend
+```
+
+---
+
+### 11.2 `joystick.py`
+
+目标：确认这些随机化参数如何影响任务。
+
+重点看：
+
+```text
+XML 加载
+mjx.Model 创建
+reset 是否使用 model.qpos0
+action 维度是否对应 29
+obs 是否包含 friction / mass 等 privileged info
+reward 是否受接触摩擦影响
+rough terrain 是否在这里处理
+```
+
+尤其是 `qpos0`：当前 randomizer 改了 `model.qpos0`，但 reset 是否真的用 `model.qpos0`，需要看 `Joystick.reset()` 或父类 reset。
+
+---
+
+### 11.3 G1 MJCF / XML
+
+目标：确认硬编码索引是否正确。
+
+重点确认：
+
+```text
+body id 16 是不是 torso
+pair_friction[0:2, 0:2] 对应什么 contact pair
+joint 数量是否为 29
+qpos 结构是否为 7 + 29
+dof 结构是否为 6 + 29
+```
+
+---
+
+【12. 当前文件总结】
+
+这个 `randomize.py` 可以压缩成一句话：
+
+```text
+它为 G1 locomotion 训练生成一批动力学参数随机化后的 mjx.Model，并返回对应的 in_axes，让 MJX/JAX 可以在并行环境中使用不同的摩擦、质量、关节阻尼/惯量和初始姿态。
+```
+
+在完整 pipeline 中的位置是：
+
+```text
+registry.get_domain_randomizer(env_name)
+→ locomotion.get_domain_randomizer(env_name)
+→ g1.randomize.domain_randomize(model, rng)
+→ randomized mjx.Model + in_axes
+→ PPO / MJX rollout 使用随机化动力学训练 policy
+```
+
+它是训练鲁棒性的关键模块，但不是环境 step/reward/obs 的核心实现。下一步要确认它是否真实参与训练，必须看训练入口和 PPO wrapper。

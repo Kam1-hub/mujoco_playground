@@ -1,0 +1,190 @@
+计划 fdstemplate/
+│
+├── .gitignore                                      # Git 忽略文件配置
+├── README.md                                       # 项目说明文档
+├── USAGE.md                                        # 详细使用指南
+├── pyproject.toml                                  # Python 项目配置（依赖、构建、工具）
+├── work_review.md                                  # 工作检查报告
+├── verify_structure.sh                             # 结构验证脚本
+│
+├── g1_env/                                         # 核心环境包（替代 mujoco_playground）
+│   ├── __init__.py                                 # 包导出接口（MjxEnv, registry, wrapper 等）
+│   │
+│   ├── _src/                                       # 核心实现
+│   │   ├── __init__.py                             # Apache 2.0 许可证头部
+│   │   ├── mjx_env.py                              # MJX 环境基类
+│   │   │                                           # - MjxEnv: 环境接口、状态管理
+│   │   │                                           # - State: 环境状态数据类
+│   │   │                                           # - render_array: 渲染函数
+│   │   │                                           # - ensure_menagerie_exists: 下载 Menagerie
+│   │   │                                           # - ROOT_PATH: 动态计算资源路径
+│   │   │
+│   │   ├── gait.py                                 # 步态生成与跟踪工具
+│   │   │                                           # - get_rz: 旋转矩阵计算
+│   │   │                                           # - 三次贝塞尔插值
+│   │   │                                           # - 步态相位定义（小跑、侧步等）
+│   │   │
+│   │   ├── reward.py                               # 奖励函数工具库
+│   │   │                                           # - dm_control 风格的容差函数
+│   │   │                                           # - sigmoid 函数
+│   │   │
+│   │   ├── registry.py                             # 环境注册表（裁剪版，仅 G1）
+│   │   │                                           # - ALL_ENVS: 可用环境列表
+│   │   │                                           # - get_default_config: 获取默认配置
+│   │   │                                           # - load: 加载环境实例
+│   │   │                                           # - get_domain_randomizer: 获取域随机化器
+│   │   │
+│   │   ├── wrapper.py                              # Brax 环境包装器
+│   │   │                                           # - Wrapper: 基础包装器类
+│   │   │                                           # - wrap_for_brax_training: Brax 训练包装
+│   │   │
+│   │   ├── wrapper_torch.py                        # Torch 互操作包装器
+│   │   │                                           # - TorchWrapper: JAX↔Torch 张量转换
+│   │   │                                           # - RSL-RL VecEnv 接口
+│   │   │
+│   │   └── locomotion/                             # 运动控制环境
+│   │       ├── __init__.py                         # 环境注册（裁剪版，仅 G1）
+│   │       │                                       # - _envs: 环境类字典
+│   │       │                                       # - _cfgs: 配置字典
+│   │       │                                       # - _randomizer: 域随机化器字典
+│   │       │                                       # - register_environment: 注册新环境
+│   │       │                                       # - get_default_config: 获取配置
+│   │       │                                       # - load: 加载环境
+│   │       │                                       # - get_domain_randomizer: 获取随机化器
+│   │       │
+│   │       └── g1/                                 # Unitree G1 人形机器人
+│   │           ├── __init__.py                     # 空文件
+│   │           │
+│   │           ├── base.py                         # G1 基础环境类
+│   │           │                                   # - get_assets: 加载 XML 和资源文件
+│   │           │                                   # - G1Env: 继承 MjxEnv
+│   │           │                                   #   - 加载 G1 模型
+│   │           │                                   #   - 提供传感器数据接口
+│   │           │                                   #   - 重力、线速度、角速度、加速度、陀螺仪
+│   │           │
+│   │           ├── g1_constants.py                 # G1 常量定义
+│   │           │                                   # - ROOT_PATH: G1 资源路径
+│   │           │                                   # - XML 文件路径
+│   │           │                                   # - 脚部/手部位置
+│   │           │                                   # - 几何体 ID
+│   │           │                                   # - 传感器名称
+│   │           │                                   # - 关节范围限制（29 个执行器）
+│   │           │
+│   │           ├── joystick.py                     # 手柄控制任务（核心环境）
+│   │           │                                   # - default_config: 默认配置
+│   │           │                                   #   - ctrl_dt: 0.02s (50Hz)
+│   │           │                                   #   - sim_dt: 0.002s (500Hz)
+│   │           │                                   #   - episode_length: 1000 步
+│   │           │                                   #   - action_scale: 0.5
+│   │           │                                   # - Joystick: 任务类
+│   │           │                                   #   - reset: 初始化环境
+│   │           │                                   #   - step: 执行一步仿真
+│   │           │                                   #   - _get_obs: 生成观测
+│   │           │                                   #     - state: 101 维
+│   │           │                                   #     - privileged_state: 150+ 维
+│   │           │                                   #   - _get_reward: 计算奖励（20+ 项）
+│   │           │                                   #     - 跟踪奖励（线速度、角速度）
+│   │           │                                   #     - 基础奖励（高度、方向、能量）
+│   │           │                                   #     - 脚部奖励（滑动、间隙、空中时间）
+│   │           │                                   #     - 姿态奖励（关节偏差、位置限制）
+│   │           │                                   #   - _get_termination: 检查终止条件
+│   │           │
+│   │           ├── randomize.py                    # 域随机化
+│   │           │                                   # - domain_randomize: 随机化函数
+│   │           │                                   #   - 摩擦力
+│   │           │                                   #   - 关节摩擦损失
+│   │           │                                   #   - 电枢
+│   │           │                                   #   - 质量
+│   │           │                                   #   - 初始位置
+│   │           │
+│   │           └── xmls/                           # MuJoCo 模型文件
+│   │               ├── g1_mjx_feetonly.xml         # G1 主模型（仅脚部碰撞）
+│   │               │                               # - 29 个关节
+│   │               │                               # - 身体、几何体、执行器定义
+│   │               │
+│   │               ├── g1_mjx_feetonly_restricted.xml  # 受限关节范围版本
+│   │               │
+│   │               ├── scene_mjx_feetonly.xml      # 基础场景模板
+│   │               │
+│   │               ├── scene_mjx_feetonly_flat_terrain.xml  # 平坦地形场景
+│   │               │                               # - 包含 g1_mjx_feetonly.xml
+│   │               │                               # - 平面地板
+│   │               │
+│   │               ├── scene_mjx_feetonly_rough_terrain.xml  # 粗糙地形场景
+│   │               │                               # - 高度场地形
+│   │               │                               # - 岩石纹理
+│   │               │
+│   │               ├── sensor.xml                  # 传感器定义
+│   │               │                               # - IMU（陀螺仪、加速度计）
+│   │               │                               # - 接触力传感器
+│   │               │                               # - 线速度传感器
+│   │               │
+│   │               └── assets/                     # 纹理资源
+│   │                   ├── hfield.png              # 高度场纹理
+│   │                   └── rocky_texture.png       # 岩石纹理
+│   │
+│   └── config/                                     # RL 训练配置
+│       ├── __init__.py                             # 配置导出
+│       │
+│       └── locomotion_params.py                    # G1 运动控制参数（裁剪版）
+│                                                   # - brax_ppo_config: Brax PPO 配置
+│                                                   #   - num_timesteps: 200M
+│                                                   #   - num_evals: 20
+│                                                   #   - num_envs: 8192
+│                                                   #   - learning_rate: 3e-4
+│                                                   #   - entropy_cost: 0.005
+│                                                   #   - clipping_epsilon: 0.2
+│                                                   #   - network: Policy (512,256,128)
+│                                                   #              Value (512,256,128)
+│                                                   # - rsl_rl_config: RSL-RL 配置
+│                                                   #   - max_iterations: 1000
+│                                                   #   - num_steps_per_env: 24
+│                                                   #   - learning_rate: 3e-4
+│                                                   #   - clip_param: 0.2
+│
+└── learning/                                       # 训练脚本
+    ├── __init__.py                                 # 训练脚本包
+    │
+    ├── train_jax_ppo.py                            # JAX PPO 训练脚本
+    │                                               # - 使用 Brax PPO 算法
+    │                                               # - 支持 JAX/Warp 后端
+    │                                               # - 支持域随机化
+    │                                               # - 支持视觉输入
+    │                                               # - WandB/TensorBoard 日志
+    │                                               # - 检查点保存/加载
+    │                                               # - 评估和视频录制
+    │                                               # - 入口点: train-g1-jax
+    │
+    └── train_rsl_rl.py                             # RSL-RL 训练脚本
+                                                    # - 使用 RSL-RL PPO 算法
+                                                    # - PyTorch 后端
+                                                    # - 支持多 GPU 分布式训练
+                                                    # - 检查点保存/加载
+                                                    # - WandB 日志
+                                                    # - 入口点: train-g1-rsl
+
+═══════════════════════════════════════════════════════════════════════════════
+
+文件统计:
+  - Python 文件: 19 个
+  - XML 模型文件: 6 个
+  - 资源文件: 2 个
+  - 配置文件: 4 个 (pyproject.toml, README.md, USAGE.md, .gitignore)
+  - 文档文件: 3 个 (work_review.md, verify_structure.sh, filemap.txt)
+  - 总计: 34 个文件
+
+环境:
+  - G1JoystickFlatTerrain: 平坦地形手柄控制
+  - G1JoystickRoughTerrain: 粗糙地形手柄控制
+
+训练方式:
+  - JAX PPO (Brax): train-g1-jax
+  - RSL-RL (PyTorch): train-g1-rsl
+
+关键特性:
+  - MJX 加速仿真
+  - 域随机化支持
+  - 特权信息（privileged state）
+  - 20+ 奖励项
+  - 50Hz 控制频率
+  - 29 个关节执行器

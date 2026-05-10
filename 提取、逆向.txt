@@ -1,0 +1,568 @@
+  # G1 Pipeline 提取与逆向映射说明
+
+  ## 文档 1：正向提取说明（从 MuJoCo Playground 到独立 Template）
+
+  ### 1. 提取目标
+
+  从 MuJoCo Playground 多机器人仓库中提取**宇树 G1 人形机器人的完整训练 pipeline**，使其：
+  - 完全独立，不依赖原仓库
+  - 保留原仓库的工程化文件管理结构
+  - 剔除所有无关内容（其他 8 个机器人、manipulation、dm_control_suite）
+  - 可直接运行（从环境定义到训练脚本）
+
+  ### 2. 提取策略
+
+  #### 2.1 核心原则
+
+  **包名重命名**：`mujoco_playground` → `g1_env`
+  - 原因：避免与原仓库冲突，明确表达这是 G1 专用环境
+  - 影响：所有导入路径需要全局替换
+
+  **选择性复制**：
+  - ✅ 复制：G1 相关的所有文件
+  - ✅ 复制：通用基础设施（mjx_env, gait, reward, wrapper）
+  - ❌ 删除：其他机器人（Apollo, Barkour, Berkeley Humanoid, Go1, H1, OP3, Spot, T1）
+  - ❌ 删除：manipulation 任务
+  - ❌ 删除：dm_control_suite 任务
+
+  **裁剪注册系统**：
+  - 原仓库的注册系统支持 3 个任务域（locomotion, manipulation, dm_control_suite）
+  - Template 仅保留 locomotion，且仅注册 G1 的 2 个环境
+
+  #### 2.2 文件映射关系
+
+  **第一类：完整复制的基础设施文件（5个）**
+
+  这些文件从原仓库复制后，仅修改了导入路径（mujoco_playground → g1_env）：
+
+  1. `mujoco_playground/_src/mjx_env.py`
+     - 复制到：`g1_env/_src/mjx_env.py`
+     - 修改：无（内部使用相对导入）
+
+  2. `mujoco_playground/_src/gait.py`
+     - 复制到：`g1_env/_src/gait.py`
+     - 修改：无
+
+  3. `mujoco_playground/_src/reward.py`
+     - 复制到：`g1_env/_src/reward.py`
+     - 修改：无
+
+  4. `mujoco_playground/_src/wrapper.py`
+     - 复制到：`g1_env/_src/wrapper.py`
+     - 修改：导入路径 `from mujoco_playground._src import mjx_env` → `from g1_env._src import mjx_env`
+
+  5. `mujoco_playground/_src/wrapper_torch.py`
+     - 复制到：`g1_env/_src/wrapper_torch.py`
+     - 修改：导入路径 `from mujoco_playground._src import mjx_env` → `from g1_env._src import mjx_env`
+
+  **第二类：完整复制的 G1 环境文件（12个）**
+
+  这些文件从原仓库的 G1 目录完整复制，仅修改导入路径：
+
+  6. `mujoco_playground/_src/locomotion/g1/base.py`
+     - 复制到：`g1_env/_src/locomotion/g1/base.py`
+     - 修改：导入路径 `from mujoco_playground._src import mjx_env` → `from g1_env._src import mjx_env`
+     - 修改：导入路径 `from mujoco_playground._src.locomotion.g1 import g1_constants` → `from g1_env._src.locomotion.g1 import g1_constants`
+
+  7. `mujoco_playground/_src/locomotion/g1/g1_constants.py`
+     - 复制到：`g1_env/_src/locomotion/g1/g1_constants.py`
+     - 修改：导入路径 `from mujoco_playground._src import mjx_env` → `from g1_env._src import mjx_env`
+
+  8. `mujoco_playground/_src/locomotion/g1/joystick.py`
+     - 复制到：`g1_env/_src/locomotion/g1/joystick.py`
+     - 修改：所有 `mujoco_playground` 导入改为 `g1_env`
+
+  9. `mujoco_playground/_src/locomotion/g1/randomize.py`
+     - 复制到：`g1_env/_src/locomotion/g1/randomize.py`
+     - 修改：导入路径
+
+  10-15. XML 和资源文件（6个）：
+     - `g1_mjx_feetonly.xml`
+     - `g1_mjx_feetonly_restricted.xml`
+     - `scene_mjx_feetonly.xml`
+     - `scene_mjx_feetonly_flat_terrain.xml`
+     - `scene_mjx_feetonly_rough_terrain.xml`
+     - `sensor.xml`
+     - 复制到：`g1_env/_src/locomotion/g1/xmls/`
+     - 修改：无
+
+  16-17. 纹理资源（2个）：
+     - `hfield.png`
+     - `rocky_texture.png`
+     - 复制到：`g1_env/_src/locomotion/g1/xmls/assets/`
+     - 修改：无
+
+  **第三类：裁剪后的注册系统文件（3个）**
+
+  这些文件需要大幅裁剪，删除其他机器人和任务域的内容：
+
+  18. `mujoco_playground/_src/registry.py`
+      - 复制到：`g1_env/_src/registry.py`
+      - 删除：`dm_control_suite` 和 `manipulation` 的导入
+      - 修改：`ALL_ENVS = locomotion.ALL_ENVS`（原来是三个域的合并）
+      - 简化：所有函数仅调用 `locomotion` 模块
+
+  19. `mujoco_playground/_src/locomotion/__init__.py`
+      - 复制到：`g1_env/_src/locomotion/__init__.py`
+      - 删除：其他 8 个机器人的导入（保留 G1）
+      - 裁剪：`_envs` 字典仅保留 2 个 G1 环境
+      - 裁剪：`_cfgs` 字典仅保留 G1 配置
+      - 裁剪：`_randomizer` 字典仅保留 G1 随机化器
+
+  20. `mujoco_playground/config/locomotion_params.py`
+      - 复制到：`g1_env/config/locomotion_params.py`
+      - 删除：其他机器人的配置分支
+      - 保留：G1 的 `brax_ppo_config` 和 `rsl_rl_config`
+      - 添加：else 分支抛出错误提示仅支持 G1
+
+  **第四类：修改导入路径的训练脚本（2个）**
+
+  21. `mujoco_playground/learning/train_jax_ppo.py`
+      - 复制到：`learning/train_jax_ppo.py`
+      - 修改：所有 `import mujoco_playground` → `import g1_env`
+      - 修改：所有 `from mujoco_playground` → `from g1_env`
+      - 删除：`dm_control_suite_params` 和 `manipulation_params` 导入
+      - 修改：默认环境名改为 `G1JoystickFlatTerrain`
+      - 简化：`get_rl_config` 函数仅支持 locomotion
+
+  22. `mujoco_playground/learning/train_rsl_rl.py`
+      - 复制到：`learning/train_rsl_rl.py`
+      - 修改：同上
+
+  **第五类：新建文件（7个）**
+
+  23. `g1_env/__init__.py`（新建）
+      - 导出核心接口：`MjxEnv`, `State`, `registry`, `wrapper`, `wrapper_torch` 等
+
+  24. `g1_env/_src/__init__.py`（新建）
+      - Apache 2.0 许可证头部
+
+  25. `g1_env/_src/locomotion/__init__.py`（新建）
+      - 空文件或许可证头部
+
+  26. `g1_env/_src/locomotion/g1/__init__.py`（新建）
+      - 空文件或许可证头部
+
+  27. `g1_env/config/__init__.py`（新建）
+      - 导出 `locomotion_params`
+
+  28. `learning/__init__.py`（新建）
+      - 空文件或许可证头部
+
+  29. `pyproject.toml`（裁剪版）
+      - 基于原仓库的 `pyproject.toml`
+      - 修改：包名改为 `g1-training-env`
+      - 修改：`packages = ["g1_env", "learning"]`
+      - 删除：`dm_control` 测试依赖
+      - 修改：scripts 入口点改为 `train-g1-jax` 和 `train-g1-rsl`
+
+  30. `README.md`（新建）
+      - 项目说明、安装、快速开始
+
+  31. `USAGE.md`（新建）
+      - 详细使用指南
+
+  32. `.gitignore`（复制）
+      - 从原仓库复制
+
+  ### 3. 关键修改点总结
+
+  #### 3.1 导入路径替换（全局）
+
+  所有文件中的导入路径需要替换：
+  ```python
+  # 修改前
+  import mujoco_playground
+  from mujoco_playground import registry
+  from mujoco_playground._src import mjx_env
+  from mujoco_playground.config import locomotion_params
+
+  # 修改后
+  import g1_env
+  from g1_env import registry
+  from g1_env._src import mjx_env
+  from g1_env.config import locomotion_params
+
+  3.2 注册系统裁剪
+
+  registry.py 的变化：
+  # 原仓库（支持 3 个任务域）
+  from mujoco_playground._src import dm_control_suite
+  from mujoco_playground._src import locomotion
+  from mujoco_playground._src import manipulation
+
+  ALL_ENVS = (
+      dm_control_suite.ALL_ENVS +
+      locomotion.ALL_ENVS +
+      manipulation.ALL_ENVS
+  )
+
+  # Template（仅支持 locomotion）
+  from g1_env._src import locomotion
+
+  ALL_ENVS = locomotion.ALL_ENVS
+
+  locomotion/init.py 的变化：
+  # 原仓库（9 个机器人）
+  from mujoco_playground._src.locomotion import apollo
+  from mujoco_playground._src.locomotion import barkour
+  from mujoco_playground._src.locomotion import berkeley_humanoid
+  from mujoco_playground._src.locomotion.g1 import joystick as g1_joystick
+  from mujoco_playground._src.locomotion import go1
+  from mujoco_playground._src.locomotion import h1
+  from mujoco_playground._src.locomotion import op3
+  from mujoco_playground._src.locomotion import spot
+  from mujoco_playground._src.locomotion import t1
+
+  _envs = {
+      "ApolloWalk": ...,
+      "BarkourRun": ...,
+      "BerkeleyHumanoidWalk": ...,
+      "G1JoystickFlatTerrain": ...,
+      "G1JoystickRoughTerrain": ...,
+      "Go1Run": ...,
+      "H1Walk": ...,
+      "OP3Walk": ...,
+      "SpotRun": ...,
+      "T1Walk": ...,
+  }
+
+  # Template（仅 G1）
+  from g1_env._src.locomotion.g1 import joystick as g1_joystick
+  from g1_env._src.locomotion.g1 import randomize as g1_randomize
+
+  _envs = {
+      "G1JoystickFlatTerrain": functools.partial(
+          g1_joystick.Joystick, task="flat_terrain"
+      ),
+      "G1JoystickRoughTerrain": functools.partial(
+          g1_joystick.Joystick, task="rough_terrain"
+      ),
+  }
+
+  3.3 训练配置裁剪
+
+  locomotion_params.py 的变化：
+  # 原仓库（支持所有机器人）
+  def brax_ppo_config(env_name: str, impl: Optional[str] = None):
+      # ... 默认配置 ...
+
+      if env_name == "ApolloWalk":
+          # Apollo 配置
+      elif env_name == "BarkourRun":
+          # Barkour 配置
+      # ... 其他机器人 ...
+      elif env_name in ("G1JoystickFlatTerrain", "G1JoystickRoughTerrain"):
+          # G1 配置
+      else:
+          raise ValueError(f"Unsupported env: {env_name}")
+
+  # Template（仅 G1）
+  def brax_ppo_config(env_name: str, impl: Optional[str] = None):
+      # ... 默认配置 ...
+
+      if env_name in ("G1JoystickFlatTerrain", "G1JoystickRoughTerrain"):
+          rl_config.num_timesteps = 200_000_000
+          rl_config.num_evals = 20
+          rl_config.clipping_epsilon = 0.2
+          rl_config.entropy_cost = 0.005
+          rl_config.network_factory = config_dict.create(
+              policy_hidden_layer_sizes=(512, 256, 128),
+              value_hidden_layer_sizes=(512, 256, 128),
+              policy_obs_key="state",
+              value_obs_key="privileged_state",
+          )
+      else:
+          raise ValueError(
+              f"Unsupported env: {env_name}. "
+              "Only G1 environments are supported in this template."
+          )
+
+  4. 验证独立性
+
+  完成提取后，Template 目录应该：
+
+  1. 不依赖原仓库：
+    - 所有导入都指向 g1_env
+    - 不存在 mujoco_playground 的导入
+  2. 可独立安装：
+  cd template
+  pip install -e .
+  3. 可独立运行：
+  # 测试导入
+  python -c "import g1_env; print(g1_env.registry.ALL_ENVS)"
+  # 输出：('G1JoystickFlatTerrain', 'G1JoystickRoughTerrain')
+
+  # 测试训练
+  train-g1-jax --env_name G1JoystickFlatTerrain --num_timesteps 1000
+  4. 文件完整性：
+    - 所有 G1 相关文件都已复制
+    - XML 模型文件完整
+    - 纹理资源完整
+    - 训练脚本可用
+
+  ---
+  文档 2：逆向映射说明（从 Template 回到 MuJoCo Playground）
+
+  1. 逆向映射的目的
+
+  当你学习完 Template 中的 G1 pipeline 后，回到 MuJoCo Playground 原仓库时，需要理解：
+  - Template 中的每个文件对应原仓库的哪个文件
+  - Template 中被裁剪的内容在原仓库中是什么样子
+  - 如何在原仓库中找到其他机器人的实现
+
+  2. 包名逆向映射
+
+  核心规则：g1_env → mujoco_playground
+
+  在 Template 中看到的所有 g1_env 导入，在原仓库中都是 mujoco_playground：
+
+  # Template 中
+  import g1_env
+  from g1_env import registry
+  from g1_env._src import mjx_env
+  from g1_env._src.locomotion.g1 import joystick
+
+  # 原仓库中
+  import mujoco_playground
+  from mujoco_playground import registry
+  from mujoco_playground._src import mjx_env
+  from mujoco_playground._src.locomotion.g1 import joystick
+
+  3. 文件路径逆向映射
+
+  3.1 基础设施文件（1:1 映射）
+
+  这些文件在 Template 和原仓库中是相同的（除了导入路径）：
+
+  ┌──────────────────────────────┬─────────────────────────────────────────┬──────────────┐
+  │        Template 路径         │               原仓库路径                │     说明     │
+  ├──────────────────────────────┼─────────────────────────────────────────┼──────────────┤
+  │ g1_env/_src/mjx_env.py       │ mujoco_playground/_src/mjx_env.py       │ MJX 环境基类 │
+  ├──────────────────────────────┼─────────────────────────────────────────┼──────────────┤
+  │ g1_env/_src/gait.py          │ mujoco_playground/_src/gait.py          │ 步态生成工具 │
+  ├──────────────────────────────┼─────────────────────────────────────────┼──────────────┤
+  │ g1_env/_src/reward.py        │ mujoco_playground/_src/reward.py        │ 奖励函数工具 │
+  ├──────────────────────────────┼─────────────────────────────────────────┼──────────────┤
+  │ g1_env/_src/wrapper.py       │ mujoco_playground/_src/wrapper.py       │ Brax 包装器  │
+  ├──────────────────────────────┼─────────────────────────────────────────┼──────────────┤
+  │ g1_env/_src/wrapper_torch.py │ mujoco_playground/_src/wrapper_torch.py │ Torch 包装器 │
+  └──────────────────────────────┴─────────────────────────────────────────┴──────────────┘
+
+  3.2 G1 环境文件（1:1 映射）
+
+  ┌───────────────────────────────────────────┬──────────────────────────────────────────────────────┬──────────────┐
+  │               Template 路径               │                      原仓库路径                      │     说明     │
+  ├───────────────────────────────────────────┼──────────────────────────────────────────────────────┼──────────────┤
+  │ g1_env/_src/locomotion/g1/base.py         │ mujoco_playground/_src/locomotion/g1/base.py         │ G1 基础环境  │
+  ├───────────────────────────────────────────┼──────────────────────────────────────────────────────┼──────────────┤
+  │ g1_env/_src/locomotion/g1/g1_constants.py │ mujoco_playground/_src/locomotion/g1/g1_constants.py │ G1 常量      │
+  ├───────────────────────────────────────────┼──────────────────────────────────────────────────────┼──────────────┤
+  │ g1_env/_src/locomotion/g1/joystick.py     │ mujoco_playground/_src/locomotion/g1/joystick.py     │ 手柄控制任务 │
+  ├───────────────────────────────────────────┼──────────────────────────────────────────────────────┼──────────────┤
+  │ g1_env/_src/locomotion/g1/randomize.py    │ mujoco_playground/_src/locomotion/g1/randomize.py    │ 域随机化     │
+  ├───────────────────────────────────────────┼──────────────────────────────────────────────────────┼──────────────┤
+  │ g1_env/_src/locomotion/g1/xmls/*          │ mujoco_playground/_src/locomotion/g1/xmls/*          │ XML 模型文件 │
+  └───────────────────────────────────────────┴──────────────────────────────────────────────────────┴──────────────┘
+
+  3.3 裁剪文件（1:多 映射）
+
+  这些文件在 Template 中被裁剪，原仓库中包含更多内容：
+
+  registry.py：
+  - Template：g1_env/_src/registry.py（仅 locomotion）
+  - 原仓库：mujoco_playground/_src/registry.py（locomotion + manipulation + dm_control_suite）
+
+  locomotion/init.py：
+  - Template：g1_env/_src/locomotion/__init__.py（仅 G1）
+  - 原仓库：mujoco_playground/_src/locomotion/__init__.py（9 个机器人）
+
+  locomotion_params.py：
+  - Template：g1_env/config/locomotion_params.py（仅 G1 配置）
+  - 原仓库：mujoco_playground/config/locomotion_params.py（所有机器人配置）
+
+  3.4 训练脚本（修改后的映射）
+
+  ┌───────────────────────────┬─────────────────────────────────────────────┬──────────────────────┐
+  │       Template 路径       │                 原仓库路径                  │       主要差异       │
+  ├───────────────────────────┼─────────────────────────────────────────────┼──────────────────────┤
+  │ learning/train_jax_ppo.py │ mujoco_playground/learning/train_jax_ppo.py │ 导入路径、默认环境名 │
+  ├───────────────────────────┼─────────────────────────────────────────────┼──────────────────────┤
+  │ learning/train_rsl_rl.py  │ mujoco_playground/learning/train_rsl_rl.py  │ 导入路径、默认环境名 │
+  └───────────────────────────┴─────────────────────────────────────────────┴──────────────────────┘
+
+  4. 如何在原仓库中找到其他机器人
+
+  4.1 查看所有可用环境
+
+  在原仓库中：
+  import mujoco_playground
+  print(mujoco_playground.registry.ALL_ENVS)
+  # 输出包含所有机器人的环境列表
+
+  4.2 其他机器人的目录结构
+
+  原仓库的 mujoco_playground/_src/locomotion/ 目录下包含：
+
+  locomotion/
+  ├── __init__.py              # 注册所有机器人
+  ├── apollo/                  # Apollo 四足机器人
+  │   ├── __init__.py
+  │   ├── base.py
+  │   ├── walk.py
+  │   └── xmls/
+  ├── barkour/                 # Barkour 四足机器人
+  │   ├── __init__.py
+  │   ├── base.py
+  │   ├── run.py
+  │   └── xmls/
+  ├── berkeley_humanoid/       # Berkeley 人形机器人
+  │   ├── __init__.py
+  │   ├── base.py
+  │   ├── walk.py
+  │   └── xmls/
+  ├── g1/                      # G1 人形机器人（Template 中的内容）
+  │   ├── __init__.py
+  │   ├── base.py
+  │   ├── g1_constants.py
+  │   ├── joystick.py
+  │   ├── randomize.py
+  │   └── xmls/
+  ├── go1/                     # Go1 四足机器人
+  ├── h1/                      # H1 人形机器人
+  ├── op3/                     # OP3 人形机器人
+  ├── spot/                    # Spot 四足机器人
+  └── t1/                      # T1 人形机器人
+
+  4.3 学习其他机器人的实现
+
+  如果你想学习其他机器人（例如 H1），可以参考 G1 的结构：
+
+  1. 查看环境定义：mujoco_playground/_src/locomotion/h1/
+  2. 查看注册方式：mujoco_playground/_src/locomotion/__init__.py 中的 H1 部分
+  3. 查看训练配置：mujoco_playground/config/locomotion_params.py 中的 H1 配置
+  4. 运行训练：
+  python mujoco_playground/learning/train_jax_ppo.py --env_name H1Walk
+
+  5. 原仓库中被删除的任务域
+
+  Template 中删除了两个任务域，它们在原仓库中的位置：
+
+  5.1 Manipulation 任务
+
+  - 路径：mujoco_playground/_src/manipulation/
+  - 内容：机械臂操作任务（抓取、放置等）
+  - 注册：mujoco_playground/_src/manipulation/__init__.py
+  - 配置：mujoco_playground/config/manipulation_params.py
+
+  5.2 DM Control Suite 任务
+
+  - 路径：mujoco_playground/_src/dm_control_suite/
+  - 内容：DeepMind Control Suite 的 MJX 实现
+  - 注册：mujoco_playground/_src/dm_control_suite/__init__.py
+  - 配置：mujoco_playground/config/dm_control_suite_params.py
+
+  6. 关键差异对照表
+
+  6.1 环境数量
+
+  ┌───────────────────┬────────────┬──────────────────────┐
+  │       项目        │  Template  │        原仓库        │
+  ├───────────────────┼────────────┼──────────────────────┤
+  │ Locomotion 环境   │ 2 个（G1） │ 10+ 个（9 个机器人） │
+  ├───────────────────┼────────────┼──────────────────────┤
+  │ Manipulation 环境 │ 0 个       │ 多个                 │
+  ├───────────────────┼────────────┼──────────────────────┤
+  │ DM Control Suite  │ 0 个       │ 多个                 │
+  ├───────────────────┼────────────┼──────────────────────┤
+  │ 总计              │ 2 个       │ 30+ 个               │
+  └───────────────────┴────────────┴──────────────────────┘
+
+  6.2 代码行数对比
+
+  ┌────────────────────────┬──────────┬─────────┬──────────────────────┐
+  │          文件          │ Template │ 原仓库  │         差异         │
+  ├────────────────────────┼──────────┼─────────┼──────────────────────┤
+  │ registry.py            │ ~50 行   │ ~150 行 │ 删除了 2 个任务域    │
+  ├────────────────────────┼──────────┼─────────┼──────────────────────┤
+  │ locomotion/__init__.py │ ~100 行  │ ~300 行 │ 删除了 8 个机器人    │
+  ├────────────────────────┼──────────┼─────────┼──────────────────────┤
+  │ locomotion_params.py   │ ~150 行  │ ~500 行 │ 删除了其他机器人配置 │
+  └────────────────────────┴──────────┴─────────┴──────────────────────┘
+
+  6.3 依赖差异
+
+  ┌──────────────────┬───────────┬─────────┬───────────────────────────┐
+  │       依赖       │ Template  │ 原仓库  │           说明            │
+  ├──────────────────┼───────────┼─────────┼───────────────────────────┤
+  │ dm_control       │ ❌ 不需要 │ ✅ 需要 │ DM Control Suite 任务需要 │
+  ├──────────────────┼───────────┼─────────┼───────────────────────────┤
+  │ mujoco_menagerie │ ✅ 需要   │ ✅ 需要 │ G1 模型来自 Menagerie     │
+  └──────────────────┴───────────┴─────────┴───────────────────────────┘
+
+  7. 实用技巧
+
+  7.1 快速定位原仓库中的对应文件
+
+  使用 grep 搜索：
+  # 在原仓库中搜索 G1 相关文件
+  cd mujoco_playground
+  grep -r "class.*G1.*Env" --include="*.py"
+
+  # 搜索环境注册
+  grep -r "G1Joystick" --include="*.py"
+
+  7.2 对比 Template 和原仓库的差异
+
+  # 对比 registry.py
+  diff template/g1_env/_src/registry.py \
+       mujoco_playground/mujoco_playground/_src/registry.py
+
+  # 对比 locomotion/__init__.py
+  diff template/g1_env/_src/locomotion/__init__.py \
+       mujoco_playground/mujoco_playground/_src/locomotion/__init__.py
+
+  7.3 理解原仓库的完整架构
+
+  原仓库的三层架构：
+
+  1. 注册层（registry.py）
+     ├── 聚合所有任务域的环境
+     └── 提供统一的加载接口
+
+  2. 任务域层（locomotion, manipulation, dm_control_suite）
+     ├── 每个任务域有独立的 __init__.py
+     ├── 注册该域下的所有环境
+     └── 提供域特定的配置
+
+  3. 机器人层（g1, h1, spot, etc.）
+     ├── 每个机器人有独立的目录
+     ├── 包含环境定义、常量、任务
+     └── 包含 XML 模型文件
+
+  Template 简化为两层：
+
+  1. 注册层（registry.py）
+     └── 直接调用 locomotion 模块
+
+  2. 机器人层（g1）
+     ├── 仅包含 G1
+     └── 完整的 G1 实现
+
+  8. 总结
+
+  从 Template 到原仓库的映射规则：
+
+  1. 包名：g1_env → mujoco_playground
+  2. 路径：g1_env/_src/ → mujoco_playground/_src/
+  3. 环境数量：2 个 → 30+ 个
+  4. 任务域：1 个（locomotion） → 3 个（locomotion + manipulation + dm_control_suite）
+  5. 机器人：1 个（G1） → 9 个（Apollo, Barkour, Berkeley Humanoid, G1, Go1, H1, OP3, Spot, T1）
+
+  学习路径建议：
+
+  1. 先在 Template 中深入学习 G1 的完整实现
+  2. 理解 MJX 环境的基本结构（mjx_env.py）
+  3. 理解注册系统的工作原理（registry.py, locomotion/init.py）
+  4. 回到原仓库，对比其他机器人的实现
+  5. 探索 manipulation 和 dm_control_suite 任务域

@@ -1,0 +1,827 @@
+【26. 需要继续查看的文件】
+
+结合当前 `mjx_env.py` 的职责，以及你补充的项目文件结构，后续建议按下面顺序继续看。这里的顺序不是随意排列，而是按“从底层接口补全 → G1 模型常量 → 任务逻辑依赖 → 随机化 → wrapper → 训练入口”的 pipeline 方向组织。项目结构中确实存在这些文件：`g1_constants.py`、`randomize.py`、XML 模型文件、`wrapper.py`、`wrapper_torch.py`、`locomotion_params.py`、`train_jax_ppo.py`、`train_rsl_rl.py` 等。
+
+---
+
+### 26.1 `g1_env/_src/locomotion/g1/g1_constants.py`
+
+优先级：最高。
+
+原因：
+
+`mjx_env.py` 本身只提供通用路径、State、step、sensor 查询工具；但 G1 的具体 XML 路径、传感器命名前缀、脚/手 site 名称、关节范围、root body 名称等，不在 `mjx_env.py` 里，而是在 `g1_constants.py` 里。文件结构说明它负责 G1 常量定义，包括资源路径、XML 文件路径、脚部/手部位置、几何体 ID、传感器名称和 29 个执行器的关节范围限制。
+
+你需要确认：
+
+```text
+1. ROOT_PATH 指向哪里
+   → 决定 base.py::get_assets() 从哪里加载 g1_env/_src/locomotion/g1/xmls。
+
+2. task_to_xml(task) 如何映射
+   → task="flat_terrain" 到底对应哪个 XML
+   → task="rough_terrain" 到底对应哪个 XML
+
+3. ROOT_BODY 是什么
+   → joystick.py 里用 consts.ROOT_BODY 找 torso/root body
+   → 会影响 torso mass、base 相关 reward、姿态判断
+
+4. FEET_SITES / HAND_SITES / FEET_GEOMS 的具体名字
+   → joystick.py::_post_init() 用它们查 site/geom id
+   → 会影响 feet height、feet velocity、contact 判断
+
+5. 传感器前缀常量
+   → GRAVITY_SENSOR
+   → GLOBAL_LINVEL_SENSOR
+   → GLOBAL_ANGVEL_SENSOR
+   → LOCAL_LINVEL_SENSOR
+   → ACCELEROMETER_SENSOR
+   → GYRO_SENSOR
+
+6. RESTRICTED_JOINT_RANGE 的 shape 和数值
+   → base.py 中 restricted_joint_range=True 时会覆盖 mj_model.jnt_range[1:] 和 actuator_ctrlrange
+```
+
+为什么它接在 `mjx_env.py` 后面看：
+
+```text
+mjx_env.get_sensor_data(model, data, sensor_name)
+→ base.py.get_gyro(data, frame)
+→ sensor_name = f"{consts.GYRO_SENSOR}_{frame}"
+→ g1_constants.py 决定真正 sensor 名字
+→ XML 里必须存在这个 sensor
+```
+
+这一层是 “Python 任务代码” 和 “XML 命名系统” 的桥。你如果不看它，后面读 XML 时很难知道哪些名字是被代码硬编码依赖的。
+
+---
+
+### 26.2 `g1_env/_src/locomotion/g1/xmls/sensor.xml`
+
+优先级：最高。
+
+原因：
+
+当前 `mjx_env.py` 的 `get_sensor_data()` 是按 sensor 名称从 `data.sensordata` 切片；`base.py` 的 `get_gyro/get_gravity/get_local_linvel/...` 都依赖这些 sensor；`joystick.py` 的 observation、reward、termination 又依赖这些 wrapper。因此 `sensor.xml` 是 observation / reward / termination 的底层数据来源。
+
+文件结构说明 `sensor.xml` 定义了 IMU、接触力传感器、线速度传感器等。
+
+你需要确认：
+
+```text
+1. gyro / accelerometer sensor 名称
+   → 是否匹配 base.py.get_gyro(data, "pelvis")
+   → 是否匹配 base.py.get_accelerometer(data, "pelvis")
+
+2. gravity sensor 名称
+   → 是否有 torso / pelvis 两套
+   → joystick.py::_get_termination 用 torso gravity
+   → joystick.py::_get_obs 用 pelvis gravity
+
+3. local/global linvel sensor 名称
+   → tracking_lin_vel 用 local_linvel_pelvis
+   → feet_slip / feet_phase mask 用 global_linvel_pelvis
+
+4. global_angvel sensor 名称
+   → orientation / ang_vel_xy / privileged_state 相关
+
+5. foot force sensor 名称
+   → joystick.py::_cost_contact_force 读取 left_foot_force / right_foot_force
+
+6. contact found sensor 名称
+   → left_foot_floor_found
+   → right_foot_floor_found
+   → right_foot_left_foot_found
+   → left_foot_right_shin_found
+   → right_foot_left_shin_found
+   → left_hand_left_thigh_found
+   → right_hand_right_thigh_found
+```
+
+重点不是只看它“有哪些 sensor”，而是建立这条链：
+
+```text
+XML sensor name
+→ mj_model.sensor(sensor_name).id
+→ sensor_adr / sensor_dim
+→ data.sensordata slice
+→ base.py sensor wrapper
+→ joystick.py obs/reward/termination
+```
+
+如果 sensor 名字不匹配，环境不是 reward 错一点，而是会在初始化或 step 时直接失败。
+
+---
+
+### 26.3 `g1_env/_src/locomotion/g1/xmls/g1_mjx_feetonly.xml`
+
+优先级：最高。
+
+原因：
+
+这是 G1 主模型文件。文件结构说明它包含 29 个关节，以及身体、几何体、执行器定义。
+
+你需要确认：
+
+```text
+1. freejoint 是否是第一个 joint
+   → joystick.py 默认 qpos[7:] 是关节
+   → joystick.py 默认 qvel[6:] 是关节速度
+   → base.py restricted_joint_range 跳过 jnt_range[1:]
+   → mjx_env.qpos_width/qvel_width 也说明 freejoint qpos=7, qvel=6
+
+2. actuator 数量是否为 29
+   → G1Env.action_size = mjx_model.nu
+   → joystick.py 中 action / last_act / actuator_force 都按 29 维处理
+
+3. actuator 类型
+   → position actuator / motor actuator / general actuator？
+   → 这决定 joystick.py 中 motor_targets 写入 ctrl 后到底是什么含义
+   → 当前 Python 代码只能确认 ctrl = motor_targets，不能确认 actuator 如何解释 ctrl
+
+4. actuator ctrlrange
+   → 是否和 joint range 对齐
+   → restricted_joint_range=True 时会被 consts.RESTRICTED_JOINT_RANGE 覆盖
+
+5. keyframe knees_bent
+   → joystick.py::_post_init() 用它作为 init_q 和 default_pose
+   → joystick.py::reset() 初始 qpos 来自它
+   → joystick.py::step() 的 action 中心也是它
+
+6. body/site/geom 名称
+   → imu_in_torso
+   → imu_in_pelvis
+   → left_foot / right_foot
+   → left_shin / right_shin
+   → left_thigh / right_thigh
+   → left_hand_collision / right_hand_collision
+
+7. collision geom 设置
+   → “feetonly” 暗示碰撞模型可能被简化
+   → 需要确认哪些身体部位有 collision geom
+```
+
+这一步是为了回答一个核心问题：
+
+```text
+policy 输出 29 维 action
+→ joystick.py 转成 29 维 motor_targets
+→ mjx_env.step 写入 data.ctrl
+→ XML actuator 如何把 ctrl 变成关节驱动？
+```
+
+这个问题必须看 XML，不能只靠 Python 文件判断。
+
+---
+
+### 26.4 `g1_env/_src/locomotion/g1/xmls/scene_mjx_feetonly_flat_terrain.xml` 和 `scene_mjx_feetonly_rough_terrain.xml`
+
+优先级：高。
+
+原因：
+
+`locomotion.__init__.py` 中 `G1JoystickFlatTerrain` 和 `G1JoystickRoughTerrain` 都实例化同一个 `Joystick` 类，区别只是 `task="flat_terrain"` 或 `task="rough_terrain"`。`Joystick.__init__()` 只把 task 传给 `consts.task_to_xml(task)`。因此 flat / rough 的核心差异大概率体现在这两个 scene XML 中，而不是 Python reward 里。
+
+文件结构说明：
+
+```text
+scene_mjx_feetonly_flat_terrain.xml:
+  - 包含 g1_mjx_feetonly.xml
+  - 平面地板
+
+scene_mjx_feetonly_rough_terrain.xml:
+  - 高度场地形
+  - 岩石纹理
+```
+
+
+
+你需要确认：
+
+```text
+1. flat terrain 的 floor geom 如何定义
+   → geom name 是否为 "floor"
+   → joystick.py::_post_init() 依赖 self._mj_model.geom("floor").id
+
+2. rough terrain 是否使用 hfield
+   → 是否引用 assets/hfield.png
+   → 是否使用 rocky_texture.png
+
+3. 两个 scene 是否都 include sensor.xml
+   → 如果 rough terrain 忘记 include sensor.xml，Python sensor 读取会失败
+
+4. 两个 scene 是否都 include 同一个 G1 主模型
+   → 如果不是，需要确认 actuator/joint/sensor 是否一致
+
+5. terrain 对 contact 的影响
+   → feet-floor contact sensor 是否仍然能正常工作
+   → floor geom 名称是否一致
+```
+
+这一步可以解释：
+
+```text
+同一个 Joystick 类
+→ 为什么能得到 flat terrain 和 rough terrain 两个环境？
+```
+
+答案大概率是：
+
+```text
+task_to_xml(task)
+→ 选择不同 scene XML
+→ scene XML 中 terrain 不同
+→ Python 任务逻辑基本共用
+```
+
+---
+
+### 26.5 `g1_env/_src/locomotion/g1/randomize.py`
+
+优先级：高。
+
+原因：
+
+`mjx_env.py` 没有实现 domain randomization。前面 `locomotion.__init__.py` 中 `_randomizer` 把两个环境都映射到 `g1_randomize.domain_randomize`。文件结构说明 `randomize.py` 中的 `domain_randomize` 会随机化摩擦力、关节摩擦损失、电枢、质量、初始位置等。
+
+你需要确认：
+
+```text
+1. domain_randomize 的函数签名
+   → 是否是 Callable[[mjx.Model, jax.Array], Tuple[mjx.Model, mjx.Model]]
+   → 是否和 registry.py / locomotion.__init__.py 中的类型一致
+
+2. 它随机化哪些字段
+   → geom_friction？
+   → dof_frictionloss？
+   → dof_armature？
+   → body_mass？
+   → qpos0 / body_pos？
+
+3. 返回值的两个 mjx.Model 分别是什么
+   → 这是前面 registry 类型中最不清楚的一点
+   → 需要源码确认，不能猜
+
+4. 是否 batch randomization
+   → 是否为 num_envs 生成不同 model 参数
+   → 是否和 Brax PPO 的 domain_randomization API 对齐
+
+5. 是否覆盖 flat / rough 两个环境
+   → 当前 registry 中两个环境都用同一个 randomizer
+   → 需要确认它是否依赖 terrain 类型
+```
+
+数据流要这样追：
+
+```text
+train_jax_ppo.py
+→ registry.get_domain_randomizer(env_name)
+→ locomotion.get_domain_randomizer(env_name)
+→ randomize.domain_randomize
+→ Brax PPO / wrapper 接收 randomization_fn
+→ mjx.Model 被随机化
+```
+
+注意：只看 `randomize.py` 还不够。还要看训练脚本是否真的调用并传入它。否则会出现：
+
+```text
+randomize.py 写了
+registry 也注册了
+但 training script 没有接入
+→ 实际训练没有 domain randomization
+```
+
+---
+
+### 26.6 `g1_env/_src/gait.py`
+
+优先级：中高。
+
+原因：
+
+`joystick.py::_reward_feet_phase()` 调用了：
+
+```python
+gait.get_rz(phase, swing_height=foot_height)
+```
+
+文件结构说明 `gait.py` 是步态生成与跟踪工具，包含 `get_rz`、三次贝塞尔插值、步态相位定义。
+
+你需要确认：
+
+```text
+1. get_rz 输入输出 shape
+   → phase 是 2 维还是更多？
+   → 输出是否对应左右脚目标高度？
+
+2. phase 如何映射到 swing / stance
+   → phase=[0, pi] 是否代表左右腿反相
+   → 是否是 trot-like / walking-like pattern
+
+3. swing_height 如何进入轨迹
+   → joystick.py 中传的是 reward_config.max_foot_height
+
+4. 三次贝塞尔插值如何定义
+   → 脚高轨迹是否平滑
+   → 中间是否有最大高度
+
+5. feet_phase reward 的先验强度
+   → 如果 get_rz 强约束脚高轨迹，那么训练不是完全自由涌现步态
+```
+
+这一步是为了理解：
+
+```text
+phase
+→ gait.get_rz
+→ desired foot height
+→ _reward_feet_phase
+→ 步态先验注入 reward
+```
+
+---
+
+### 26.7 `g1_env/_src/reward.py`
+
+优先级：中。
+
+原因：
+
+文件结构说明 `reward.py` 是奖励函数工具库，包含 dm_control 风格的容差函数和 sigmoid 函数。
+
+当前 `joystick.py` 里没有明显直接调用这个文件里的函数。如果源码确实没有调用，那它对当前 G1 joystick 任务不是主线依赖。
+
+你需要检查：
+
+```text
+1. joystick.py 是否 import reward.py
+   → 当前看到的 joystick.py 没有 import reward.py
+
+2. 其他环境是否使用 reward.py
+   → 当前工程裁剪版可能只保留 G1 joystick
+   → reward.py 可能是从 MuJoCo Playground 原工程保留下来的通用工具
+
+3. wrapper / training 是否使用 reward.py
+   → 一般不太可能，但可以确认
+```
+
+判断方式：
+
+```text
+如果全局搜索没有调用 reward.py:
+  它不是当前 G1 pipeline 的关键节点
+
+如果某些 reward 项后来迁移到 reward.py:
+  再按调用关系分析
+```
+
+---
+
+### 26.8 `g1_env/_src/wrapper.py`
+
+优先级：高。
+
+原因：
+
+`mjx_env.py` 定义的是原始环境接口：
+
+```text
+reset(rng) -> State
+step(state, action) -> State
+obs 可以是 dict
+State 里有 data / obs / reward / done / metrics / info
+```
+
+但 Brax PPO 通常需要特定的 env wrapper、batching、episode truncation、domain randomization 接口、metrics 格式。文件结构说明 `wrapper.py` 是 Brax 环境包装器，包含 `Wrapper` 和 `wrap_for_brax_training`。
+
+你需要确认：
+
+```text
+1. wrap_for_brax_training 做了什么
+   → 是否 vmapped reset / step
+   → 是否处理 num_envs
+   → 是否处理 episode_length
+   → 是否自动 reset done env
+   → 是否处理 action repeat
+
+2. obs dict 如何传给 Brax PPO
+   → actor 用 obs["state"]？
+   → critic 是否能拿 obs["privileged_state"]？
+   → privileged_state 是否被保留或丢弃？
+
+3. reward / done 格式如何包装
+   → 是否转换成 Brax training 期望的 State
+   → metrics 是否被保留
+
+4. domain randomization 如何接入
+   → 是否接收 randomization_fn
+   → 是否把 mjx.Model batch 化
+   → 是否调用 randomize.domain_randomize
+
+5. observation_size / action_size 是否用于网络初始化
+```
+
+这一步非常关键，因为 `mjx_env.py` 只是定义了“环境原生接口”，而 `wrapper.py` 决定它如何被 Brax PPO 消费。
+
+核心数据流：
+
+```text
+Joystick / MjxEnv 原生接口
+→ wrapper.wrap_for_brax_training(...)
+→ Brax PPO 可接受的 env 接口
+→ train_jax_ppo.py
+```
+
+---
+
+### 26.9 `g1_env/_src/wrapper_torch.py`
+
+优先级：高，尤其如果你关心 RSL-RL。
+
+原因：
+
+`mjx_env.py` 是 JAX/MJX 环境接口，但 RSL-RL 是 PyTorch 生态。文件结构说明 `wrapper_torch.py` 包含 `TorchWrapper`、JAX↔Torch 张量转换、RSL-RL VecEnv 接口。
+
+你需要确认：
+
+```text
+1. JAX array 如何转 Torch tensor
+   → 是否使用 DLPack
+   → 是否发生 CPU/GPU 拷贝
+   → device 如何管理
+
+2. Torch action 如何回到 JAX
+   → RSL-RL policy 输出 torch.Tensor
+   → wrapper 转成 jax.Array
+   → 调用 env.step
+
+3. VecEnv 接口是否符合 RSL-RL 预期
+   → num_envs
+   → num_obs
+   → num_privileged_obs
+   → num_actions
+   → reset()
+   → step(actions)
+   → get_observations()
+   → get_privileged_observations()
+
+4. done/reset 逻辑
+   → done 后是否自动 reset
+   → episode_length 是否处理
+   → time_outs 是否单独标记
+
+5. privileged_state 如何给 RSL-RL critic
+   → RSL-RL 常见接口需要 privileged_obs_buf
+   → 这里是否把 obs["privileged_state"] 分出来
+```
+
+这是检查 “MJX 环境能不能真的接 RSL-RL” 的关键文件。
+
+---
+
+### 26.10 `g1_env/config/locomotion_params.py`
+
+优先级：高。
+
+原因：
+
+`mjx_env.py` 和 `joystick.py` 给的是环境参数；PPO 的训练规模、网络结构、学习率、num_envs、rollout length 等不在环境文件里。文件结构说明 `locomotion_params.py` 包含 `brax_ppo_config` 和 `rsl_rl_config`。其中 Brax PPO 配置包括 `num_timesteps=200M`、`num_envs=8192`、learning rate、entropy cost、clipping epsilon、Policy/Value 网络结构等；RSL-RL 配置包括 max_iterations、num_steps_per_env、learning_rate、clip_param 等。
+
+你需要确认：
+
+```text
+1. Brax PPO 配置
+   → num_timesteps
+   → num_envs
+   → unroll_length / batch_size / num_minibatches
+   → learning_rate
+   → entropy_cost
+   → clipping_epsilon
+   → discounting
+   → normalize_observations
+   → network hidden sizes
+
+2. actor / critic 是否区分 observation
+   → policy network 输入 state？
+   → value network 输入 privileged_state？
+   → 如果配置里没体现，可能在 wrapper 或 train_jax_ppo.py 里处理
+
+3. RSL-RL 配置
+   → num_steps_per_env
+   → max_iterations
+   → actor_critic class
+   → obs / privileged_obs 维度
+   → clip_param / entropy_coef / value_loss_coef
+
+4. 环境 config 和 PPO config 是否分开
+   → joystick.default_config 是 env config
+   → locomotion_params.py 是 training config
+```
+
+这一步能回答：
+
+```text
+环境每一步怎么跑？
+→ joystick.py / mjx_env.py
+
+训练跑多少步、多少并行环境、网络多大？
+→ locomotion_params.py
+```
+
+---
+
+### 26.11 `learning/train_jax_ppo.py`
+
+优先级：最高，如果你要理解 JAX/Brax 训练主线。
+
+原因：
+
+文件结构说明它是 JAX PPO 训练脚本，使用 Brax PPO，支持 JAX/Warp 后端、域随机化、视觉输入、日志、检查点、评估、视频录制，入口点是 `train-g1-jax`。
+
+你需要确认：
+
+```text
+1. env_name 从哪里来
+   → CLI 参数？
+   → 默认 G1JoystickFlatTerrain / RoughTerrain？
+
+2. 环境如何创建
+   → registry.load(env_name, ...)
+   → get_default_config
+   → config_overrides 如何传入
+
+3. wrapper 如何接入
+   → wrap_for_brax_training 是否被调用
+   → episode_length / action_repeat / num_envs 在哪里处理
+
+4. domain randomization 是否真的启用
+   → registry.get_domain_randomizer(env_name)
+   → 是否传给 Brax PPO train function
+   → 是否可通过参数关闭
+
+5. observation 如何进入网络
+   → obs["state"] / obs["privileged_state"] 如何处理
+   → actor/critic 是否 asymmetric
+
+6. PPO 配置来自哪里
+   → locomotion_params.brax_ppo_config？
+   → CLI 是否覆盖？
+   → config merge 顺序如何？
+
+7. checkpoint 和 eval
+   → 保存 policy params？
+   → 是否保存 normalizer params？
+   → eval 时是否关闭 noise/domain randomization？
+   → render 用 mjx_env.render 还是其他函数？
+
+8. 视频录制
+   → 是否调用 env.render / render_array
+   → camera 参数是什么
+```
+
+这一步是把前面所有环境文件串到训练系统里的关键：
+
+```text
+registry/load
+→ env
+→ wrapper
+→ PPO config
+→ Brax PPO train
+→ checkpoint/eval/render
+```
+
+如果只读到 `mjx_env.py`，你只能知道环境接口；读 `train_jax_ppo.py` 才知道这个接口如何真正被训练后端调用。
+
+---
+
+### 26.12 `learning/train_rsl_rl.py`
+
+优先级：高，如果你关心 PyTorch/RSL-RL 路线。
+
+原因：
+
+文件结构说明它使用 RSL-RL PPO，PyTorch 后端，支持多 GPU 分布式训练、检查点保存/加载、WandB 日志，入口点是 `train-g1-rsl`。
+
+你需要确认：
+
+```text
+1. 是否仍然使用 registry.load 创建 MJX 环境
+   → 还是有独立 env 构造逻辑？
+
+2. 是否调用 wrapper_torch.TorchWrapper
+   → JAX/MJX env 如何变成 RSL-RL VecEnv
+
+3. obs / privileged_obs 如何分流
+   → RSL-RL actor 输入什么？
+   → critic 输入什么？
+
+4. reset / step 是否同步 JAX 和 Torch
+   → done env 是否自动 reset
+   → reward/done 是否转 torch.Tensor
+
+5. 多 GPU 分布式训练如何处理
+   → 每个进程一个 JAX env？
+   → JAX device 和 torch device 是否一致？
+   → 是否可能出现跨设备拷贝瓶颈
+
+6. domain randomization 是否支持
+   → RSL-RL 路径是否也接入 randomize.py
+   → 还是只有 JAX/Brax 路径接入
+```
+
+这一步可以回答你关心的工程问题：
+
+```text
+同一个 MJX G1 环境
+→ 如何接 JAX PPO
+→ 如何接 PyTorch RSL-RL
+→ 两条训练路线差异在哪里
+```
+
+---
+
+### 26.13 `g1_env/__init__.py`
+
+优先级：中。
+
+原因：
+
+文件结构说明它是包导出接口，导出 `MjxEnv`、`registry`、`wrapper` 等。
+
+你需要确认：
+
+```text
+1. 外部用户 import 的官方入口是什么
+   → import g1_env
+   → g1_env.registry.load？
+   → g1_env.MjxEnv？
+
+2. 是否导出 wrapper / wrapper_torch
+   → train 脚本是否依赖这个顶层导出
+
+3. 是否隐藏了内部路径
+   → 对后续自己写脚本很重要
+```
+
+这个文件不是核心逻辑，但决定工程对外 API。
+
+---
+
+### 26.14 `pyproject.toml`
+
+优先级：中。
+
+原因：
+
+如果你要真正跑训练，需要知道入口点、依赖和 package 配置。文件结构中也列出它是 Python 项目配置文件。
+
+你需要确认：
+
+```text
+1. 入口点
+   → train-g1-jax 是否映射到 learning.train_jax_ppo
+   → train-g1-rsl 是否映射到 learning.train_rsl_rl
+
+2. 依赖版本
+   → mujoco
+   → jax
+   → brax
+   → torch
+   → rsl-rl
+   → ml_collections
+   → flax
+
+3. package include
+   → XML/assets 是否被正确包含
+   → g1_env/_src/locomotion/g1/xmls 是否作为 package data
+
+4. Python 版本要求
+```
+
+它不是 pipeline 逻辑本身，但会影响“代码能不能按预期被 import 和运行”。
+
+---
+
+### 26.15 `README.md` / `USAGE.md`
+
+优先级：中低，但建议看。
+
+原因：
+
+它们可能说明作者预期的运行命令、训练参数、环境名、输出目录、checkpoint 规则。文件结构显示 `README.md` 是项目说明，`USAGE.md` 是详细使用指南。
+
+你需要确认：
+
+```text
+1. 推荐的训练命令
+   → train-g1-jax 参数示例
+   → train-g1-rsl 参数示例
+
+2. 推荐环境名
+   → G1JoystickFlatTerrain
+   → G1JoystickRoughTerrain
+
+3. 是否说明 domain randomization 默认开启
+4. 是否说明 WandB / TensorBoard / checkpoint 路径
+5. 是否说明如何下载 Menagerie 或首次运行注意事项
+```
+
+这些文档不是源码事实，但能帮助你判断工程设计意图。
+
+---
+
+### 26.16 `verify_structure.sh` / `work_review.md`
+
+优先级：低。
+
+原因：
+
+它们不是训练 pipeline 主体，但有助于确认这个从 MuJoCo Playground 提取出来的工程是否裁剪完整。文件结构中列出了结构验证脚本和工作检查报告。
+
+建议关注：
+
+```text
+verify_structure.sh:
+  是否检查关键文件存在
+  是否检查 XML/assets 路径
+  是否检查入口点
+
+work_review.md:
+  是否记录了裁剪过程
+  是否说明哪些原始 MuJoCo Playground 功能被删掉
+  是否标注了已知问题
+```
+
+如果你后续发现某个 import 缺失或 wrapper 接口不完整，这两个文件可能提供背景。
+
+---
+
+【建议阅读顺序】
+
+如果你的目标是继续理解 `mjx_env.py` 之后的 pipeline，我建议按这个顺序读：
+
+```text
+1. g1_constants.py
+   → 搞清楚 XML 路径、sensor 名称、关节范围、site/geom 常量
+
+2. sensor.xml
+   → 搞清楚 observation/reward/termination 的传感器底层来源
+
+3. g1_mjx_feetonly.xml
+   → 搞清楚 29 关节、actuator、keyframe knees_bent、body/site/geom
+
+4. flat / rough scene XML
+   → 搞清楚两个任务环境的地形差异到底在哪里
+
+5. gait.py
+   → 搞清楚 feet_phase reward 的步态相位先验
+
+6. randomize.py
+   → 搞清楚 domain randomization 到底随机化哪些物理参数
+
+7. wrapper.py
+   → 搞清楚 MJX env 如何接 Brax PPO
+
+8. locomotion_params.py
+   → 搞清楚 PPO 训练超参数、网络结构、num_envs 等
+
+9. train_jax_ppo.py
+   → 搞清楚 JAX/Brax 训练主流程
+
+10. wrapper_torch.py
+    → 搞清楚 JAX↔Torch 转换和 RSL-RL VecEnv
+
+11. train_rsl_rl.py
+    → 搞清楚 RSL-RL 训练主流程
+```
+
+最核心的继续阅读路线是：
+
+```text
+mjx_env.py
+→ base.py
+→ g1_constants.py
+→ XML/sensor.xml
+→ joystick.py
+→ randomize.py
+→ wrapper.py
+→ locomotion_params.py
+→ train_jax_ppo.py
+```
+
+如果只关心“环境本身怎么跑”，读到 `joystick.py + base.py + mjx_env.py + g1_constants.py + XML` 基本够了。
+
+如果关心“训练 pipeline 怎么跑”，必须继续读：
+
+```text
+wrapper.py
+locomotion_params.py
+train_jax_ppo.py
+```
+
+如果关心 “RSL-RL / PyTorch 怎么接 MJX”，必须继续读：
+
+```text
+wrapper_torch.py
+train_rsl_rl.py
+```

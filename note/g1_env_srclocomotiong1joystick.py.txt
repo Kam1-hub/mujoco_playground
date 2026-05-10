@@ -1,0 +1,2590 @@
+【1. 这段代码在 pipeline 中的位置】
+
+`joystick.py` 是当前 G1 pipeline 里非常核心的 **任务环境层** 文件，同时包含了：
+
+```text
+config / hyperparameter 层
+MJX 任务环境层
+reset / step 层
+observation / privileged observation 层
+reward / termination 层
+command sampling 层
+push disturbance 层
+```
+
+它不是最底层的 MJX 基类，也不是 registry。前两个文件的关系是：
+
+```text
+registry.py
+→ g1_env._src.locomotion.__init__.py
+→ g1_joystick.Joystick(task="flat_terrain" / "rough_terrain")
+→ joystick.py
+```
+
+也就是说，`joystick.py` 是前面注册系统最终指向的具体环境实现文件。`G1JoystickFlatTerrain` 和 `G1JoystickRoughTerrain` 都会实例化这里的 `Joystick` 类，只是传入的 `task` 不同。当前文件开头也明确写了它是 “Joystick task for Unitree G1”。
+
+---
+
+【2. 总体核心作用】
+
+这个文件实现的是：
+
+```text
+给 Unitree G1 一个速度指令 command
+→ 策略输出 action
+→ action 被转成关节 motor target
+→ MJX 推进一步仿真
+→ 构造 observation / privileged_state
+→ 计算 reward / done
+→ 返回新的 mjx_env.State
+```
+
+更具体地说，它训练的是一个 **joystick command tracking locomotion task**：
+
+```text
+command = [目标前后速度 vx, 目标左右速度 vy, 目标 yaw 角速度 wz]
+
+policy observation
+→ policy action
+→ motor target = default_pose + action * action_scale
+→ MJX step
+→ reward 鼓励机器人跟踪 command，同时保持姿态、步态、关节范围、减少碰撞等
+```
+
+这个文件本身负责 G1 任务的主要逻辑。真正的 MuJoCo XML 加载、`mj_model/mjx_model` 构造、`dt/n_substeps`、传感器辅助函数等，应在父类 `g1_base.G1Env` 和 `mjx_env.py` 中确认。
+
+---
+
+【3. 文件级数据流】
+
+可以先用一条总线把这个文件放到 pipeline 里：
+
+```text
+env_name
+→ locomotion registry
+→ Joystick(task="flat_terrain" / "rough_terrain")
+→ consts.task_to_xml(task)
+→ G1Env 加载 XML / MJCF
+→ Joystick._post_init() 绑定关节、site、sensor、geom 索引
+→ reset(rng) 创建初始 mjx_env.State
+→ PPO rollout 循环调用 step(state, action)
+→ action 转 motor_targets
+→ mjx_env.step(...)
+→ _get_obs / _get_reward / _get_termination
+→ 新 State
+```
+
+其中训练后端真正反复接触的是这两个函数：
+
+```python
+reset(rng) -> mjx_env.State
+step(state, action) -> mjx_env.State
+```
+
+---
+
+【4. `default_config()`：任务默认配置层】
+
+`default_config()` 返回一个 `ConfigDict`，这是当前任务的默认超参数集合。
+
+它不是 PPO 超参数，而是 **环境超参数**。包括控制频率、仿真频率、动作缩放、噪声、奖励 scale、push disturbance、command 采样范围、MJX contact buffer 等。
+
+关键配置如下。
+
+### 4.1 时间相关配置
+
+```python
+ctrl_dt = 0.02
+sim_dt = 0.002
+episode_length = 1000
+action_repeat = 1
+```
+
+源码直接能确认：
+
+```text
+控制周期 ctrl_dt = 0.02 s
+仿真步长 sim_dt = 0.002 s
+episode_length = 1000
+action_repeat = 1
+```
+
+合理推断：
+
+```text
+控制频率约 50 Hz
+仿真频率约 500 Hz
+每个控制步大概率对应 10 个 MJX 子步
+1000 个控制步约等于 20 秒
+```
+
+但 `n_substeps = ctrl_dt / sim_dt` 是否就是这么算的，需要看父类 `G1Env` 或 `MjxEnv`。当前文件只给出了配置值，没有直接计算 `n_substeps`。
+
+---
+
+### 4.2 action 相关配置
+
+```python
+action_scale = 0.5
+```
+
+在 `step()` 里使用：
+
+```python
+motor_targets = self._default_pose + action * self._config.action_scale
+```
+
+这说明策略输出的 `action` 不是直接 torque，也不是直接 joint position，而是 **相对于默认关节姿态的增量命令**。
+
+数据流：
+
+```text
+policy action
+→ action * 0.5
+→ 加到 default_pose
+→ motor_targets
+→ mjx_env.step(...)
+```
+
+源码中多处使用 `29`，例如：
+
+```python
+qpos[7:] * uniform(..., (29,))
+last_act = zeros(self.mjx_model.nu)
+motor_targets = zeros(self.mjx_model.nu)
+```
+
+因此在当前 G1 模型里，策略 action 维度大概率是：
+
+```text
+action dim = self.mjx_model.nu = 29
+```
+
+这里的 29 对应 `qpos[7:]` 的关节自由度数量。前 7 个 qpos 是 floating base：
+
+```text
+qpos[0:3]   base position
+qpos[3:7]   base quaternion
+qpos[7:]    actuated joint positions, 共 29 维
+```
+
+---
+
+### 4.3 observation noise 配置
+
+```python
+noise_config.level = 1.0
+joint_pos = 0.03
+joint_vel = 1.5
+gravity = 0.05
+linvel = 0.1
+gyro = 0.2
+```
+
+这些噪声只加到 policy-facing `state` 里，不加到 `privileged_state` 的原始真值部分。
+
+也就是说：
+
+```text
+state:
+  noisy linvel / gyro / gravity / joint_pos / joint_vel
+
+privileged_state:
+  包含 noisy state
+  也额外包含无噪声 gyro / accelerometer / gravity / linvel / joint_vel / contact / feet_vel 等
+```
+
+这对 teacher-student 或 asymmetric actor-critic 很重要。部署时通常只能用 `state`，而 critic 或 teacher 可以用 `privileged_state`。当前文件只构造了这两个观测字典，具体谁用 `state`、谁用 `privileged_state`，需要看 wrapper / PPO 网络定义。
+
+---
+
+### 4.4 reward scale 配置
+
+`reward_config.scales` 是 reward 权重表。当前文件里所有 reward/cost 都会先算出来，然后在 `step()` 里乘以对应 scale：
+
+```python
+rewards = {
+    k: v * self._config.reward_config.scales[k] for k, v in rewards.items()
+}
+reward = sum(rewards.values()) * self.dt
+```
+
+注意最后还乘了 `self.dt`。所以每一步 reward 是：
+
+```text
+各 reward 项原始值
+→ 乘 reward scale
+→ 求和
+→ 再乘 ctrl_dt
+```
+
+默认启用的主要项包括：
+
+```text
+tracking_lin_vel      +1.0
+tracking_ang_vel      +0.75
+ang_vel_xy            -0.15
+orientation           -2.0
+feet_air_time         +2.0
+feet_slip             -0.25
+feet_phase            +1.0
+stand_still           -1.0
+termination           -100.0
+collision             -0.1
+contact_force         -0.01
+joint_deviation_knee  -0.1
+joint_deviation_hip   -0.25
+dof_pos_limits        -1.0
+pose                  -0.1
+```
+
+默认 scale 为 0 的项虽然会被计算，但不会影响 reward：
+
+```text
+lin_vel_z
+base_height
+torques
+action_rate
+energy
+dof_acc
+feet_clearance
+feet_height
+alive
+```
+
+这点非常关键：你读 `_get_reward()` 时会看到很多 reward 项，但默认配置下不是每一项都参与训练。
+
+---
+
+### 4.5 push disturbance 配置
+
+```python
+push_config.enable = True
+interval_range = [5.0, 10.0]
+magnitude_range = [0.1, 2.0]
+```
+
+含义是训练时会周期性给 base 水平速度加扰动：
+
+```text
+每隔 5 到 10 秒随机一次 push interval
+到达间隔时：
+  随机方向 theta
+  随机强度 magnitude
+  修改 qvel[:2]
+```
+
+它不是外力 force，而是在 `step()` 开头直接改 `qvel[:2]`。
+
+---
+
+### 4.6 command 配置
+
+配置里有：
+
+```python
+command_config.a = [1.0, 0.8, 1.0]
+command_config.b = [0.9, 0.25, 0.5]
+lin_vel_x = [-1.0, 1.0]
+lin_vel_y = [-0.5, 0.5]
+ang_vel_yaw = [-1.0, 1.0]
+```
+
+但是要注意：`sample_command()` 实际使用的是：
+
+```python
+lin_vel_x
+lin_vel_y
+ang_vel_yaw
+```
+
+它没有使用 `_cmd_a` 和 `_cmd_b`。`_post_init()` 里虽然保存了：
+
+```python
+self._cmd_a = jp.array(self._config.command_config.a)
+self._cmd_b = jp.array(self._config.command_config.b)
+```
+
+但当前文件后续没有使用它们。
+
+这是一个明显需要注意的点：
+
+```text
+command_config.a / b 在当前 joystick.py 中看起来是遗留配置或未接入配置
+实际 command 采样由 lin_vel_x / lin_vel_y / ang_vel_yaw 和 10% zero command 控制
+```
+
+---
+
+【5. `Joystick.__init__()`：任务实例化入口】
+
+```python
+class Joystick(g1_base.G1Env):
+    ...
+```
+
+`Joystick` 继承自：
+
+```python
+g1_base.G1Env
+```
+
+这说明当前文件不是从零实现 MJX 环境，而是在 G1 基类上实现一个具体任务。
+
+构造函数做了两件事：
+
+```python
+super().__init__(
+    xml_path=consts.task_to_xml(task).as_posix(),
+    config=config,
+    config_overrides=config_overrides,
+)
+self._post_init()
+```
+
+数据流：
+
+```text
+task = "flat_terrain" / "rough_terrain"
+→ consts.task_to_xml(task)
+→ 得到对应 XML 路径
+→ G1Env.__init__(xml_path, config, config_overrides)
+→ 加载 MuJoCo/MJX 模型
+→ Joystick._post_init()
+→ 缓存关节、site、geom、sensor 索引
+```
+
+这说明 flat terrain 和 rough terrain 的区别不是在 `Joystick` 类名上，而是通过：
+
+```python
+consts.task_to_xml(task)
+```
+
+选择不同 XML / MJCF 资源。
+
+需要继续看：
+
+```text
+g1_constants.py
+```
+
+确认：
+
+```text
+flat_terrain 对应哪个 XML
+rough_terrain 对应哪个 XML
+XML 是否包含 terrain、sensor、collision geom、keyframe
+```
+
+---
+
+【6. `_post_init()`：模型索引绑定与任务缓存】
+
+`_post_init()` 是一个非常重要但容易被低估的函数。它不推进仿真，不计算 reward，但它把后面所有 reward / obs / termination 所需的 MuJoCo 名称查询变成数组索引。
+
+它主要做以下几类事情。
+
+---
+
+### 6.1 读取默认姿态：`knees_bent`
+
+```python
+self._init_q = jp.array(self._mj_model.keyframe("knees_bent").qpos)
+self._default_pose = jp.array(self._mj_model.keyframe("knees_bent").qpos[7:])
+```
+
+这说明当前任务的初始姿态和默认控制姿态来自 XML 里的 keyframe：
+
+```text
+keyframe name = "knees_bent"
+```
+
+后续 action 的中心点也是这个姿态：
+
+```text
+motor_targets = knees_bent_joint_pose + action * action_scale
+```
+
+所以如果你要理解机器人站姿、默认膝盖弯曲角度，必须去 XML 里找：
+
+```xml
+<key name="knees_bent" ... />
+```
+
+---
+
+### 6.2 计算 soft joint limits
+
+```python
+self._lowers, self._uppers = self.mj_model.jnt_range[1:].T
+c = (lowers + uppers) / 2
+r = uppers - lowers
+soft_lowers = c - 0.5 * r * soft_joint_pos_limit_factor
+soft_uppers = c + 0.5 * r * soft_joint_pos_limit_factor
+```
+
+这里跳过了第一个 joint：
+
+```python
+jnt_range[1:]
+```
+
+注释解释：
+
+```text
+First joint is freejoint.
+```
+
+也就是 floating base 不参与普通关节 limit 约束。
+
+这些 soft limits 后面用于：
+
+```python
+_cost_joint_pos_limits(data.qpos[7:])
+```
+
+作用是惩罚关节超出软限制区间，而不是硬等到 MuJoCo joint limit 生效。
+
+---
+
+### 6.3 建立若干关节索引
+
+它手动构造了：
+
+```text
+waist_indices
+arm_indices
+hip_indices
+knee_indices
+```
+
+其中真正被当前文件 reward 使用的是：
+
+```text
+hip_indices  → _cost_joint_deviation_hip
+knee_indices → _cost_joint_deviation_knee
+```
+
+`waist_indices`、`arm_indices` 在当前文件里没有继续使用。可能是保留项，也可能被以后扩展使用。不能假设它们已经参与 reward。
+
+索引计算形式是：
+
+```python
+self._mj_model.joint(f"{joint_name}_joint").qposadr - 7
+```
+
+这说明这些索引是相对于 `qpos[7:]` 的局部索引，而不是完整 `qpos` 的全局索引。
+
+---
+
+### 6.4 `_weights`
+
+```python
+self._weights = jp.array([...])
+```
+
+这个数组长度看起来对应 29 个关节：
+
+```text
+left leg 6
+right leg 6
+waist 3
+left arm 7
+right arm 7
+总计 29
+```
+
+但是当前文件里没有再使用 `_weights`。因此不能说它影响 reward 或 action。它可能是遗留变量，或者被其他方法/父类间接使用，但当前文件看不出来。
+
+---
+
+### 6.5 body/site/geom/sensor ID 缓存
+
+这一段缓存了很多 MuJoCo 对象 ID：
+
+```text
+torso body id
+torso / pelvis IMU site id
+feet site id
+hands site id
+floor geom id
+feet geom id
+foot linvel sensor address
+hand / foot / shin / thigh collision geom id
+feet-floor contact sensor id
+foot-foot / foot-shin / hand-thigh found sensor id
+```
+
+这些缓存后面用于：
+
+```text
+_get_obs:
+  pelvis IMU
+  foot linear velocity sensor
+
+_get_termination:
+  foot-foot / foot-shin contact sensor
+
+_cost_collision:
+  hand-thigh contact sensor
+
+_cost_contact_force:
+  left/right foot force sensor
+
+step:
+  feet-floor contact sensor
+  feet site height
+```
+
+这里有一个工程含义：`joystick.py` 对 XML 里的命名强依赖。比如必须存在：
+
+```text
+imu_in_torso
+imu_in_pelvis
+left_foot_force
+right_foot_force
+left_foot_floor_found
+right_foot_floor_found
+right_foot_left_foot_found
+left_foot_right_shin_found
+right_foot_left_shin_found
+left_hand_left_thigh_found
+right_hand_right_thigh_found
+```
+
+如果你换 XML、简化 XML、改 geom/site/sensor 名字，这个文件会直接报错。
+
+---
+
+【7. `reset(rng)`：episode 初始化】
+
+`reset()` 是环境每个 episode 开始时调用的函数，输入是 JAX random key，输出是 `mjx_env.State`。
+
+完整数据流：
+
+```text
+rng
+→ 初始 qpos = knees_bent keyframe
+→ 初始 qvel = zeros
+→ 随机 base xy / yaw / joint pose / base velocity
+→ make_data(...)
+→ mjx.forward(...)
+→ 初始化 gait phase / command / push interval / info / metrics
+→ _get_obs(...)
+→ 返回 State(data, obs, reward=0, done=0, metrics, info)
+```
+
+---
+
+### 7.1 初始 qpos / qvel
+
+```python
+qpos = self._init_q
+qvel = jp.zeros(self.mjx_model.nv)
+```
+
+`qpos` 来自 XML keyframe `knees_bent`。`qvel` 初始为 0，后面会随机化一部分 base velocity。
+
+---
+
+### 7.2 随机 base 平移和 yaw
+
+```python
+dxy ~ U(-0.5, 0.5), shape=(2,)
+yaw ~ U(-3.14, 3.14)
+```
+
+更新：
+
+```text
+qpos[0:2] += dxy
+qpos[3:7] = quat_mul(original_quat, yaw_quat)
+```
+
+含义：
+
+```text
+机器人初始 x/y 位置随机偏移
+机器人初始朝向 yaw 随机
+```
+
+这有利于防止策略只适应固定世界坐标方向。
+
+---
+
+### 7.3 随机关节初始姿态
+
+```python
+qpos[7:] = qpos[7:] * U(0.5, 1.5), shape=(29,)
+```
+
+这说明每个关节初始角度是基于 `knees_bent` 姿态做乘法随机化，而不是加法扰动。
+
+注意这个设计含义：
+
+```text
+如果某个默认关节角接近 0，乘法随机化几乎不会扰动它
+如果某个默认关节角较大，扰动幅度会更大
+```
+
+这不是一般意义上的 `qpos + noise`，而是 `qpos * scale`。
+
+---
+
+### 7.4 随机 base qvel
+
+```python
+qvel[0:6] ~ U(-0.5, 0.5)
+```
+
+这里扰动的是前 6 个 generalized velocity，通常对应 floating base 的线速度和角速度。具体顺序要看 MuJoCo freejoint qvel 定义和父类封装。
+
+---
+
+### 7.5 创建 MJX data
+
+```python
+data = mjx_env.make_data(
+    self.mj_model,
+    qpos=qpos,
+    qvel=qvel,
+    ctrl=qpos[7:],
+    impl=self.mjx_model.impl.value,
+    naconmax=self._config.naconmax,
+    njmax=self._config.njmax,
+)
+data = mjx.forward(self.mjx_model, data)
+```
+
+这里有两个关键点：
+
+第一，初始 `ctrl` 设成：
+
+```python
+ctrl = qpos[7:]
+```
+
+也就是初始电机控制目标等于当前关节姿态。
+
+第二，`mjx.forward()` 用于根据 qpos/qvel/ctrl 计算传感器、site 位置、接触等派生量。
+
+如果没有 `mjx.forward()`，后面的 sensor data、site_xpos、gravity 等可能不是一致的。
+
+---
+
+### 7.6 初始化 gait phase
+
+```python
+gait_freq ~ U(1.25, 1.5)
+phase_dt = 2 * pi * self.dt * gait_freq
+phase = [0, pi]
+```
+
+这里的 `phase` 是两个腿的步态相位：
+
+```text
+左/右腿相差 pi
+```
+
+后面 `_reward_feet_phase()` 会用：
+
+```python
+gait.get_rz(phase, swing_height=...)
+```
+
+得到期望脚高轨迹。因此当前环境不是纯粹让 RL 自己发现所有步态节律，而是奖励里显式引入了一个相位参考。
+
+---
+
+### 7.7 初始化 command
+
+```python
+cmd = self.sample_command(cmd_rng)
+```
+
+`cmd` 是 3 维：
+
+```text
+[vx, vy, yaw_rate]
+```
+
+具体采样逻辑在 `sample_command()`：
+
+```text
+vx ~ U(-1.0, 1.0)
+vy ~ U(-0.5, 0.5)
+yaw_rate ~ U(-1.0, 1.0)
+10% 概率整个 command = [0,0,0]
+```
+
+---
+
+### 7.8 初始化 push interval
+
+```python
+push_interval ~ U(5.0, 10.0)
+push_interval_steps = round(push_interval / dt)
+```
+
+如果 `dt=0.02`，那么：
+
+```text
+5 秒  → 250 control steps
+10 秒 → 500 control steps
+```
+
+所以 push 大约每 250 到 500 个控制步发生一次。
+
+---
+
+### 7.9 初始化 `info`
+
+`info` 是当前环境非常重要的内部状态缓存。它不是 policy observation 的一部分，但会参与后续 step 逻辑、reward 计算和 obs 构造。
+
+包含：
+
+```text
+rng
+step
+command
+last_act
+last_last_act
+motor_targets
+feet_air_time
+last_contact
+swing_peak
+phase_dt
+phase
+push
+push_step
+push_interval_steps
+```
+
+它的作用：
+
+```text
+rng                 持续随机采样 command / noise / push
+step                command 更新计数
+command             当前速度指令
+last_act            动作平滑 / action_rate reward 用
+last_last_act       当前文件传入但 _cost_action_rate 没用
+motor_targets       记录上一次 motor target
+feet_air_time       脚离地时间统计
+last_contact        接触滤波
+swing_peak          摆动期脚最高高度
+phase / phase_dt    步态相位奖励
+push / push_step    外部扰动记录
+```
+
+---
+
+### 7.10 初始化 metrics
+
+```python
+for k in reward_config.scales.keys():
+    metrics[f"reward/{k}"] = 0
+metrics["swing_peak"] = 0
+```
+
+这说明训练日志里可以记录每个 reward 子项。注意 metrics 里的 reward 项是 scale 之后的值，因为在 `step()` 里更新 metrics 时使用的是已经乘过 scale 的 `rewards`。
+
+---
+
+### 7.11 reset 的输出
+
+```python
+return mjx_env.State(data, obs, reward, done, metrics, info)
+```
+
+所以 reset 产生的 State 包含：
+
+```text
+data     MJX 物理状态
+obs      {"state": ..., "privileged_state": ...}
+reward   0
+done     0
+metrics  reward 子项日志
+info     环境内部缓存
+```
+
+---
+
+【8. `step(state, action)`：环境一步推进】
+
+`step()` 是当前文件最核心的函数。它接收当前 `State` 和策略输出 `action`，返回下一步 `State`。
+
+完整数据流：
+
+```text
+state, action
+→ 采样/施加 push disturbance
+→ action 转 motor_targets
+→ mjx_env.step 推进物理
+→ 读取 contact / first_contact / foot height
+→ _get_obs
+→ _get_termination
+→ _get_reward
+→ reward scale + 乘 dt
+→ 更新 info / metrics
+→ 返回新 State
+```
+
+---
+
+### 8.1 push disturbance：直接修改 base qvel
+
+开头先从 `state.info["rng"]` 拆分随机数：
+
+```python
+push_theta ~ U(0, 2pi)
+push_magnitude ~ U(magnitude_range)
+push = [cos(theta), sin(theta)]
+```
+
+然后判断当前 step 是否到达 push interval：
+
+```python
+push *= (mod(push_step + 1, push_interval_steps) == 0)
+push *= push_config.enable
+```
+
+如果没到 interval，`push` 变成 `[0,0]`。
+
+然后直接修改：
+
+```python
+qvel[:2] = push * push_magnitude + qvel[:2]
+```
+
+注意：这里不是施加外力，也不是 actuator force，而是直接给 base 水平速度加一个脉冲扰动。
+
+这对训练的实际影响：
+
+```text
+策略会学到被水平速度扰动后恢复平衡
+属于 robustness training 的一种简单实现
+```
+
+---
+
+### 8.2 action → motor_targets
+
+```python
+motor_targets = self._default_pose + action * self._config.action_scale
+```
+
+这一步定义了 action 的实际物理含义：
+
+```text
+action 是 29 维相对关节目标偏移
+action_scale = 0.5
+default_pose = knees_bent keyframe 的 qpos[7:]
+motor_targets 是目标关节位置
+```
+
+但是要注意：这只能说明传给 `mjx_env.step()` 的 `ctrl` 是 position-like target。底层 actuator 是 position actuator、PD actuator，还是某种 motor model，需要看 XML 和 `mjx_env.step()`。
+
+---
+
+### 8.3 推进 MJX 仿真
+
+```python
+data = mjx_env.step(
+    self.mjx_model, state.data, motor_targets, self.n_substeps
+)
+```
+
+这里调用的不是 `mjx.step`，而是项目封装的：
+
+```python
+mjx_env.step(...)
+```
+
+所以真正的仿真推进逻辑在 `mjx_env.py`：
+
+```text
+motor_targets 如何写入 ctrl
+是否循环 n_substeps
+是否做 action_repeat
+是否处理 actuator dynamics
+```
+
+当前文件只负责把 motor target 传进去。
+
+---
+
+### 8.4 接触检测与脚摆动统计
+
+```python
+contact = sensor(left_foot_floor_found), sensor(right_foot_floor_found)
+contact_filt = contact | last_contact
+first_contact = (feet_air_time > 0.0) * contact_filt
+feet_air_time += dt
+swing_peak = max(swing_peak, foot_z)
+```
+
+这部分是 feet reward 的基础。
+
+含义：
+
+```text
+contact          当前脚是否接触地面
+contact_filt     当前接触或上一帧接触，用于滤波
+first_contact    这次是否刚刚落脚
+feet_air_time    每只脚离地持续时间
+swing_peak       当前摆动周期脚最高高度
+```
+
+后面这些变量用于：
+
+```text
+feet_air_time reward
+feet_height cost
+feet_phase reward
+```
+
+---
+
+### 8.5 计算 obs / done / reward
+
+```python
+obs = self._get_obs(data, state.info, contact)
+done = self._get_termination(data)
+rewards = self._get_reward(...)
+```
+
+注意调用顺序：
+
+```text
+先用更新后的 data 构造 obs
+再判断 termination
+再计算 reward
+```
+
+`_get_reward()` 返回的是未乘 scale 的各项原始 reward/cost。随后：
+
+```python
+rewards = {k: v * scale[k] for k, v in rewards.items()}
+reward = sum(rewards.values()) * self.dt
+```
+
+这意味着如果 `termination=-100`，且 `dt=0.02`，终止惩罚实际贡献大约是：
+
+```text
+-100 * 1 * 0.02 = -2
+```
+
+不是直接 -100。
+
+---
+
+### 8.6 更新 phase
+
+```python
+phase_tp1 = phase + phase_dt
+phase = fmod(phase_tp1 + pi, 2*pi) - pi
+```
+
+phase 被限制在：
+
+```text
+[-pi, pi]
+```
+
+它用于下一步 observation 和 feet_phase reward。
+
+源码中有一段注释掉的逻辑：
+
+```python
+# Enable this to make the policy stand still at 0 command.
+```
+
+也就是说，作者曾考虑过：
+
+```text
+command 接近 0 时，把 phase 固定到 pi，让策略站住
+```
+
+但当前没有启用。因此即使 command 为 0，phase 仍然会继续推进。是否会导致 0 command 下仍有步态倾向，要结合 reward balance 观察。
+
+---
+
+### 8.7 更新 action 历史
+
+```python
+last_last_act = last_act
+last_act = action
+```
+
+当前 `_cost_action_rate()` 只用了：
+
+```python
+act - last_act
+```
+
+没有使用 `last_last_act`。因此 `last_last_act` 当前是保留字段或遗留字段。
+
+---
+
+### 8.8 command 更新逻辑
+
+```python
+command = where(step > 500, sample_command(...), command)
+step = where(done | (step > 500), 0, step)
+```
+
+由于 `state.info["step"]` 在前面先 `+= 1`，因此 command 大约每 501 个控制步更新一次。
+
+如果 `dt=0.02`，约等于：
+
+```text
+501 * 0.02 ≈ 10.02 s
+```
+
+注意这不是 episode reset，而只是 command 子任务切换。`done` 也会把 `info["step"]` 清零。
+
+是否 episode 到 `episode_length=1000` 时自动截断，不在此函数体现，需要看 wrapper 或父类。
+
+---
+
+### 8.9 reset feet stats
+
+```python
+feet_air_time *= ~contact
+last_contact = contact
+swing_peak *= ~contact
+```
+
+含义：
+
+```text
+脚接触地面后：
+  feet_air_time 清零
+  swing_peak 清零
+脚离地时：
+  持续累计 air time 和 swing_peak
+```
+
+---
+
+### 8.10 更新 metrics
+
+```python
+metrics["reward/k"] = scaled reward term
+metrics["swing_peak"] = mean(swing_peak)
+```
+
+这说明日志里的 `reward/...` 是经过 scale 的项，但还没有乘 `dt` 还是已经乘 `dt`？
+
+看代码：
+
+```python
+rewards = {k: v * scale[k] ...}
+reward = sum(rewards.values()) * self.dt
+for k, v in rewards.items():
+    metrics[f"reward/{k}"] = v
+```
+
+所以 metrics 里的每项：
+
+```text
+已经乘 scale
+没有乘 dt
+```
+
+总 reward：
+
+```text
+乘 scale 且乘 dt
+```
+
+这个细节在看 TensorBoard 曲线时很重要。
+
+---
+
+【9. `_get_termination(data)`：终止条件】
+
+当前 termination 包含四类：
+
+```python
+fall_termination = self.get_gravity(data, "torso")[-1] < 0.0
+```
+
+含义：
+
+```text
+torso 坐标系下重力方向的 z 分量 < 0
+→ 机器人身体翻倒 / 姿态严重异常
+```
+
+然后是接触终止：
+
+```text
+right_foot_left_foot_found
+left_foot_right_shin_found
+right_foot_left_shin_found
+```
+
+也就是：
+
+```text
+右脚碰左脚
+左脚碰右小腿
+右脚碰左小腿
+```
+
+最后是数值异常：
+
+```text
+NaN in qpos
+NaN in qvel
+```
+
+所以 termination 数据流：
+
+```text
+mjx.Data
+→ torso gravity
+→ forbidden contact sensors
+→ qpos/qvel NaN check
+→ done
+```
+
+当前文件没有看到这些终止条件：
+
+```text
+base height 过低
+episode_length 超时
+手部碰地
+膝盖碰地
+关节 limit 硬终止
+```
+
+这些如果存在，需要在父类或 wrapper 中确认。
+
+---
+
+【10. `_get_obs(data, info, contact)`：observation 和 privileged observation】
+
+这是该文件中最重要的函数之一。它返回：
+
+```python
+{
+    "state": state,
+    "privileged_state": privileged_state,
+}
+```
+
+这说明环境天然支持 asymmetric observation：
+
+```text
+actor / policy 可用 state
+critic / teacher 可用 privileged_state
+```
+
+具体谁使用哪个，要看训练 wrapper / PPO 网络定义。
+
+---
+
+### 10.1 `state` 的组成
+
+`state` 是 policy-facing observation，包含噪声：
+
+```python
+state = hstack([
+    noisy_linvel,                  # 3
+    noisy_gyro,                    # 3
+    noisy_gravity,                 # 3
+    info["command"],               # 3
+    noisy_joint_angles-default,    # 29
+    noisy_joint_vel,               # 29
+    info["last_act"],              # 29
+    phase,                         # 4
+])
+```
+
+其中：
+
+```text
+phase = [cos(phase_left), cos(phase_right), sin(phase_left), sin(phase_right)]
+```
+
+所以 `state` 维度可以直接算出：
+
+```text
+3 + 3 + 3 + 3 + 29 + 29 + 29 + 4 = 103
+```
+
+因此当前文件能确认：
+
+```text
+policy state dim = 103
+```
+
+前提是：
+
+```text
+joint dim = 29
+phase dim = 4
+```
+
+这两个都在当前文件中直接体现。
+
+---
+
+### 10.2 `state` 里的每一项含义
+
+```text
+noisy_linvel:
+  pelvis 局部线速度，带噪声
+
+noisy_gyro:
+  pelvis 陀螺仪角速度，带噪声
+
+noisy_gravity:
+  pelvis 坐标系下的重力方向，带噪声
+
+command:
+  目标速度 [vx, vy, yaw_rate]
+
+noisy_joint_angles - default_pose:
+  当前关节角相对默认姿态的偏差，带噪声
+
+noisy_joint_vel:
+  关节速度，带噪声
+
+last_act:
+  上一步策略输出动作
+
+phase:
+  两腿步态相位的 cos/sin 编码
+```
+
+这说明当前 policy 不是只靠 proprioception 自由探索，它还显式获得：
+
+```text
+目标速度 command
+上一帧 action
+步态相位 phase
+```
+
+---
+
+### 10.3 噪声机制
+
+每个 noisy 项都使用类似形式：
+
+```python
+x_noisy = x + (2 * uniform - 1) * noise_level * noise_scale
+```
+
+也就是均匀噪声：
+
+```text
+noise ∈ [-scale, scale] * level
+```
+
+例如：
+
+```text
+gyro noise      ±0.2
+gravity noise   ±0.05
+joint_pos noise ±0.03
+joint_vel noise ±1.5
+linvel noise    ±0.1
+```
+
+如果设置：
+
+```python
+noise_config.level = 0.0
+```
+
+则关闭所有这些 observation noise。
+
+---
+
+### 10.4 `privileged_state` 的组成
+
+`privileged_state` 先包含完整 `state`，然后追加一批真实物理量：
+
+```python
+privileged_state = hstack([
+    state,
+    gyro,                         # 3
+    accelerometer,                # 3
+    gravity,                      # 3
+    linvel,                       # 3
+    global_angvel,                # 3
+    joint_angles-default_pose,     # 29
+    joint_vel,                    # 29
+    root_height,                  # 1
+    data.actuator_force,          # 29
+    contact,                      # 2
+    feet_vel,                     # comment: 4*3
+    feet_air_time,                # 2
+])
+```
+
+如果按代码注释里的 `feet_vel = 4*3 = 12` 来算：
+
+```text
+privileged_state dim
+= 103
++ 3 + 3 + 3 + 3 + 3
++ 29 + 29
++ 1
++ 29
++ 2
++ 12
++ 2
+= 222
+```
+
+但是这里需要谨慎：`feet_vel` 的实际维度取决于 `consts.FEET_SITES` 和对应 sensor 维度。当前文件注释写了 `4*3`，但要完全确认，需要看：
+
+```text
+g1_constants.py
+XML sensors
+```
+
+可以确定的是：
+
+```text
+privileged_state 比 state 多了无噪声传感器、root height、actuator force、contact、feet velocity、feet air time 等信息
+```
+
+---
+
+### 10.5 对 teacher-student / asymmetric critic 的意义
+
+当前文件已经把 teacher-student 或 privileged learning 的关键接口准备好了：
+
+```text
+obs["state"]              部署可用观测
+obs["privileged_state"]   训练期特权观测
+```
+
+但它只是构造了数据。是否真的形成 teacher-student 架构，要看训练代码是否：
+
+```text
+actor 用 state
+critic 用 privileged_state
+teacher 用 privileged_state
+student 用 state
+distillation loss 是否存在
+```
+
+不能仅凭这个文件说已经实现了 teacher-student。只能说它支持 privileged observation。
+
+---
+
+【11. `_get_reward(...)`：reward 汇总函数】
+
+`_get_reward()` 本身不乘 scale，它只是把所有 reward/cost 原始项组织成一个 dict。
+
+结构是：
+
+```text
+Tracking rewards
+Base-related rewards
+Energy-related rewards
+Feet-related rewards
+Other rewards
+Pose-related rewards
+```
+
+然后在 `step()` 里统一乘 scale。
+
+---
+
+### 11.1 Tracking rewards
+
+#### `_reward_tracking_lin_vel(commands, local_vel)`
+
+```python
+lin_vel_error = sum((commands[:2] - local_vel[:2])^2)
+reward = exp(-lin_vel_error / tracking_sigma)
+```
+
+作用：
+
+```text
+让 pelvis 局部 xy 速度跟踪 command 的 vx, vy
+```
+
+默认 scale：
+
+```text
+tracking_lin_vel = +1.0
+tracking_sigma = 0.25
+```
+
+这是主要正奖励之一。
+
+---
+
+#### `_reward_tracking_ang_vel(commands, ang_vel)`
+
+```python
+ang_vel_error = (commands[2] - ang_vel[2])^2
+reward = exp(-ang_vel_error / tracking_sigma)
+```
+
+作用：
+
+```text
+让 yaw 角速度跟踪 command[2]
+```
+
+默认 scale：
+
+```text
+tracking_ang_vel = +0.75
+```
+
+这里用的是 `get_gyro(data, "pelvis")` 的 z 分量。
+
+---
+
+### 11.2 Base-related rewards / costs
+
+#### `_cost_lin_vel_z(global_linvel_torso, global_linvel_pelvis)`
+
+```python
+torso_cost = torso_vz^2
+pelvis_cost = pelvis_vz^2
+return torso_cost + pelvis_cost
+```
+
+作用：
+
+```text
+惩罚身体竖直方向速度
+```
+
+但默认 scale 是：
+
+```text
+lin_vel_z = 0.0
+```
+
+所以默认不生效。
+
+---
+
+#### `_cost_ang_vel_xy(global_angvel_torso)`
+
+```python
+sum(global_angvel_torso[:2]^2)
+```
+
+作用：
+
+```text
+惩罚 torso roll/pitch 角速度
+```
+
+默认 scale：
+
+```text
+ang_vel_xy = -0.15
+```
+
+---
+
+#### `_cost_orientation(torso_zaxis)`
+
+```python
+sum((torso_zaxis - [0.073, 0.0, 1.0])^2)
+```
+
+作用：
+
+```text
+惩罚 torso 姿态偏离目标方向
+```
+
+这里目标不是严格 `[0,0,1]`，而是：
+
+```text
+[0.073, 0.0, 1.0]
+```
+
+这说明作者允许或希望 torso 有一个轻微前倾/姿态偏置。具体物理意义需要结合 G1 XML 坐标系确认。
+
+默认 scale：
+
+```text
+orientation = -2.0
+```
+
+这是强惩罚项。
+
+---
+
+#### `_cost_base_height(base_height)`
+
+```python
+(base_height - base_height_target)^2
+```
+
+默认 target：
+
+```text
+base_height_target = 0.5
+```
+
+但默认 scale：
+
+```text
+base_height = 0.0
+```
+
+所以默认不生效。
+
+---
+
+### 11.3 Energy-related costs
+
+这些项都计算了，但默认 scale 全是 0：
+
+```text
+torques      0.0
+action_rate  0.0
+energy       0.0
+dof_acc      0.0
+```
+
+具体函数：
+
+```text
+_cost_torques:
+  sum(abs(actuator_force))
+
+_cost_energy:
+  sum(abs(qvel) * abs(actuator_force))
+
+_cost_action_rate:
+  sum((act - last_act)^2)
+
+_cost_dof_acc:
+  sum(qacc^2)
+```
+
+当前默认配置下，它们不影响训练目标。但如果你后面想让动作更平滑、更省力，可以打开这些 scale。
+
+注意 `_cost_action_rate()` 的参数里有 `last_last_act`，但函数内部直接：
+
+```python
+del last_last_act
+```
+
+所以当前只惩罚一阶动作变化，不惩罚二阶动作变化。
+
+---
+
+### 11.4 Feet-related rewards / costs
+
+#### `_cost_feet_slip(data, contact, info)`
+
+源码：
+
+```python
+body_vel = self.get_global_linvel(data, "pelvis")[:2]
+reward = sum(norm(body_vel) * contact)
+```
+
+虽然名字叫 `feet_slip`，但当前实现不是直接用脚底相对地面的水平速度，而是用 pelvis 水平速度乘 contact。
+
+默认 scale：
+
+```text
+feet_slip = -0.25
+```
+
+所以它会在脚接触时惩罚身体水平速度。这个名字可能有误导性：如果你想确认是否是真正的脚滑惩罚，需要看是否其他版本实现用 foot velocity。
+
+---
+
+#### `_cost_feet_clearance(data, info)`
+
+源码逻辑：
+
+```text
+读取 feet_vel
+取水平速度 vel_xy
+取 foot_z
+delta = abs(foot_z - max_foot_height)
+return sum(delta * vel_norm)
+```
+
+作用：
+
+```text
+脚在摆动时高度偏离目标高度会产生 cost
+```
+
+但默认 scale：
+
+```text
+feet_clearance = 0.0
+```
+
+所以默认不生效。
+
+---
+
+#### `_cost_feet_height(swing_peak, first_contact, info)`
+
+```python
+error = swing_peak / max_foot_height - 1.0
+return sum(error^2 * first_contact)
+```
+
+作用：
+
+```text
+落脚瞬间检查这一摆动周期的最高脚高是否接近 max_foot_height
+```
+
+但默认 scale：
+
+```text
+feet_height = 0.0
+```
+
+默认不生效。
+
+---
+
+#### `_reward_feet_air_time(air_time, first_contact, commands)`
+
+```python
+air_time = (air_time - 0.2) * first_contact
+air_time = clip(air_time, max=0.3)
+reward = sum(air_time)
+```
+
+默认：
+
+```text
+threshold_min = 0.2
+threshold_max = 0.5
+scale = +2.0
+```
+
+作用：
+
+```text
+脚离地时间超过 0.2s 后，在首次触地时给奖励
+最多奖励到 0.5s
+```
+
+注意 `commands` 参数传进来了，但函数内部：
+
+```python
+del commands
+```
+
+所以当前实现不根据 command 大小调节 air time reward。即使 command 为 0，这个项也可能鼓励抬脚，除非其他项压制它。
+
+---
+
+#### `_reward_feet_phase(data, phase, foot_height, command)`
+
+逻辑：
+
+```text
+foot_z = 当前脚高度
+rz = gait.get_rz(phase, swing_height=foot_height)
+error = sum((foot_z - rz)^2)
+reward = exp(-error / 0.01)
+```
+
+然后加 mask：
+
+```text
+如果身体速度明显非零，或 command 非零，才启用该 reward
+```
+
+这说明它鼓励脚高度跟随一个由 phase 生成的周期轨迹。该任务不是完全无先验 locomotion，而是引入了 gait phase prior。
+
+默认 scale：
+
+```text
+feet_phase = +1.0
+```
+
+这是默认启用的重要步态引导奖励。
+
+---
+
+### 11.5 Other rewards / costs
+
+#### `_reward_alive()`
+
+```python
+return 1.0
+```
+
+但默认 scale：
+
+```text
+alive = 0.0
+```
+
+所以默认不生效。
+
+---
+
+#### `_cost_termination(done)`
+
+```python
+return done
+```
+
+默认 scale：
+
+```text
+termination = -100.0
+```
+
+由于最终 reward 乘 `dt=0.02`，所以单步终止惩罚约为：
+
+```text
+-2.0
+```
+
+---
+
+#### `_cost_stand_still(commands, qpos)`
+
+```python
+cmd_norm = norm(commands)
+cost = sum(abs(qpos - default_pose))
+cost *= cmd_norm < 0.01
+```
+
+作用：
+
+```text
+当 command 接近 0 时，惩罚关节偏离 default_pose
+```
+
+默认 scale：
+
+```text
+stand_still = -1.0
+```
+
+这个项是让机器人在零指令时尽量站住的主要约束之一。
+
+---
+
+#### `_cost_collision(data)`
+
+检测：
+
+```text
+left_hand_left_thigh_found
+right_hand_right_thigh_found
+```
+
+只要手和同侧大腿碰撞，返回 true。
+
+默认 scale：
+
+```text
+collision = -0.1
+```
+
+---
+
+#### `_cost_contact_force(data)`
+
+读取：
+
+```text
+left_foot_force
+right_foot_force
+```
+
+只惩罚 z 方向接触力超过：
+
+```text
+max_contact_force = 500.0
+```
+
+的部分。
+
+默认 scale：
+
+```text
+contact_force = -0.01
+```
+
+---
+
+### 11.6 Pose-related rewards / costs
+
+#### `_cost_joint_deviation_hip(qpos, cmd)`
+
+```python
+error = qpos[hip_indices] - default_pose[hip_indices]
+```
+
+如果横向速度命令 `cmd[1] > 0.1`，则某些 hip roll deviation 不惩罚：
+
+```python
+weight = [0.0, 1.0, 0.0, 1.0]
+```
+
+否则：
+
+```python
+weight = [1.0, 1.0, 1.0, 1.0]
+```
+
+作用：
+
+```text
+一般情况下约束 hip 不要偏离默认姿态
+但横向移动时放松一部分 hip roll 约束
+```
+
+默认 scale：
+
+```text
+joint_deviation_hip = -0.25
+```
+
+---
+
+#### `_cost_joint_deviation_knee(qpos)`
+
+```python
+sum(abs(knee_qpos - default_knee_pose))
+```
+
+默认 scale：
+
+```text
+joint_deviation_knee = -0.1
+```
+
+---
+
+#### `_cost_pose(qpos)`
+
+```python
+sum((qpos - default_pose)^2)
+```
+
+默认 scale：
+
+```text
+pose = -0.1
+```
+
+这是全身姿态正则项。
+
+---
+
+#### `_cost_joint_pos_limits(qpos)`
+
+```python
+out_of_limits = below soft_lower + above soft_upper
+sum(out_of_limits)
+```
+
+默认 scale：
+
+```text
+dof_pos_limits = -1.0
+```
+
+这会惩罚关节超出 soft joint range。
+
+---
+
+【12. `sample_command(rng)`：速度命令采样】
+
+这个函数生成 3 维 command：
+
+```python
+lin_vel_x ~ U(-1.0, 1.0)
+lin_vel_y ~ U(-0.5, 0.5)
+ang_vel_yaw ~ U(-1.0, 1.0)
+```
+
+然后：
+
+```python
+10% probability → [0, 0, 0]
+90% probability → [lin_vel_x, lin_vel_y, ang_vel_yaw]
+```
+
+输出：
+
+```text
+command shape = (3,)
+```
+
+含义：
+
+```text
+command[0] = 目标前后速度
+command[1] = 目标左右速度
+command[2] = 目标 yaw 角速度
+```
+
+这个 command 会进入 observation，也会进入 tracking reward：
+
+```text
+command
+→ obs["state"]
+→ _reward_tracking_lin_vel
+→ _reward_tracking_ang_vel
+→ _cost_stand_still
+→ _reward_feet_phase mask
+```
+
+---
+
+【13. shape / 维度 / 频率总结】
+
+当前文件能直接确认或强烈确认的数值如下。
+
+```text
+ctrl_dt = 0.02 s
+sim_dt = 0.002 s
+控制频率约 50 Hz
+仿真频率约 500 Hz
+episode_length = 1000
+action_scale = 0.5
+joint/action dim = 29
+command dim = 3
+phase dim = 2 raw phase, 4 after cos/sin encoding
+policy state dim = 103
+contact dim = 2
+feet_air_time dim = 2
+swing_peak dim = 2
+```
+
+`privileged_state` 维度按代码注释可估算为 222，但 `feet_vel` 实际维度要看 `consts.FEET_SITES` 和 XML sensor 定义，不能只靠这个文件最终确认。
+
+---
+
+【14. 当前文件对训练的实际影响】
+
+这个文件几乎决定了 G1 joystick locomotion 的训练任务本体。
+
+它影响：
+
+```text
+1. 初始状态分布
+   reset 随机 xy、yaw、关节姿态、base velocity
+
+2. 策略输入
+   state 103 维，带噪声，包含 command、phase、last_action
+
+3. critic / teacher 可用信息
+   privileged_state 包含更多真值物理量和接触信息
+
+4. action 语义
+   action 是 29 维关节目标偏移，不是 torque
+
+5. 仿真推进
+   通过 mjx_env.step 推进 n_substeps
+
+6. reward 结构
+   速度跟踪 + 姿态约束 + 步态相位 + 接触/碰撞/关节限制
+
+7. robustness
+   通过 push disturbance 和 observation noise 增强鲁棒性
+
+8. command curriculum / command distribution
+   每约 10 秒切换一次目标速度
+   10% 零命令
+```
+
+如果你要复现或修改论文想法，最常改的地方就是：
+
+```text
+_get_obs
+_get_reward
+reset
+sample_command
+default_config.reward_config.scales
+default_config.noise_config
+step 中 action → motor_targets 的映射
+```
+
+---
+
+【15. 容易误解或工程陷阱】
+
+### 15.1 `Joystick` 不是只读 command，它实现了整个任务环境
+
+文件名叫 `joystick.py`，但它不是简单的遥控器接口。它实现了：
+
+```text
+reset
+step
+obs
+privileged_obs
+reward
+termination
+command sampling
+push disturbance
+```
+
+这是 G1 locomotion 任务核心文件。
+
+---
+
+### 15.2 `G1JoystickFlatTerrain` 和 `G1JoystickRoughTerrain` 不是两个不同类
+
+它们都使用：
+
+```python
+Joystick
+```
+
+区别来自：
+
+```python
+task="flat_terrain"
+task="rough_terrain"
+```
+
+而 `task` 只在构造函数里用于：
+
+```python
+consts.task_to_xml(task)
+```
+
+所以 flat/rough 差异主要应在 XML 或父类加载逻辑中，而不是在当前 reward/step 代码中。
+
+---
+
+### 15.3 action 不是 torque
+
+当前文件明确：
+
+```python
+motor_targets = default_pose + action * action_scale
+```
+
+所以 action 更像 joint position target offset。
+
+如果你后面看到 PPO 输出 29 维 action，不要理解成 29 个关节力矩。是否最终由 position actuator / PD 控制执行，需要看 XML actuator 配置。
+
+---
+
+### 15.4 `privileged_state` 构造了，但不等于 teacher-student 已实现
+
+当前文件只是返回：
+
+```python
+obs = {
+    "state": state,
+    "privileged_state": privileged_state,
+}
+```
+
+这只是提供数据接口。真正是否使用 privileged learning，要看训练后端：
+
+```text
+actor 是否只吃 state
+critic 是否吃 privileged_state
+是否存在 teacher policy
+是否存在 distillation loss
+```
+
+---
+
+### 15.5 很多 reward 项默认 scale 为 0
+
+不要看到 `_cost_torques`、`_cost_energy`、`_cost_feet_clearance` 就以为训练目标包含它们。
+
+默认真正生效与否由：
+
+```python
+reward_config.scales
+```
+
+决定。
+
+---
+
+### 15.6 command_config.a / b 当前没有实际使用
+
+`_post_init()` 读取了：
+
+```python
+self._cmd_a
+self._cmd_b
+```
+
+但 `sample_command()` 没用它们。
+
+这可能是：
+
+```text
+遗留代码
+尚未接入的 curriculum
+从其他环境复制来的配置
+```
+
+如果你以为修改 `command_config.a/b` 会改变 command 采样，当前文件看不会。
+
+真正生效的是：
+
+```text
+lin_vel_x
+lin_vel_y
+ang_vel_yaw
+sample_command 里的 10% zero command
+```
+
+---
+
+### 15.7 `feet_slip` 名称可能误导
+
+`_cost_feet_slip()` 当前用的是 pelvis 水平速度乘 contact，不是 foot tangential velocity。
+
+所以它不完全等价于常见机器人 locomotion 里的“脚底滑动速度惩罚”。如果你要实现严格 feet slip cost，可能要改成基于 foot velocity 和 contact 的形式。
+
+---
+
+### 15.8 `info["step"]` 不是 episode step 的完整替代
+
+`info["step"]` 会在 command 更新或 done 时清零：
+
+```python
+step = where(done | step > 500, 0, step)
+```
+
+所以它更像 command segment counter，而不是完整 episode timestep。
+
+`episode_length=1000` 是否在别处生效，要看 wrapper / base env。
+
+---
+
+### 15.9 `config=config_dict.ConfigDict = default_config()` 是潜在共享对象风险
+
+构造函数默认参数写成：
+
+```python
+config: ConfigDict = default_config()
+```
+
+这意味着默认 config 在函数定义时就被创建。如果后续代码原地修改这个 config 对象，理论上可能产生共享默认对象风险。
+
+是否真的出问题，要看：
+
+```text
+G1Env.__init__ 是否 copy config
+config_overrides 是否原地修改 config
+训练脚本是否复用 config
+```
+
+当前文件无法确认，但这是一个值得检查的工程点。
+
+---
+
+### 15.10 XML 命名强依赖
+
+当前文件大量使用：
+
+```python
+self._mj_model.sensor("...")
+self._mj_model.site("...")
+self._mj_model.geom("...")
+self._mj_model.joint("...")
+```
+
+如果你换模型、裁剪模型、改 sensor 名字，就会直接失败。
+
+所以移植到其他 G1 XML 或其他 humanoid 时，要同步检查：
+
+```text
+keyframe names
+joint names
+site names
+geom names
+sensor names
+actuator count
+qpos/qvel layout
+```
+
+---
+
+【16. 与其他文件的连接】
+
+当前文件明确调用或依赖：
+
+```text
+g1_base.G1Env
+mjx_env
+gait
+g1_constants as consts
+MuJoCo XML / MJCF
+```
+
+建议后续阅读顺序如下。
+
+---
+
+### 16.1 `g1_env/_src/locomotion/g1/base.py`
+
+必须看。
+
+原因：
+
+```text
+Joystick 继承 G1Env
+super().__init__ 在那里
+self.dt / self.n_substeps 很可能在那里定义
+self.mj_model / self.mjx_model 在那里构造
+get_gyro / get_local_linvel / get_global_linvel / get_gravity 等辅助函数在那里
+config_overrides 可能在那里应用
+```
+
+你要确认：
+
+```text
+config_overrides 如何覆盖
+ctrl_dt / sim_dt 如何转 n_substeps
+episode_length 是否处理
+observation history_len 是否处理
+restricted_joint_range 是否处理
+```
+
+当前 `default_config` 里有 `history_len=1`、`restricted_joint_range=False`，但本文件没使用它们，可能在 base/wrapper 中使用。
+
+---
+
+### 16.2 `g1_env/_src/mjx_env.py`
+
+必须看。
+
+原因：
+
+```text
+make_data(...)
+step(...)
+State
+Observation
+get_sensor_data(...)
+```
+
+都来自这里。
+
+你要确认：
+
+```text
+mjx_env.step 是否写 ctrl
+是否循环 n_substeps
+State 是 dataclass 还是 namedtuple
+done / reward / metrics / info 如何被 wrapper 使用
+```
+
+---
+
+### 16.3 `g1_env/_src/locomotion/g1/g1_constants.py`
+
+必须看。
+
+原因：
+
+```text
+consts.task_to_xml(task)
+consts.ROOT_BODY
+consts.FEET_SITES
+consts.HAND_SITES
+consts.FEET_GEOMS
+```
+
+都在这里。
+
+它会告诉你：
+
+```text
+flat_terrain / rough_terrain 分别对应哪个 XML
+ROOT_BODY 是 torso 还是 pelvis
+FEET_SITES 到底几个
+privileged_state 中 feet_vel 维度到底是多少
+```
+
+---
+
+### 16.4 XML / MJCF 文件
+
+必须看。
+
+原因：
+
+当前文件依赖 XML 中的：
+
+```text
+keyframe knees_bent
+joint names
+site names
+sensor names
+geom names
+actuator definitions
+contact sensors
+force sensors
+```
+
+尤其要确认：
+
+```text
+actuator 是 position actuator 还是 motor actuator
+ctrlrange 是多少
+关节顺序是否对应 29 维 action
+floor / rough terrain 如何定义
+```
+
+---
+
+### 16.5 `gait.py`
+
+需要看。
+
+原因：
+
+```python
+gait.get_rz(phase, swing_height=foot_height)
+```
+
+决定了 feet_phase reward 的参考脚高轨迹。
+
+你要确认：
+
+```text
+get_rz 输出 shape
+相位定义
+左右脚对应关系
+swing_height 如何影响脚轨迹
+```
+
+---
+
+### 16.6 training script / wrapper
+
+必须看。
+
+原因：
+
+当前文件只返回：
+
+```python
+obs["state"]
+obs["privileged_state"]
+```
+
+但训练脚本决定：
+
+```text
+actor 用哪个 obs
+critic 用哪个 obs
+RSL-RL / Brax PPO 如何包装
+domain randomization 是否接入
+episode_length 是否处理
+reward metrics 如何记录
+```
+
+---
+
+【17. 一条完整训练 rollout 数据流】
+
+结合前两个 registry 文件和当前 `joystick.py`，完整流程可以写成：
+
+```text
+训练脚本指定 env_name = "G1JoystickFlatTerrain"
+→ registry.load(env_name)
+→ locomotion.load(env_name)
+→ _envs[env_name] = partial(Joystick, task="flat_terrain")
+→ Joystick.__init__(task="flat_terrain")
+→ consts.task_to_xml("flat_terrain")
+→ G1Env.__init__(xml_path, config, config_overrides)
+→ 加载 MuJoCo MjModel / MJX Model
+→ Joystick._post_init()
+→ PPO 初始化 env.reset(rng)
+→ reset 随机化 qpos/qvel/command/phase/push interval
+→ 返回 State(obs={"state", "privileged_state"})
+→ policy(state) 输出 action, shape=(29,)
+→ Joystick.step(state, action)
+→ motor_targets = default_pose + action * 0.5
+→ mjx_env.step(mjx_model, data, motor_targets, n_substeps)
+→ _get_obs 生成 state / privileged_state
+→ _get_termination 生成 done
+→ _get_reward 生成 reward dict
+→ reward scale + dt
+→ 更新 info / metrics
+→ 返回下一步 State
+→ PPO 收集 rollout 并更新策略
+```
+
+---
+
+【18. 如果你要改这个环境，应该改哪里】
+
+如果你的目标是“只是跑通 G1 joystick locomotion”，优先不要改这个文件，先保证 registry、XML、base、training script 能跑。
+
+如果你要做自己的研究，常见修改点如下。
+
+### 18.1 改 observation
+
+改：
+
+```python
+_get_obs()
+```
+
+例如：
+
+```text
+加入 height samples
+加入 terrain encoding
+去掉 phase
+加入历史帧
+改变 privileged_state
+```
+
+风险：
+
+```text
+obs shape 改变后，网络输入维度 / wrapper 也要同步
+部署端如果没有 privileged 信息，不能把 privileged_state 放进 actor
+```
+
+---
+
+### 18.2 改 reward
+
+改：
+
+```python
+_get_reward()
+_reward_xxx()
+_cost_xxx()
+default_config.reward_config.scales
+```
+
+建议优先调 scale，而不是先改函数。
+
+---
+
+### 18.3 改 action 语义
+
+改：
+
+```python
+motor_targets = self._default_pose + action * action_scale
+```
+
+例如你想输出：
+
+```text
+关节位置 target
+关节速度 target
+PD target
+residual action
+CPG residual
+torque
+```
+
+都要从这里开始改。
+
+风险：
+
+```text
+XML actuator 类型
+mjx_env.step 如何解释 ctrl
+action dim
+action scale
+policy 输出范围
+```
+
+必须同步检查。
+
+---
+
+### 18.4 改 command 分布
+
+改：
+
+```python
+sample_command()
+lin_vel_x
+lin_vel_y
+ang_vel_yaw
+step() 中 command 更新周期
+```
+
+如果你要做 curriculum，可以让 command range 随训练进度变化。但当前 `sample_command()` 没有训练进度输入，需要 wrapper 或 config 支持。
+
+---
+
+### 18.5 改扰动 / domain randomization
+
+当前 push disturbance 在：
+
+```python
+step()
+```
+
+物理参数 domain randomization 不在这里，而在 `randomize.py` 和训练入口里。
+
+所以：
+
+```text
+外部推扰动       改 joystick.py 的 step
+质量/摩擦/延迟等 改 randomize.py / XML / wrapper
+```
+
+---
+
+【19. 当前文件的关键记忆点】
+
+后续读代码时，你需要记住这些符号：
+
+```text
+Joystick
+default_config
+_post_init
+reset
+step
+_get_obs
+_get_reward
+_get_termination
+sample_command
+self._default_pose
+self._init_q
+self._feet_floor_found_sensor
+self._foot_linvel_sensor_adr
+info["command"]
+info["phase"]
+info["feet_air_time"]
+info["swing_peak"]
+```
+
+最关键的三条逻辑：
+
+```text
+action → motor_targets:
+  motor_targets = default_pose + action * 0.5
+
+policy obs:
+  obs["state"] = 103 维 noisy proprioception + command + last_action + phase
+
+reward:
+  tracking command + posture regularization + feet phase/airtime + collision/contact penalties
+```
+
+这个文件是目前已经看到的代码里第一个真正进入 G1 RL pipeline 主体的文件。前面的 registry 只是“找到它”，而这里开始才是“训练什么”。

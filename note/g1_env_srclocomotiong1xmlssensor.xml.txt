@@ -1,0 +1,1031 @@
+【1. 这段代码在 pipeline 中的位置】
+
+`sensor.xml` 属于 **G1 XML / MJCF 模型层中的传感器定义层**，更具体地说，是 **contact sensor 定义层**。
+
+它不是 Python 环境代码，不实现：
+
+```text
+reset
+step
+observation 拼接
+reward 计算
+termination 判断
+domain randomization
+PPO / RSL-RL 训练接口
+```
+
+它的作用是给 MuJoCo/MJX 模型注册一批接触传感器。后续 Python 代码通过：
+
+```text
+mj_model.sensor(sensor_name).id
+→ mj_model.sensor_adr[sensor_id]
+→ data.sensordata[adr]
+```
+
+读取这些传感器结果。
+
+需要注意：你这次上传的 `sensor.xml` **只包含 7 个 `<contact>` 传感器**。它没有定义 IMU、gyro、accelerometer、local/global linvel、foot force 等传感器。此前 filemap 里说 `sensor.xml` 包含 IMU、接触力、线速度传感器，但从当前上传文件本身看，这个说法至少对当前版本的 `sensor.xml` 不成立。IMU / 速度 / force sensor 可能定义在其他 XML 文件里，例如 `g1_mjx_feetonly.xml` 或 Menagerie 原始 XML；需要继续查。
+
+---
+
+【2. 核心作用】
+
+这个 XML 文件定义了 7 个接触检测传感器：
+
+```xml
+left_foot_floor_found
+right_foot_floor_found
+right_foot_left_foot_found
+left_foot_right_shin_found
+right_foot_left_shin_found
+left_hand_left_thigh_found
+right_hand_right_thigh_found
+```
+
+它们都使用 MuJoCo 的：
+
+```xml
+<contact ... data="found"/>
+```
+
+也就是说，它们不是输出接触力大小，而是输出“是否找到对应接触”的信号。
+
+当前文件的核心作用可以概括为：
+
+```text
+指定哪些 geom 之间的接触需要被环境代码观察
+→ MuJoCo/MJX 在 sensordata 中写入接触 found 信息
+→ joystick.py 读取这些 sensordata
+→ 用于脚底接触状态、终止条件、碰撞惩罚
+```
+
+---
+
+【3. 关键 sensor 逐项解释】
+
+### 3.1 `left_foot_floor_found`
+
+```xml
+<contact name="left_foot_floor_found"
+         geom1="left_foot"
+         geom2="floor"
+         reduce="mindist"
+         num="1"
+         data="found"/>
+```
+
+作用：
+
+```text
+检测 left_foot 和 floor 是否发生接触
+```
+
+在 `joystick.py` 中，它被 `_post_init()` 记录到：
+
+```python
+self._feet_floor_found_sensor
+```
+
+后续在 `reset()` 和 `step()` 中用于构造：
+
+```text
+contact[0] = 左脚是否触地
+```
+
+数据流：
+
+```text
+left_foot 与 floor 接触
+→ sensor: left_foot_floor_found
+→ data.sensordata[对应地址] > 0
+→ contact[0]
+→ feet_air_time / first_contact / swing_peak / feet reward
+```
+
+实际影响：
+
+```text
+左脚触地状态
+→ 影响 feet_air_time reward
+→ 影响 swing_peak 清零
+→ 影响 contact_filt / first_contact
+→ 进入 privileged_state 的 contact 信息
+```
+
+---
+
+### 3.2 `right_foot_floor_found`
+
+```xml
+<contact name="right_foot_floor_found"
+         geom1="right_foot"
+         geom2="floor"
+         reduce="mindist"
+         num="1"
+         data="found"/>
+```
+
+作用：
+
+```text
+检测 right_foot 和 floor 是否发生接触
+```
+
+在 `joystick.py` 中对应：
+
+```text
+contact[1] = 右脚是否触地
+```
+
+数据流：
+
+```text
+right_foot 与 floor 接触
+→ sensor: right_foot_floor_found
+→ data.sensordata[对应地址] > 0
+→ contact[1]
+→ feet_air_time / first_contact / swing_peak / feet reward
+```
+
+这两个 foot-floor sensor 是当前 `sensor.xml` 里对正常 locomotion 最核心的传感器。
+
+---
+
+### 3.3 `right_foot_left_foot_found`
+
+```xml
+<contact name="right_foot_left_foot_found"
+         geom1="right_foot"
+         geom2="left_foot"
+         reduce="mindist"
+         num="1"
+         data="found"/>
+```
+
+作用：
+
+```text
+检测左右脚之间是否发生接触
+```
+
+在 `joystick.py::_get_termination()` 中，它被用于 termination：
+
+```python
+contact_termination = data.sensordata[
+    self._mj_model.sensor_adr[self._right_foot_left_foot_found_sensor]
+] > 0
+```
+
+也就是说：
+
+```text
+右脚碰左脚
+→ done = True
+```
+
+实际影响：
+
+```text
+防止双脚互相绊住、交叉碰撞或发生异常步态
+```
+
+这是一个 **终止条件传感器**，不是普通 reward sensor。
+
+---
+
+### 3.4 `left_foot_right_shin_found`
+
+```xml
+<contact name="left_foot_right_shin_found"
+         geom1="left_foot"
+         geom2="right_shin"
+         reduce="mindist"
+         num="1"
+         data="found"/>
+```
+
+作用：
+
+```text
+检测左脚是否碰到右小腿
+```
+
+在 `joystick.py::_get_termination()` 中：
+
+```text
+left_foot_right_shin_found > 0
+→ contact_termination = True
+→ done = True
+```
+
+实际影响：
+
+```text
+防止左脚踢到右小腿
+防止双腿交叉、碰撞、穿插式异常运动
+```
+
+---
+
+### 3.5 `right_foot_left_shin_found`
+
+```xml
+<contact name="right_foot_left_shin_found"
+         geom1="right_foot"
+         geom2="left_shin"
+         reduce="mindist"
+         num="1"
+         data="found"/>
+```
+
+作用：
+
+```text
+检测右脚是否碰到左小腿
+```
+
+同样在 `joystick.py::_get_termination()` 中使用：
+
+```text
+right_foot_left_shin_found > 0
+→ done = True
+```
+
+这和上一项构成左右对称的“脚-对侧小腿碰撞终止”。
+
+---
+
+### 3.6 `left_hand_left_thigh_found`
+
+```xml
+<contact name="left_hand_left_thigh_found"
+         geom1="left_hand_collision"
+         geom2="left_thigh"
+         reduce="mindist"
+         num="1"
+         data="found"/>
+```
+
+作用：
+
+```text
+检测左手碰左大腿
+```
+
+它不是 termination，而是在 `joystick.py::_cost_collision()` 中用于 collision cost：
+
+```python
+c = data.sensordata[
+    self._mj_model.sensor_adr[self._left_hand_left_thigh_found_sensor]
+] > 0
+```
+
+然后：
+
+```text
+left_hand_left_thigh_found > 0
+→ collision cost = True
+→ reward 中 collision 项受到惩罚
+```
+
+结合 `joystick.py::default_config()`：
+
+```text
+collision scale = -0.1
+```
+
+所以这个接触会产生惩罚，但不会直接结束 episode。
+
+---
+
+### 3.7 `right_hand_right_thigh_found`
+
+```xml
+<contact name="right_hand_right_thigh_found"
+         geom1="right_hand_collision"
+         geom2="right_thigh"
+         reduce="mindist"
+         num="1"
+         data="found"/>
+```
+
+作用：
+
+```text
+检测右手碰右大腿
+```
+
+同样用于 `_cost_collision()`：
+
+```text
+right_hand_right_thigh_found > 0
+→ collision cost = True
+→ reward 中 collision 项被惩罚
+```
+
+左右手碰同侧大腿属于 **软惩罚**，不是 hard termination。
+
+---
+
+【4. 数据流：XML sensor → Python 环境逻辑】
+
+### 4.1 脚底触地数据流
+
+```text
+sensor.xml
+定义 left_foot_floor_found / right_foot_floor_found
+→ MuJoCo 编译 XML，生成 sensor id / sensor_adr
+→ Joystick._post_init()
+   self._feet_floor_found_sensor = [
+     sensor("left_foot_floor_found").id,
+     sensor("right_foot_floor_found").id
+   ]
+→ reset / step
+   contact = data.sensordata[sensor_adr] > 0
+→ contact shape = (2,)
+→ _get_obs(..., contact)
+→ privileged_state 中追加 contact
+→ feet_air_time / first_contact / swing_peak 更新
+→ feet_air_time / feet_height / feet_phase 等脚部 reward
+```
+
+这条链是当前 `sensor.xml` 对正常 locomotion 影响最大的部分。
+
+---
+
+### 4.2 异常腿部碰撞 termination 数据流
+
+```text
+sensor.xml
+定义：
+  right_foot_left_foot_found
+  left_foot_right_shin_found
+  right_foot_left_shin_found
+→ Joystick._post_init()
+   缓存这三个 sensor id
+→ Joystick._get_termination()
+   任一 sensordata > 0
+→ contact_termination = True
+→ done = True
+→ reward 中 termination cost 生效
+```
+
+结合 `joystick.py` 的 reward 逻辑：
+
+```text
+done=True
+→ _cost_termination(done)
+→ termination reward item = 1
+→ scale = -100
+→ 总 reward 乘 dt
+```
+
+如果 `dt=0.02`，则单步 termination 惩罚贡献约为：
+
+```text
+-100 * 0.02 = -2
+```
+
+这里的 `dt=0.02` 来自 `joystick.py::default_config()`。
+
+---
+
+### 4.3 手-大腿碰撞惩罚数据流
+
+```text
+sensor.xml
+定义：
+  left_hand_left_thigh_found
+  right_hand_right_thigh_found
+→ Joystick._post_init()
+   缓存 sensor id
+→ Joystick._cost_collision()
+   任一 sensordata > 0
+→ collision cost = True
+→ reward["collision"] = 1
+→ scale = -0.1
+→ 总 reward 乘 dt
+```
+
+如果 `dt=0.02`，单步 collision 惩罚贡献约为：
+
+```text
+-0.1 * 0.02 = -0.002
+```
+
+所以它是轻惩罚，不是 hard constraint。
+
+---
+
+【5. 与其他文件的连接】
+
+### 5.1 与 `joystick.py`
+
+这是当前 `sensor.xml` 最直接的下游使用者。
+
+`joystick.py::_post_init()` 中会查这些 sensor：
+
+```text
+left_foot_floor_found
+right_foot_floor_found
+right_foot_left_foot_found
+left_foot_right_shin_found
+right_foot_left_shin_found
+left_hand_left_thigh_found
+right_hand_right_thigh_found
+```
+
+这些名字必须和 `sensor.xml` 完全一致。否则：
+
+```text
+self._mj_model.sensor(sensor_name)
+```
+
+会失败。
+
+对应关系：
+
+```text
+sensor.xml 的 foot-floor sensor
+→ joystick.py 的 contact
+
+sensor.xml 的 foot-foot / foot-shin sensor
+→ joystick.py 的 termination
+
+sensor.xml 的 hand-thigh sensor
+→ joystick.py 的 collision reward
+```
+
+---
+
+### 5.2 与 `g1_constants.py`
+
+`g1_constants.py` 定义了：
+
+```text
+FEET_SITES = ["left_foot", "right_foot"]
+FEET_GEOMS = ["left_foot", "right_foot"]
+```
+
+当前 `sensor.xml` 中也使用：
+
+```text
+geom1="left_foot"
+geom1="right_foot"
+```
+
+说明这里的命名系统是一致的。
+
+但是注意：`sensor.xml` 里的 sensor 名称不是完全由 `g1_constants.py` 自动生成的。比如：
+
+```text
+right_foot_left_foot_found
+left_hand_left_thigh_found
+```
+
+这些字符串在 `joystick.py` 中是硬编码查询，不是集中定义在 `g1_constants.py` 里。
+
+这意味着：
+
+```text
+修改 sensor 名称时，不能只改 g1_constants.py
+还要改 joystick.py 中硬编码的 sensor 查询
+```
+
+---
+
+### 5.3 与 `base.py`
+
+`base.py` 主要封装的是：
+
+```text
+get_gravity
+get_global_linvel
+get_global_angvel
+get_local_linvel
+get_accelerometer
+get_gyro
+```
+
+这些函数依赖的传感器包括：
+
+```text
+upvector_*
+global_linvel_*
+global_angvel_*
+local_linvel_*
+accelerometer_*
+gyro_*
+```
+
+但当前上传的 `sensor.xml` **没有定义这些传感器**。
+
+因此，对于当前文件：
+
+```text
+sensor.xml
+→ 不直接支撑 base.py 的 get_gyro/get_local_linvel 等函数
+```
+
+它支撑的是 `joystick.py` 中直接访问 `data.sensordata` 的接触传感器逻辑。
+
+需要继续看其他 XML，确认 IMU / velocity sensor 是否在其他地方定义。
+
+---
+
+### 5.4 与 `mjx_env.py`
+
+`mjx_env.py::get_sensor_data()` 是通用 sensor 读取函数：
+
+```python
+sensor_id = model.sensor(sensor_name).id
+sensor_adr = model.sensor_adr[sensor_id]
+sensor_dim = model.sensor_dim[sensor_id]
+return data.sensordata[sensor_adr : sensor_adr + sensor_dim]
+```
+
+当前 `sensor.xml` 中定义的 contact sensors 也会进入 `model.sensor_*` 表，因此理论上也可以用 `get_sensor_data()` 读取。
+
+不过 `joystick.py` 对这些 contact sensors 大多是直接用：
+
+```python
+data.sensordata[self._mj_model.sensor_adr[sensorid]]
+```
+
+而不是通过 `mjx_env.get_sensor_data()`。
+
+---
+
+### 5.5 与 scene / main XML
+
+当前 `sensor.xml` 自身只是一个片段：
+
+```xml
+<mujoco>
+  <sensor>
+    ...
+  </sensor>
+</mujoco>
+```
+
+它必须被某个主 XML include 或合并进模型，才会进入最终 `mujoco.MjModel`。
+
+需要继续确认：
+
+```text
+scene_mjx_feetonly_flat_terrain.xml
+scene_mjx_feetonly_rough_terrain.xml
+g1_mjx_feetonly.xml
+```
+
+里面是否包含类似：
+
+```xml
+<include file="sensor.xml"/>
+```
+
+或者是否通过其他方式把 sensor.xml 合入最终模型。
+
+如果没有 include，那么 Python 代码虽然会查询这些 sensor，但最终 `MjModel` 中不存在这些 sensor，环境会报错。
+
+---
+
+【6. 对训练/仿真/推理的影响】
+
+### 6.1 影响脚底接触判断
+
+`left_foot_floor_found` 和 `right_foot_floor_found` 直接决定：
+
+```text
+contact = [left_contact, right_contact]
+```
+
+这个 `contact` 会影响：
+
+```text
+1. privileged_state 中的 contact
+2. feet_air_time 的清零
+3. first_contact 的判定
+4. swing_peak 的清零
+5. feet_air_time reward
+6. feet_height reward
+7. feet_phase / feet_clearance 等脚部逻辑的上下文
+```
+
+所以这两个传感器是步态训练中的关键底层信号。
+
+---
+
+### 6.2 影响异常碰撞终止
+
+以下三个 sensor 会直接影响 `done`：
+
+```text
+right_foot_left_foot_found
+left_foot_right_shin_found
+right_foot_left_shin_found
+```
+
+也就是说，只要模型检测到：
+
+```text
+左右脚互碰
+脚碰对侧小腿
+```
+
+episode 就会结束。
+
+这会让策略避免双腿交叉和自碰撞异常姿态。
+
+---
+
+### 6.3 影响 collision reward
+
+以下两个 sensor 不会直接 done，但会产生 collision penalty：
+
+```text
+left_hand_left_thigh_found
+right_hand_right_thigh_found
+```
+
+作用是抑制手臂和大腿碰撞，但惩罚较轻。
+
+---
+
+### 6.4 不影响 IMU / 速度观测
+
+当前上传的 `sensor.xml` 不定义：
+
+```text
+gyro_pelvis
+accelerometer_pelvis
+local_linvel_pelvis
+global_linvel_pelvis
+global_angvel_pelvis
+upvector_torso
+left_foot_force
+right_foot_force
+```
+
+所以不能说当前文件支撑了完整 observation。
+
+这部分要去其他 XML 找。否则 `joystick.py::_get_obs()` 和 `_get_reward()` 中很多 sensor 读取无法解释。
+
+---
+
+【7. shape / 维度 / 数据含义】
+
+当前文件能明确确认：
+
+```text
+contact sensor 数量 = 7
+```
+
+每个 contact sensor 使用：
+
+```xml
+num="1"
+data="found"
+```
+
+因此每个 sensor 大概率输出 1 个标量信号。Python 侧也按标量读取：
+
+```python
+data.sensordata[self._mj_model.sensor_adr[sensorid]] > 0
+```
+
+所以：
+
+```text
+left_foot_floor_found           → scalar
+right_foot_floor_found          → scalar
+right_foot_left_foot_found      → scalar
+left_foot_right_shin_found      → scalar
+right_foot_left_shin_found      → scalar
+left_hand_left_thigh_found      → scalar
+right_hand_right_thigh_found    → scalar
+```
+
+脚底接触组合后：
+
+```text
+contact = [left_foot_floor_found > 0,
+           right_foot_floor_found > 0]
+
+contact shape = (2,)
+```
+
+这个 `(2,)` 和 `joystick.py` 中：
+
+```text
+feet_air_time shape = (2,)
+last_contact shape = (2,)
+swing_peak shape = (2,)
+phase shape = (2,)
+```
+
+一致。
+
+---
+
+【8. 容易误解或需要注意的点】
+
+### 8.1 当前 `sensor.xml` 不包含 IMU / velocity / force sensor
+
+这是最重要的注意点。
+
+从当前上传文件看，它只包含：
+
+```text
+7 个 contact found sensors
+```
+
+没有：
+
+```text
+gyro
+accelerometer
+upvector
+local_linvel
+global_linvel
+global_angvel
+foot force
+```
+
+所以如果你看到 filemap 或注释说 `sensor.xml` 包含 IMU / 接触力 / 线速度传感器，需要以当前源码为准。至少在当前上传版本中，这些传感器不在 `sensor.xml`。
+
+继续阅读时要查：
+
+```text
+g1_mjx_feetonly.xml
+scene_mjx_feetonly_flat_terrain.xml
+scene_mjx_feetonly_rough_terrain.xml
+MuJoCo Menagerie 的 Unitree G1 XML
+```
+
+确认这些传感器到底定义在哪里。
+
+---
+
+### 8.2 `data="found"` 不是接触力
+
+这些 contact sensor 返回的是接触是否存在，不是力大小。
+
+因此：
+
+```text
+left_foot_floor_found
+```
+
+不能用于计算接触力大小，只能用于判断是否接触。
+
+而 `joystick.py::_cost_contact_force()` 使用的是：
+
+```text
+left_foot_force
+right_foot_force
+```
+
+这两个 force sensor 不在当前 `sensor.xml` 中。
+
+---
+
+### 8.3 `reduce="mindist"` 和 `data="found"` 的组合说明它关注“是否存在接触”
+
+当前每个 contact sensor 都是：
+
+```xml
+reduce="mindist"
+num="1"
+data="found"
+```
+
+这说明它只保留一个接触相关结果，并输出 found 标志。Python 侧也只读取一个标量并判断 `> 0`。
+
+所以不要把这些 sensor 理解成多点接触信息、接触法向力数组或完整 contact manifold。
+
+---
+
+### 8.4 geom 名称强耦合
+
+当前 XML 依赖这些 geom 名称存在：
+
+```text
+left_foot
+right_foot
+floor
+right_shin
+left_shin
+left_hand_collision
+right_hand_collision
+left_thigh
+right_thigh
+```
+
+如果主模型 XML 中没有这些 geom，MuJoCo 编译或 sensor 查询会失败。
+
+这意味着，如果你换成别的 G1 XML 或修改碰撞几何体，必须同步检查这些名字。
+
+---
+
+### 8.5 sensor 名称强耦合
+
+`joystick.py` 中硬编码查询这些 sensor 名称。
+
+例如：
+
+```python
+self._mj_model.sensor("right_foot_left_foot_found").id
+```
+
+所以重命名 sensor 会直接破坏 Python 任务代码。
+
+这类名称没有全部集中在 `g1_constants.py`，后续改 XML 时必须全局搜索。
+
+---
+
+### 8.6 floor geom 名称必须是 `"floor"`
+
+脚底触地 sensor 写的是：
+
+```xml
+geom2="floor"
+```
+
+而 `joystick.py::_post_init()` 也有：
+
+```python
+self._floor_geom_id = self._mj_model.geom("floor").id
+```
+
+所以 flat / rough scene XML 中必须有名为 `floor` 的 geom。即使 rough terrain 使用 hfield，geom 名称也最好仍然保持 `floor`，否则脚底接触 sensor 和 Python 查询都会出问题。
+
+---
+
+【9. 需要继续查看的文件】
+
+### 9.1 `g1_mjx_feetonly.xml`
+
+必须继续看。
+
+原因：
+
+当前 `sensor.xml` 中引用了很多 geom：
+
+```text
+left_foot
+right_foot
+left_shin
+right_shin
+left_thigh
+right_thigh
+left_hand_collision
+right_hand_collision
+```
+
+需要确认这些 geom 是否都在主模型 XML 中定义。
+
+同时还要确认：
+
+```text
+1. 是否 include sensor.xml
+2. 是否定义 gyro / accelerometer / linvel / force sensors
+3. 是否定义 keyframe knees_bent
+4. actuator 数量是否为 29
+5. joint / actuator 顺序是否和 Python 代码一致
+```
+
+---
+
+### 9.2 `scene_mjx_feetonly_flat_terrain.xml`
+
+必须看。
+
+原因：
+
+当前 `sensor.xml` 里有：
+
+```xml
+geom2="floor"
+```
+
+需要确认 flat terrain scene 是否定义：
+
+```text
+geom name="floor"
+```
+
+同时确认它是否 include：
+
+```text
+g1_mjx_feetonly.xml
+sensor.xml
+```
+
+如果 scene XML 没有 include sensor.xml，当前这些 sensor 不会进入最终模型。
+
+---
+
+### 9.3 `scene_mjx_feetonly_rough_terrain.xml`
+
+必须看。
+
+原因：
+
+rough terrain 下也要保证：
+
+```text
+1. floor geom 名称仍然叫 floor
+2. hfield terrain 是否作为 floor geom
+3. sensor.xml 是否被 include
+4. 脚底 contact sensor 是否仍然能检测 foot-floor
+```
+
+如果 rough terrain 的地面 geom 名称不叫 `floor`，当前 `left_foot_floor_found` / `right_foot_floor_found` 就不成立。
+
+---
+
+### 9.4 `joystick.py`
+
+需要交叉复核。
+
+重点看：
+
+```text
+1. _post_init() 中查询哪些 sensor id
+2. reset() / step() 如何构造 contact
+3. _get_termination() 用哪些 contact sensors
+4. _cost_collision() 用哪些 hand-thigh sensors
+5. _cost_contact_force() 用的 force sensors 在哪里定义
+```
+
+尤其是 `_cost_contact_force()` 中的：
+
+```text
+left_foot_force
+right_foot_force
+```
+
+当前 `sensor.xml` 没有定义，需要继续找来源。
+
+---
+
+### 9.5 `base.py`
+
+需要交叉复核。
+
+重点看：
+
+```text
+get_gyro
+get_accelerometer
+get_gravity
+get_local_linvel
+get_global_linvel
+get_global_angvel
+```
+
+这些 wrapper 依赖的 sensor 不在当前 `sensor.xml` 中，需要继续确认其他 XML 是否定义。
+
+---
+
+【10. 当前文件在整个 pipeline 中的定位总结】
+
+`sensor.xml` 是 G1 XML 模型层中的 **接触传感器定义文件**。
+
+它的核心作用不是提供完整 observation，而是提供：
+
+```text
+1. 左右脚是否触地
+2. 左右脚是否互碰
+3. 脚是否碰到对侧小腿
+4. 手是否碰到同侧大腿
+```
+
+它对 pipeline 的影响可以压缩成三条：
+
+```text
+foot-floor contact sensors
+→ contact[2]
+→ feet_air_time / first_contact / privileged_state / feet rewards
+
+foot-foot / foot-shin sensors
+→ termination
+→ done / termination penalty
+
+hand-thigh sensors
+→ collision cost
+→ reward penalty
+```
+
+最关键的数据流是：
+
+```text
+sensor.xml contact sensor
+→ MuJoCo/MJX sensordata
+→ joystick.py 读取 sensor_adr
+→ contact / done / collision cost
+→ PPO rollout 中的 reward 和 episode termination
+```
+
+当前文件是关键节点，但它只覆盖接触检测的一部分。完整 sensor 系统还需要继续看主模型 XML 和 scene XML。

@@ -1,0 +1,1479 @@
+【1. 这段代码在 pipeline 中的位置】
+
+这两个文件：
+
+```text
+scene_mjx_feetonly_flat_terrain.xml
+scene_mjx_feetonly_rough_terrain.xml
+```
+
+属于 **G1 XML / MJCF 场景层**，更准确地说是：
+
+```text
+任务名 task
+→ 场景 XML
+→ include G1 主模型 XML
+→ include sensor.xml
+→ 定义地形 / floor / hfield / keyframe
+→ 被 G1Env 加载成 mujoco.MjModel
+→ 再转换成 mjx.Model
+```
+
+它们不是：
+
+```text
+环境注册层
+MJX 环境基类层
+reset / step 实现层
+observation / reward / termination 代码层
+domain randomization 层
+PPO 训练入口层
+wrapper 层
+```
+
+它们是 `Joystick` 环境在构造时真正加载的 **场景入口 XML**。前面 `g1_constants.py` 中已经明确：
+
+```python
+"flat_terrain"  → scene_mjx_feetonly_flat_terrain.xml
+"rough_terrain" → scene_mjx_feetonly_rough_terrain.xml
+```
+
+而 `Joystick.__init__()` 通过 `consts.task_to_xml(task)` 把 task 转成 XML 路径，交给 `G1Env.__init__()` 加载。 
+
+所以这两个 XML 在 pipeline 中的位置是：
+
+```text
+env_name
+→ locomotion registry
+→ Joystick(task="flat_terrain" / "rough_terrain")
+→ g1_constants.task_to_xml(task)
+→ scene_mjx_feetonly_flat_terrain.xml / scene_mjx_feetonly_rough_terrain.xml
+→ G1Env
+→ mujoco.MjModel
+→ mjx.Model
+```
+
+---
+
+【2. 核心作用】
+
+这两个 XML 的核心作用是：**为同一个 G1 Joystick 任务提供不同地形场景**。
+
+它们共同做了几件事：
+
+```text
+1. include G1 主机器人模型：
+   g1_mjx_feetonly.xml
+
+2. 定义场景视觉参数：
+   statistic / visual / light / shadow / force visualization
+
+3. 定义地面：
+   flat 文件中是 plane floor
+   rough 文件中是 hfield floor
+
+4. include sensor.xml：
+   提供 joystick.py 中 observation / reward / termination 依赖的传感器
+
+5. 定义 keyframe：
+   home
+   knees_bent
+```
+
+它们的核心差异是：
+
+```text
+flat terrain:
+  floor 是 plane
+  地面贴图是 checker texture
+  初始 base 高度较低
+
+rough terrain:
+  floor 是 hfield
+  使用 hfield.png 高度场
+  使用 rocky_texture.png 纹理
+  初始 base 高度较高
+```
+
+这解释了为什么 Python 里 `G1JoystickFlatTerrain` 和 `G1JoystickRoughTerrain` 可以共用同一个 `Joystick` 类：差异不是通过两个 Python 环境类实现，而是通过不同 XML 场景实现。
+
+---
+
+【3. 两个 XML 的共同结构】
+
+两个 XML 的整体结构基本一致：
+
+```xml
+<mujoco model="...">
+  <include file="g1_mjx_feetonly.xml"/>
+
+  <statistic .../>
+
+  <visual>
+    ...
+  </visual>
+
+  <asset>
+    ...
+  </asset>
+
+  <worldbody>
+    <geom name="floor" .../>
+  </worldbody>
+
+  <include file="sensor.xml"/>
+
+  <keyframe>
+    <key name="home" .../>
+    <key name="knees_bent" .../>
+  </keyframe>
+</mujoco>
+```
+
+这说明它们不是完整机器人 XML，而是 **场景包装 XML**。
+
+真正的 G1 机器人结构在：
+
+```text
+g1_mjx_feetonly.xml
+```
+
+传感器定义在：
+
+```text
+sensor.xml
+```
+
+当前这两个 scene XML 主要负责把它们组合起来，并额外定义地形和初始姿态。
+
+项目 filemap 也说明：`scene_mjx_feetonly_flat_terrain.xml` 是平坦地形场景，包含 `g1_mjx_feetonly.xml` 和平面地板；`scene_mjx_feetonly_rough_terrain.xml` 是粗糙地形场景，包含高度场地形和岩石纹理。
+
+---
+
+【4. 关键对象/结构解释】
+
+### 4.1 `<include file="g1_mjx_feetonly.xml"/>`
+
+两个 XML 都有：
+
+```xml
+<include file="g1_mjx_feetonly.xml"/>
+```
+
+这是最关键的 include。
+
+它说明：
+
+```text
+scene XML 本身不定义 G1 的 body / joint / actuator
+而是 include 另一个主模型 XML
+```
+
+数据流是：
+
+```text
+scene_mjx_feetonly_flat_terrain.xml
+或
+scene_mjx_feetonly_rough_terrain.xml
+→ include g1_mjx_feetonly.xml
+→ 得到 G1 主机器人模型
+→ 再加上地形、sensor、keyframe
+```
+
+这也解释了为什么 `Joystick` 中能查到：
+
+```text
+joint: left_hip_pitch_joint 等
+site: left_foot / right_foot / imu_in_pelvis / imu_in_torso
+geom: left_foot / right_foot / left_shin / right_shin 等
+actuator: 29 个
+```
+
+这些大概率来自 `g1_mjx_feetonly.xml`，不是当前 scene XML 直接定义的。
+
+---
+
+### 4.2 `<include file="sensor.xml"/>`
+
+两个 XML 都 include：
+
+```xml
+<include file="sensor.xml"/>
+```
+
+这对 pipeline 很关键。
+
+前面 `base.py` 中的 sensor wrapper 会根据 `g1_constants.py` 的前缀拼接 sensor 名称，然后通过 `mjx_env.get_sensor_data()` 从 `data.sensordata` 读取传感器数据。
+
+例如：
+
+```text
+base.py.get_gyro(data, "pelvis")
+→ sensor name = "gyro_pelvis"
+
+base.py.get_local_linvel(data, "pelvis")
+→ sensor name = "local_linvel_pelvis"
+
+base.py.get_gravity(data, "torso")
+→ sensor name = "upvector_torso"
+```
+
+这些 sensor 必须在 `sensor.xml` 中定义，否则 `Joystick` 的 observation、reward、termination 会失败。
+
+所以这条链很关键：
+
+```text
+scene XML
+→ include sensor.xml
+→ mujoco.MjModel 有 sensor
+→ data.sensordata 有对应切片
+→ base.py.get_gyro / get_gravity / get_local_linvel
+→ joystick.py._get_obs / _get_reward / _get_termination
+```
+
+---
+
+### 4.3 `<worldbody><geom name="floor" .../></worldbody>`
+
+两个 XML 都定义了一个名字为：
+
+```text
+floor
+```
+
+的地面 geom。
+
+flat 文件中：
+
+```xml
+<geom name="floor" size="0 0 0.01" type="plane" material="groundplane"/>
+```
+
+rough 文件中：
+
+```xml
+<geom name="floor" type="hfield" hfield="hfield" material="groundplane"/>
+```
+
+这点非常关键，因为 `joystick.py::_post_init()` 里直接写了：
+
+```python
+self._floor_geom_id = self._mj_model.geom("floor").id
+```
+
+虽然当前 `joystick.py` 中 `_floor_geom_id` 后续没有明显直接使用，但脚-地接触 sensor 的命名也与 floor 强相关：
+
+```python
+self._feet_floor_found_sensor = [
+    self._mj_model.sensor(foot_geom + "_floor_found").id
+    for foot_geom in ["left_foot", "right_foot"]
+]
+```
+
+因此两个 scene XML 都必须保持地面 geom 名称为 `floor`，否则至少会破坏部分命名假设或 contact sensor 配置。
+
+数据流：
+
+```text
+scene XML 定义 geom name="floor"
+→ MuJoCo model 中存在 floor geom
+→ sensor.xml 中可以定义 left_foot_floor_found / right_foot_floor_found
+→ joystick.py 读取脚-地接触
+→ feet_air_time / first_contact / feet reward / contact logic
+```
+
+---
+
+### 4.4 `keyframe: home`
+
+两个 XML 都定义了：
+
+```xml
+<key name="home" .../>
+```
+
+`home` 当前在 `joystick.py` 中没有直接使用。`Joystick._post_init()` 明确使用的是：
+
+```python
+self._mj_model.keyframe("knees_bent").qpos
+```
+
+因此当前能确认：
+
+```text
+home keyframe 存在
+但 joystick.py 当前主线没有使用它
+```
+
+它可能用于：
+
+```text
+手动可视化
+调试
+其他脚本 reset
+XML 默认姿态参考
+```
+
+但不能说它参与当前训练 reset，除非后续训练/评估脚本调用它。
+
+---
+
+### 4.5 `keyframe: knees_bent`
+
+这是当前两个 XML 中最关键的 keyframe。
+
+两个文件都定义了：
+
+```xml
+<key name="knees_bent" qpos="..." ctrl="..."/>
+```
+
+`joystick.py::_post_init()` 中直接使用：
+
+```python
+self._init_q = jp.array(self._mj_model.keyframe("knees_bent").qpos)
+self._default_pose = jp.array(self._mj_model.keyframe("knees_bent").qpos[7:])
+```
+
+也就是说：
+
+```text
+knees_bent.qpos
+→ reset 初始 qpos 基础姿态
+→ default_pose = qpos[7:]
+→ action 的中心姿态
+→ pose reward / stand_still cost / joint deviation cost 的参考姿态
+```
+
+再结合 `joystick.py::step()`：
+
+```python
+motor_targets = self._default_pose + action * self._config.action_scale
+```
+
+可以得到完整链条：
+
+```text
+XML keyframe knees_bent.qpos[7:]
+→ Joystick._default_pose
+→ policy action 的零点
+→ motor_targets
+→ data.ctrl
+→ MJX 仿真
+```
+
+所以 `knees_bent` 不只是一个可视化姿态，它是当前控制任务的核心参考姿态。
+
+---
+
+【5. flat terrain XML 具体作用】
+
+### 5.1 模型名
+
+flat 文件：
+
+```xml
+<mujoco model="g1 scene">
+```
+
+这只是 MuJoCo model 名称，对训练逻辑影响不大。
+
+---
+
+### 5.2 include 主模型
+
+flat 文件 include：
+
+```xml
+<include file="g1_mjx_feetonly.xml"/>
+```
+
+说明 flat 任务的机器人本体与 rough 任务共用同一个主模型。
+
+---
+
+### 5.3 statistic / visual
+
+flat 文件：
+
+```xml
+<statistic center="0 0 0.7" extent="1.2" meansize="0.04"/>
+```
+
+以及：
+
+```xml
+<global azimuth="140" elevation="-20"/>
+<quality shadowsize="8192"/>
+```
+
+这些主要影响：
+
+```text
+MuJoCo viewer / renderer 的视觉范围、默认视角、阴影质量
+```
+
+不直接影响：
+
+```text
+MJX 动力学
+reward
+observation
+termination
+PPO 更新
+```
+
+但会影响 `mjx_env.render_array()` 渲染出来的视频效果，因为 render 使用的是 MuJoCo Renderer。
+
+---
+
+### 5.4 asset：checker 地面
+
+flat 文件中定义了：
+
+```xml
+<texture type="skybox" builtin="gradient" .../>
+<texture type="2d" name="groundplane" builtin="checker" .../>
+<material name="groundplane" texture="groundplane" ... reflectance="0"/>
+```
+
+这说明 flat 地面材质是棋盘格/纯白风格 groundplane。
+
+这些主要是可视化材质，不是地形几何高度。
+
+---
+
+### 5.5 worldbody：plane floor
+
+flat 文件地面是：
+
+```xml
+<geom name="floor" size="0 0 0.01" type="plane" material="groundplane"/>
+```
+
+含义：
+
+```text
+地面类型：无限平面 plane
+几何高度：没有高度场起伏
+geom name：floor
+```
+
+这就是 flat terrain 的核心。
+
+训练影响：
+
+```text
+脚底接触总是在平面上发生
+机器人不需要适应地形高度变化
+roughness 不来自地形，只来自 reset 随机化 / push / observation noise / domain randomization
+```
+
+---
+
+### 5.6 keyframe 高度
+
+flat 的 `home`：
+
+```text
+base z = 0.785
+```
+
+flat 的 `knees_bent`：
+
+```text
+base z = 0.755
+```
+
+其中 `knees_bent` 被当前训练 reset 使用。
+
+所以 flat 任务默认初始 root 高度是：
+
+```text
+knees_bent.qpos[2] = 0.755
+```
+
+后续 `Joystick.reset()` 会在这个基础上随机 x/y 和 yaw，并对 qpos[7:] 做乘法随机扰动，但没有直接随机 base z。
+
+---
+
+【6. rough terrain XML 具体作用】
+
+### 6.1 模型名
+
+rough 文件：
+
+```xml
+<mujoco model="g1 feet only rough terrain scene">
+```
+
+这只是模型名，主要用于 MuJoCo 内部标识和调试。
+
+---
+
+### 6.2 include 主模型
+
+rough 文件同样 include：
+
+```xml
+<include file="g1_mjx_feetonly.xml"/>
+```
+
+所以 rough 任务并没有换机器人本体。
+
+---
+
+### 6.3 statistic / visual
+
+rough 文件：
+
+```xml
+<statistic center="0 0 0.1" extent="0.8" meansize="0.04"/>
+```
+
+以及：
+
+```xml
+<global azimuth="120" elevation="-20"/>
+```
+
+这些主要影响可视化视角和 viewer/render 的默认显示效果。
+
+---
+
+### 6.4 asset：rocky texture + hfield
+
+rough 文件的 asset 是：
+
+```xml
+<texture type="2d" name="groundplane" file="assets/rocky_texture.png"/>
+<material name="groundplane" texture="groundplane" texuniform="true" texrepeat="5 5" reflectance=".8"/>
+<hfield name="hfield" file="assets/hfield.png" size="10 10 .05 1.0"/>
+```
+
+这是 rough terrain 的核心。
+
+可以确认：
+
+```text
+1. 地面纹理来自 assets/rocky_texture.png
+2. 高度场来自 assets/hfield.png
+3. hfield 名称是 hfield
+4. hfield size = 10 10 .05 1.0
+```
+
+其中 `hfield size="10 10 .05 1.0"` 是 MuJoCo 高度场参数。源码层面能确认它设置了高度场尺寸和高度尺度，但具体每个参数的物理解释如果要精确，需要查 MuJoCo XML 文档；当前不强行展开。
+
+---
+
+### 6.5 worldbody：hfield floor
+
+rough 文件地面是：
+
+```xml
+<geom name="floor" type="hfield" hfield="hfield" material="groundplane"/>
+```
+
+含义：
+
+```text
+地面 geom 仍然叫 floor
+但类型从 plane 变成 hfield
+实际高度来自 hfield.png
+```
+
+这解释了 rough terrain 和 flat terrain 的实际差异：
+
+```text
+flat:
+  geom name="floor", type="plane"
+
+rough:
+  geom name="floor", type="hfield", hfield="hfield"
+```
+
+训练影响：
+
+```text
+脚底接触点高度随 x/y 位置变化
+机器人需要在非平面地形上维持平衡与速度跟踪
+脚部接触传感器仍然可以沿用 floor 这个 geom 名称
+```
+
+---
+
+### 6.6 keyframe 高度
+
+rough 的 `home`：
+
+```text
+base z = 0.83
+```
+
+rough 的 `knees_bent`：
+
+```text
+base z = 0.8
+```
+
+相比 flat：
+
+```text
+flat home z       = 0.785
+flat knees_bent z = 0.755
+```
+
+rough 的初始高度更高：
+
+```text
+home:       0.83  - 0.785 = 0.045
+knees_bent: 0.8   - 0.755 = 0.045
+```
+
+这很合理：rough terrain 使用 hfield，高度场可能有凸起，因此初始 root z 提高了 0.045，避免机器人初始姿态与地形发生穿插或不合理接触。
+
+这是源码直接可见的事实。
+
+---
+
+【7. flat 与 rough 的关键差异表】
+
+| 模块                   | flat terrain          | rough terrain                      | 对 pipeline 的影响           |
+| -------------------- | --------------------- | ---------------------------------- | ------------------------ |
+| XML model name       | `g1 scene`            | `g1 feet only rough terrain scene` | 主要用于调试/显示                |
+| include 主模型          | `g1_mjx_feetonly.xml` | `g1_mjx_feetonly.xml`              | 机器人本体相同                  |
+| 地面 geom 名称           | `floor`               | `floor`                            | Python 代码和 sensor 命名可以复用 |
+| 地面类型                 | `plane`               | `hfield`                           | 这是核心差异                   |
+| 地面资源                 | checker texture       | rocky texture + hfield.png         | rough 有真实高度场             |
+| material reflectance | `0`                   | `.8`                               | 主要影响视觉                   |
+| home base z          | `0.785`               | `0.83`                             | rough 更高                 |
+| knees_bent base z    | `0.755`               | `0.8`                              | rough 更高                 |
+| include sensor       | `sensor.xml`          | `sensor.xml`                       | 传感器系统相同                  |
+| keyframe joint pose  | 相同                    | 相同                                 | 默认关节姿态相同                 |
+| keyframe ctrl        | 相同                    | 相同                                 | 默认 actuator ctrl 相同      |
+
+最核心的结论：
+
+```text
+两个任务的机器人、传感器、关节默认姿态基本相同；
+主要差异是地形几何和初始 base 高度。
+```
+
+---
+
+【8. keyframe 的 qpos / ctrl 维度】
+
+两个 XML 的 `knees_bent` 和 `home` 都遵循同一结构。
+
+以 `knees_bent.qpos` 为例：
+
+```text
+0 0 z
+1 0 0 0
+左腿 6
+右腿 6
+腰部 3
+左臂 7
+右臂 7
+```
+
+维度为：
+
+```text
+base position:    3
+base quaternion:  4
+left leg:         6
+right leg:        6
+waist:            3
+left arm:         7
+right arm:        7
+总 qpos:          36
+```
+
+也就是：
+
+```text
+qpos = 7 + 29 = 36
+```
+
+`ctrl` 部分没有 base position / quaternion，只有 29 个关节控制值：
+
+```text
+left leg:   6
+right leg:  6
+waist:      3
+left arm:   7
+right arm:  7
+总 ctrl:    29
+```
+
+这和前面 Python 代码完全对应：
+
+```text
+joystick.py:
+  self._default_pose = keyframe("knees_bent").qpos[7:]
+  action dim ≈ 29
+  motor_targets = default_pose + action * action_scale
+
+base.py:
+  action_size = mjx_model.nu
+
+g1_constants.py:
+  RESTRICTED_JOINT_RANGE = 29 组范围
+```
+
+所以完整控制链是：
+
+```text
+XML knees_bent.qpos[7:]，29 维
+→ Joystick._default_pose
+→ policy action，29 维
+→ motor_targets，29 维
+→ mjx_env.step 写入 data.ctrl
+→ XML actuator 接收 ctrl
+```
+
+---
+
+【9. 对 reset 的影响】
+
+`Joystick.reset()` 中：
+
+```python
+qpos = self._init_q
+qvel = jp.zeros(self.mjx_model.nv)
+```
+
+其中：
+
+```python
+self._init_q = self._mj_model.keyframe("knees_bent").qpos
+```
+
+所以两个 XML 的 `knees_bent` 直接决定 reset 初始姿态。
+
+flat reset 初始高度：
+
+```text
+qpos[2] = 0.755
+```
+
+rough reset 初始高度：
+
+```text
+qpos[2] = 0.8
+```
+
+然后 `reset()` 会继续做：
+
+```text
+x/y 随机偏移 ±0.5
+yaw 随机 [-3.14, 3.14]
+qpos[7:] 乘以 U(0.5, 1.5)
+qvel[0:6] 随机 [-0.5, 0.5]
+```
+
+这意味着：
+
+```text
+scene XML 提供初始姿态基准
+joystick.reset 在此基础上增加随机化
+```
+
+数据流：
+
+```text
+XML keyframe knees_bent
+→ self._init_q
+→ reset qpos
+→ 随机 base xy/yaw/joint scale/qvel
+→ mjx_env.make_data
+→ mjx.forward
+→ 初始 State
+```
+
+---
+
+【10. 对 action 含义的影响】
+
+两个 XML 的 `knees_bent.ctrl` 与 `knees_bent.qpos[7:]` 是一致的 29 维控制目标。
+
+`Joystick.step()` 里：
+
+```python
+motor_targets = self._default_pose + action * self._config.action_scale
+```
+
+其中：
+
+```text
+self._default_pose = knees_bent.qpos[7:]
+```
+
+因此 action 的零点不是 XML 的 `home`，而是 XML 的 `knees_bent`。
+
+这意味着：
+
+```text
+policy action = 0
+→ motor_targets = knees_bent joint pose
+```
+
+这对理解训练很重要：
+
+```text
+策略不是从完全直立 home 姿态附近控制
+而是围绕 knees_bent 姿态输出 residual joint target
+```
+
+---
+
+【11. 对 observation / reward / termination 的影响】
+
+这两个 XML 对 observation/reward/termination 的影响不是直接通过 Python 函数，而是通过：
+
+```text
+include sensor.xml
++ floor geom
++ feet site / geom / sensor
++ keyframe
+```
+
+具体链路如下。
+
+### 11.1 observation
+
+```text
+scene XML include sensor.xml
+→ MuJoCo model 中有 gyro_pelvis / accelerometer_pelvis / local_linvel_pelvis 等 sensor
+→ base.py.get_gyro / get_accelerometer / get_local_linvel
+→ joystick.py._get_obs
+→ obs["state"] / obs["privileged_state"]
+```
+
+### 11.2 reward
+
+```text
+scene XML include sensor.xml
+→ local_linvel_pelvis
+→ tracking_lin_vel reward
+
+scene XML include sensor.xml
+→ gyro_pelvis
+→ tracking_ang_vel reward
+
+scene XML define floor + sensor.xml contact sensors
+→ left_foot_floor_found / right_foot_floor_found
+→ feet_air_time / first_contact / feet rewards
+
+scene XML keyframe knees_bent
+→ default_pose
+→ pose / stand_still / joint_deviation reward
+```
+
+### 11.3 termination
+
+```text
+scene XML include sensor.xml
+→ upvector_torso
+→ fall_termination
+
+sensor.xml contact sensors
+→ right_foot_left_foot_found
+→ left_foot_right_shin_found
+→ right_foot_left_shin_found
+→ contact_termination
+```
+
+所以这两个 XML 虽然不写 reward 公式，但它们提供了 reward 公式所需的底层物理对象和传感器。
+
+---
+
+【12. 对 flat/rough 训练差异的影响】
+
+源码能确认的事实：
+
+```text
+flat:
+  floor 是 plane
+  knees_bent base z = 0.755
+
+rough:
+  floor 是 hfield
+  hfield file = assets/hfield.png
+  hfield size = 10 10 .05 1.0
+  knees_bent base z = 0.8
+```
+
+根据代码结构可以合理推断：
+
+```text
+rough terrain 训练更难，因为脚底接触发生在高度场上；
+但 observation 中没有直接看到 height samples 或 terrain map；
+因此当前 rough terrain 更像“无外感知 proprioceptive rough terrain locomotion”，
+而不是带高度图/点云输入的 perceptive locomotion。
+```
+
+需要继续查其他文件才能确认的部分：
+
+```text
+1. sensor.xml 是否提供 terrain height sensor？
+   当前 scene XML 只是 include sensor.xml，不能确认 sensor.xml 里有没有地形高度观测。
+
+2. wrapper 或 observation 是否额外加入 height samples？
+   当前 joystick.py 的 _get_obs 没看到 height samples，但要最终确认应全局搜索 height / terrain / hfield 相关 obs。
+
+3. hfield.png 的实际高度分布是什么？
+   scene XML 只说明使用 hfield.png，不显示图像内容。
+```
+
+根据当前已经读过的 `joystick.py`，policy observation 是 proprioception + command + last_action + phase，没有明显 terrain height samples。因此 rough terrain 在当前代码中不是“外感知地形输入任务”。
+
+---
+
+【13. 与其他文件的连接】
+
+### 13.1 与 `g1_constants.py`
+
+`g1_constants.py` 是这两个 XML 的路径分发点：
+
+```python
+FEET_ONLY_FLAT_TERRAIN_XML = ROOT_PATH / "xmls" / "scene_mjx_feetonly_flat_terrain.xml"
+FEET_ONLY_ROUGH_TERRAIN_XML = ROOT_PATH / "xmls" / "scene_mjx_feetonly_rough_terrain.xml"
+```
+
+并且：
+
+```python
+task_to_xml("flat_terrain")  → flat XML
+task_to_xml("rough_terrain") → rough XML
+```
+
+所以当前两个 XML 是 `task_to_xml()` 的最终输出对象。
+
+---
+
+### 13.2 与 `locomotion.__init__.py`
+
+`locomotion.__init__.py` 中：
+
+```python
+"G1JoystickFlatTerrain": functools.partial(
+    g1_joystick.Joystick, task="flat_terrain"
+)
+"G1JoystickRoughTerrain": functools.partial(
+    g1_joystick.Joystick, task="rough_terrain"
+)
+```
+
+这说明：
+
+```text
+环境名
+→ task 字符串
+→ g1_constants.task_to_xml
+→ 当前两个 XML
+```
+
+即：
+
+```text
+G1JoystickFlatTerrain
+→ flat_terrain
+→ scene_mjx_feetonly_flat_terrain.xml
+
+G1JoystickRoughTerrain
+→ rough_terrain
+→ scene_mjx_feetonly_rough_terrain.xml
+```
+
+
+
+---
+
+### 13.3 与 `base.py`
+
+`base.py::G1Env.__init__()` 会读取 XML：
+
+```python
+self._mj_model = mujoco.MjModel.from_xml_string(
+    epath.Path(xml_path).read_text(), assets=self._model_assets
+)
+```
+
+这意味着当前两个 scene XML 会被读成字符串，然后和 assets 一起交给 MuJoCo 编译。
+
+同时 `base.py::get_assets()` 会加载：
+
+```text
+g1_env/_src/locomotion/g1/xmls/*.xml
+g1_env/_src/locomotion/g1/xmls/assets
+MuJoCo Menagerie unitree_g1 XML/assets
+```
+
+所以当前 scene XML 中的：
+
+```xml
+<include file="g1_mjx_feetonly.xml"/>
+<include file="sensor.xml"/>
+file="assets/hfield.png"
+file="assets/rocky_texture.png"
+```
+
+都依赖 `base.py::get_assets()` 把对应文件加入 assets 字典。
+
+---
+
+### 13.4 与 `joystick.py`
+
+`joystick.py` 使用当前 XML 的地方非常多，但大部分是间接使用。
+
+直接关键点：
+
+```text
+1. keyframe("knees_bent")
+   → 当前 XML 定义
+   → reset 初始姿态 / default_pose / action center
+
+2. geom("floor")
+   → 当前 XML 定义
+   → floor geom id
+
+3. include sensor.xml
+   → 当前 XML 引入
+   → joystick.py 能读取 contact / IMU / velocity sensors
+
+4. feet site / hand site / geom / body
+   → 来自 include 的 g1_mjx_feetonly.xml
+   → 当前 scene XML 通过 include 把它们引入
+```
+
+因此：
+
+```text
+scene XML 是 Joystick 能运行的模型入口。
+没有它，Joystick 只有 Python 逻辑，没有具体机器人和地形。
+```
+
+---
+
+### 13.5 与 `mjx_env.py`
+
+`mjx_env.py` 不直接知道当前 XML 的语义，但它提供：
+
+```text
+update_assets
+make_data
+step
+render_array
+get_sensor_data
+```
+
+其中 `render_array()` 支持 `hfield_data`：
+
+```python
+if hfield_data is not None:
+    mj_model.hfield_data = hfield_data.reshape(mj_model.hfield_data.shape)
+    mujoco.mjr_uploadHField(...)
+```
+
+这对 rough terrain 有潜在关系，因为 rough XML 使用 hfield。当前 scene XML 静态引用 `assets/hfield.png`；如果后续需要动态渲染不同高度场，`render_array(hfield_data=...)` 可能会接上。
+
+---
+
+【14. 对训练/仿真/推理的影响】
+
+### 14.1 对训练的影响
+
+flat 和 rough 的训练差异主要来自地形：
+
+```text
+flat:
+  平面地面
+  更适合基础速度跟踪训练
+
+rough:
+  高度场地面
+  接触高度变化
+  更考验鲁棒性和平衡能力
+```
+
+但当前 XML 没有定义 reward，也没有定义 observation。reward/obs 仍由 `joystick.py` 决定。
+
+---
+
+### 14.2 对仿真的影响
+
+这两个 XML 会影响 MuJoCo/MJX 模型：
+
+```text
+1. worldbody 中 floor geom 的类型不同
+2. rough 增加 hfield asset
+3. keyframe root height 不同
+4. visual/camera/statistic 不同
+```
+
+其中真正影响动力学的是：
+
+```text
+floor geom 类型
+hfield 高度场
+keyframe 初始 base 高度
+```
+
+主要影响可视化的是：
+
+```text
+texture
+material
+visual/global azimuth
+shadow size
+statistic
+```
+
+---
+
+### 14.3 对推理/部署的影响
+
+如果你把训练好的 policy 用于评估：
+
+```text
+同一 policy
+→ flat XML
+→ 平地评估
+
+同一 policy
+→ rough XML
+→ 高度场评估
+```
+
+但要注意：如果 policy 训练时没有 terrain observation，它在 rough terrain 上依赖的是 proprioception、接触反馈、IMU、速度等内部状态，而不是预先看到地形。
+
+这会影响你对 sim-to-real 或 perceptive locomotion 的判断：
+
+```text
+当前 rough XML 提供 rough terrain
+但当前已读 joystick.py 没有提供 height samples
+所以它不是典型“外感知输入的粗糙地形行走”任务。
+```
+
+---
+
+【15. 容易误解或需要注意的点】
+
+### 15.1 scene XML 不是 G1 主模型
+
+这两个 XML 都 include：
+
+```xml
+<include file="g1_mjx_feetonly.xml"/>
+```
+
+所以它们本身不是机器人主模型文件。要看 29 个关节、actuator、body、site、geom，需要继续看：
+
+```text
+g1_mjx_feetonly.xml
+```
+
+---
+
+### 15.2 flat/rough 的差异主要在 XML，不在 Python 类
+
+`G1JoystickFlatTerrain` 和 `G1JoystickRoughTerrain` 不是两个独立环境类。它们都走：
+
+```text
+Joystick
+```
+
+区别是：
+
+```text
+task_to_xml("flat_terrain")
+task_to_xml("rough_terrain")
+```
+
+这点已经由 `locomotion.__init__.py`、`g1_constants.py`、`joystick.py` 三者共同确认。  
+
+---
+
+### 15.3 rough terrain 不等于有外感知输入
+
+rough XML 使用了 hfield，但当前已读 `joystick.py::_get_obs()` 没看到 height samples、depth、LiDAR、terrain map 之类输入。
+
+所以不能把这个 rough terrain 环境直接理解为：
+
+```text
+perceptive locomotion
+```
+
+更准确是：
+
+```text
+粗糙地形上的本体感知 locomotion
+```
+
+除非后续 wrapper 或其他文件额外加入地形观测。
+
+---
+
+### 15.4 `floor` 名称是硬耦合点
+
+两个 XML 都把地面 geom 命名为：
+
+```text
+floor
+```
+
+这是对 Python 代码友好的设计，因为 `joystick.py` 直接查：
+
+```python
+self._mj_model.geom("floor").id
+```
+
+如果你新增 stairs、slope、random terrain XML，最好仍保持：
+
+```xml
+<geom name="floor" .../>
+```
+
+否则要同步改 Python 代码和 sensor 定义。
+
+---
+
+### 15.5 `sensor.xml` 是隐含关键依赖
+
+这两个 scene XML 都 include `sensor.xml`。如果你自己新建场景 XML 时忘记 include 它，环境可能在 `_post_init()` 或 `_get_obs()` 阶段失败。
+
+典型失败链：
+
+```text
+新 scene XML 没 include sensor.xml
+→ mujoco.MjModel 中没有 gyro_pelvis / upvector_torso / left_foot_floor_found
+→ Joystick._post_init 或 _get_obs 查 sensor 失败
+```
+
+---
+
+### 15.6 rough 的初始高度不是随便改的
+
+rough 的 `knees_bent.qpos[2] = 0.8`，flat 是 `0.755`。
+
+如果你把 rough 改回 flat 的高度，可能导致：
+
+```text
+初始脚/身体与 hfield 地形穿插
+初始 contact 状态异常
+reset 后机器人不稳定
+```
+
+是否一定出问题要看 hfield 实际高度，但这个高度差明显是有工程意图的。
+
+---
+
+### 15.7 keyframe 的 joint pose 和 ctrl 必须与 actuator 顺序一致
+
+两个 XML 的 keyframe ctrl 是 29 维，顺序必须和 `g1_mjx_feetonly.xml` 中 actuator 顺序一致。
+
+如果你修改主模型 actuator 顺序，但不修改 keyframe ctrl，会导致：
+
+```text
+默认控制目标错配到错误关节
+policy action 的零点错误
+训练非常不稳定或直接失败
+```
+
+这是 XML 修改时的高风险点。
+
+---
+
+【16. 当前两个 XML 在 pipeline 中是不是关键节点】
+
+是关键节点，但它们不是算法节点。
+
+它们决定：
+
+```text
+1. 加载哪个场景
+2. 使用 plane 还是 hfield
+3. 是否 include sensor.xml
+4. reset 的 knees_bent 初始 qpos
+5. action 的 default_pose 来源
+6. floor geom 名称
+7. render 材质和视角
+```
+
+它们不决定：
+
+```text
+1. reward scale
+2. command 采样
+3. observation 拼接方式
+4. privileged_state 内容
+5. domain randomization
+6. PPO 超参数
+7. wrapper 接口
+```
+
+一句话定位：
+
+```text
+这两个 XML 是 flat/rough G1 Joystick 环境的场景入口；
+它们把“同一个 G1 任务代码”绑定到“不同地形物理世界”。
+```
+
+---
+
+【17. 需要继续查看的文件】
+
+### 17.1 `g1_mjx_feetonly.xml`
+
+优先级最高。
+
+需要确认：
+
+```text
+1. 29 个 joint 的名称与顺序
+2. 29 个 actuator 的名称、类型、ctrlrange 与顺序
+3. freejoint 是否是第一个 joint
+4. body/geom/site 命名
+5. left_foot/right_foot site 与 geom 如何定义
+6. imu_in_torso / imu_in_pelvis site 如何定义
+7. left_shin/right_shin/left_thigh/right_thigh/hand_collision geom 是否存在
+```
+
+原因：
+
+当前两个 scene XML 只是 include 它。真正机器人模型细节在这里。
+
+---
+
+### 17.2 `sensor.xml`
+
+优先级最高。
+
+需要确认：
+
+```text
+1. gyro_pelvis 是否存在
+2. accelerometer_pelvis 是否存在
+3. upvector_torso / upvector_pelvis 是否存在
+4. local_linvel_pelvis 是否存在
+5. global_linvel_pelvis / global_linvel_torso 是否存在
+6. global_angvel_pelvis / global_angvel_torso 是否存在
+7. left_foot_force / right_foot_force 是否存在
+8. left_foot_floor_found / right_foot_floor_found 是否存在
+9. foot-foot / foot-shin / hand-thigh contact sensors 如何定义
+```
+
+原因：
+
+当前两个 scene XML 只是 include `sensor.xml`。observation/reward/termination 是否能工作，要看 sensor 定义是否匹配 `joystick.py` 和 `base.py`。
+
+---
+
+### 17.3 `assets/hfield.png`
+
+优先级中高，针对 rough terrain。
+
+需要确认：
+
+```text
+1. 高度场实际形状
+2. 是否是规则地形、随机地形、台阶状地形还是噪声地形
+3. 高度范围与 hfield size=".05" 的组合效果
+```
+
+原因：
+
+rough XML 只是引用：
+
+```xml
+<hfield name="hfield" file="assets/hfield.png" size="10 10 .05 1.0"/>
+```
+
+但不展示实际地形内容。要理解 rough terrain 的难度，需要看图片本身。
+
+---
+
+### 17.4 `randomize.py`
+
+需要确认：
+
+```text
+1. 是否随机化 geom friction
+2. 是否随机化 body mass
+3. 是否随机化 dof_armature / dof_frictionloss
+4. 是否随机化初始位置
+5. flat 和 rough 是否共用同一个 domain_randomize
+```
+
+原因：
+
+rough terrain 是静态 hfield；domain randomization 是否会进一步改变物理参数，需要看 `randomize.py`。前面 registry 中两个环境都指向同一个 `domain_randomize`。
+
+---
+
+### 17.5 `wrapper.py` / `train_jax_ppo.py`
+
+需要确认：
+
+```text
+1. flat / rough env_name 如何传入
+2. domain randomizer 是否真的接入训练
+3. eval 时加载哪个 XML
+4. render 时是否使用 hfield_data 或默认 hfield
+5. observation dict 如何给 actor/critic
+```
+
+原因：
+
+XML 只定义场景，训练脚本决定它如何被 rollout、评估和保存。
+
+---
+
+【18. 对当前两个 XML 的总结】
+
+这两个 XML 可以简化记成：
+
+```text
+flat scene:
+  include G1 主模型
+  include sensor.xml
+  floor = plane
+  knees_bent root z = 0.755
+
+rough scene:
+  include G1 主模型
+  include sensor.xml
+  floor = hfield
+  hfield = assets/hfield.png
+  knees_bent root z = 0.8
+```
+
+它们在完整 pipeline 中的作用是：
+
+```text
+G1JoystickFlatTerrain / G1JoystickRoughTerrain
+→ 不是换 Python 任务类
+→ 而是通过 task_to_xml 加载不同 scene XML
+→ 从而得到不同地形的 mujoco.MjModel / mjx.Model
+```
+
+最终数据流：
+
+```text
+env_name
+→ locomotion registry
+→ Joystick(task)
+→ task_to_xml(task)
+→ scene XML
+→ include g1_mjx_feetonly.xml
+→ include sensor.xml
+→ define floor / hfield / keyframe
+→ G1Env.from_xml_string(...)
+→ mujoco.MjModel
+→ mjx.put_model(...)
+→ mjx.Model
+→ Joystick.reset / step
+→ PPO rollout
+```

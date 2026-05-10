@@ -1,0 +1,2179 @@
+【1. 这段代码在 pipeline 中的位置】
+
+`train_jax_ppo.py` 属于 **PPO 训练入口层 / Brax PPO 训练后端接入层 / JAX 训练脚本层**。
+
+它不是环境本体，不实现 G1 的 `reset()` / `step()` / reward / observation，也不直接写 MuJoCo 动力学。它的职责是把前面已经定义好的环境、配置、wrapper、PPO 算法、日志、checkpoint、eval、视频录制串成一条完整训练 pipeline。源码开头也明确写了：`Train a PPO agent using JAX on the specified environment.` 
+
+它在整个工程中的位置是：
+
+```text id="1n8py6"
+命令行 / 脚本入口 train-g1-jax
+→ learning/train_jax_ppo.py
+→ registry.get_default_config(env_name)
+→ registry.load(env_name, config, config_overrides)
+→ Joystick / G1Env / MjxEnv
+→ wrapper.wrap_for_brax_training
+→ brax.training.agents.ppo.train
+→ checkpoint / eval / inference / video
+```
+
+更完整地放入你目前读过的文件链条中：
+
+```text id="b2qzry"
+train_jax_ppo.py
+→ g1_env.registry
+→ g1_env._src.locomotion.__init__
+→ g1_joystick.Joystick
+→ g1_base.G1Env
+→ mjx_env.MjxEnv
+→ mujoco.MjModel / mjx.Model
+→ Brax PPO
+```
+
+所以这个文件是目前 G1 RL pipeline 中第一个真正把“环境”交给“训练算法”的文件。
+
+---
+
+【2. 核心作用】
+
+这个文件的核心作用是：
+
+```text id="opg0v5"
+读取命令行参数
+→ 加载 G1 环境配置
+→ 加载 PPO 训练配置
+→ 根据参数覆盖 config
+→ 创建训练环境 / eval 环境 / inference 环境
+→ 构造 Brax PPO train_fn
+→ 启动训练或加载 checkpoint
+→ 保存 checkpoint 和日志
+→ 训练后跑 deterministic policy
+→ 渲染 rollout 视频
+```
+
+它接收的主要输入：
+
+```text id="fb97s8"
+1. 命令行 flags
+   - env_name
+   - impl
+   - playground_config_overrides
+   - vision
+   - load_checkpoint_path
+   - play_only
+   - domain_randomization
+   - seed
+   - PPO 参数覆盖项
+   - logging 参数
+   - video 数量
+
+2. 环境注册表
+   - registry.ALL_ENVS
+   - registry.get_default_config
+   - registry.load
+   - registry.get_domain_randomizer
+
+3. PPO 默认配置
+   - locomotion_params.brax_ppo_config(env_name, impl)
+
+4. G1 环境对象
+   - Joystick / G1Env / MjxEnv
+```
+
+它产生的主要输出：
+
+```text id="dl838u"
+1. 训练好的 PPO policy 参数
+2. checkpoint 文件夹
+3. config.json
+4. TensorBoard / WandB 日志
+5. eval metrics
+6. rollout 视频 mp4
+7. inference function
+```
+
+它直接调用的关键模块：
+
+```text id="p1eysf"
+registry
+wrapper.wrap_for_brax_training
+locomotion_params.brax_ppo_config
+brax.training.agents.ppo.train
+ppo_networks.make_ppo_networks
+ppo_networks_vision.make_ppo_networks_vision
+jax.jit / jax.vmap / jax.lax.scan
+infer_env.render
+mediapy.write_video
+```
+
+它对训练的实际影响很大，因为它决定：
+
+```text id="sii3r0"
+1. 使用哪个环境
+2. 使用 JAX 还是 Warp MJX backend
+3. PPO 总步数、num_envs、batch size、learning rate 等
+4. actor / critic 分别读 obs 的哪个 key
+5. 是否启用 domain randomization
+6. 是否启用 vision input
+7. 是否恢复 checkpoint
+8. eval 和 inference 如何跑
+9. 视频录制如何生成
+```
+
+---
+
+【3. 顶层环境变量与运行时设置】
+
+文件开头设置了几个运行时环境变量：
+
+```python id="p72veb"
+xla_flags += " --xla_gpu_triton_gemm_any=True"
+os.environ["XLA_FLAGS"] = xla_flags
+os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
+os.environ["MUJOCO_GL"] = "egl"
+```
+
+这些属于 **JAX/MuJoCo 运行时设置**，不是 RL 算法逻辑。
+
+含义：
+
+```text id="m31j08"
+XLA_FLAGS:
+  启用 XLA GPU Triton GEMM 相关选项。
+
+XLA_PYTHON_CLIENT_PREALLOCATE=false:
+  禁止 JAX 启动时预分配大块 GPU 显存。
+
+MUJOCO_GL=egl:
+  MuJoCo 渲染使用 EGL 后端，适合 headless / Linux GPU 环境。
+```
+
+对你的 WSL2/MJX pipeline 有直接意义：
+
+```text id="tj3wzt"
+训练阶段：
+  XLA_PYTHON_CLIENT_PREALLOCATE=false 可减少 JAX 贪婪占显存问题。
+
+渲染阶段：
+  MUJOCO_GL=egl 影响 mujoco.Renderer 能否正常工作。
+```
+
+潜在工程点：
+
+```text id="i3bcsw"
+这些环境变量是在 Python import 后设置的。
+如果某些库在此之前已经读取了环境变量，可能不完全生效。
+但当前文件在训练主体前设置，通常是为了尽早影响 JAX/MuJoCo。
+```
+
+---
+
+【4. flags：命令行参数层】
+
+这个文件定义了大量 `absl.flags`。这些 flags 分为几类。
+
+---
+
+### 4.1 环境选择相关
+
+```python id="q66r8c"
+_ENV_NAME = "G1JoystickFlatTerrain"
+_IMPL = enum("jax", "warp")
+_PLAYGROUND_CONFIG_OVERRIDES = string
+_VISION = bool
+_DOMAIN_RANDOMIZATION = bool
+```
+
+作用：
+
+```text id="z4mchx"
+env_name:
+  决定加载 G1JoystickFlatTerrain 还是 G1JoystickRoughTerrain。
+
+impl:
+  传给环境 config override，决定 MJX model 使用 jax 还是 warp 实现。
+
+playground_config_overrides:
+  JSON 字符串，用于额外覆盖环境 config。
+
+vision:
+  是否使用 vision input，同时影响 network_factory 和 env config。
+
+domain_randomization:
+  是否把 registry.get_domain_randomizer(env_name) 传给 PPO train。
+```
+
+数据流：
+
+```text id="gsc79i"
+--env_name
+→ registry.get_default_config
+→ registry.load
+
+--impl
+→ env_cfg_overrides["impl"]
+→ G1Env
+→ mjx.put_model(..., impl=config.impl)
+
+--domain_randomization
+→ registry.get_domain_randomizer
+→ training_params["randomization_fn"]
+→ ppo.train
+```
+
+注意：`impl` 的默认 flag 是 `"jax"`，而 `joystick.default_config()` 里默认 `impl="warp"`。本脚本会始终构造：
+
+```python id="6d8jky"
+env_cfg_overrides = {"impl": _IMPL.value}
+```
+
+所以如果你用这个训练脚本且不显式传 `--impl=warp`，实际环境会被覆盖成 `impl="jax"`，而不是使用 `joystick.default_config()` 里的 `"warp"`。这是一个关键点。
+
+---
+
+### 4.2 checkpoint / play only / logging 相关
+
+```python id="x5ylqm"
+_LOAD_CHECKPOINT_PATH
+_SUFFIX
+_PLAY_ONLY
+_USE_WANDB
+_USE_TB
+_LOGDIR
+```
+
+作用：
+
+```text id="66lcs7"
+load_checkpoint_path:
+  从已有 checkpoint 恢复。
+
+play_only:
+  设置 ppo_params.num_timesteps = 0，只跑加载/推理/渲染流程。
+
+suffix:
+  加到实验名后面。
+
+use_wandb:
+  训练时用 WandB 记录日志。
+
+use_tb:
+  训练时用 TensorBoard 记录日志。
+
+logdir:
+  指定日志根目录。
+```
+
+需要注意：
+
+```text id="c0m82l"
+play_only=True 不会跳过 train_fn 调用。
+它只是把 num_timesteps 设置为 0，然后仍然调用 ppo.train。
+如果没有提供 checkpoint，可能得到未训练或不符合预期的参数。
+```
+
+这不是凭空推断：代码中 `if _PLAY_ONLY.present: ppo_params.num_timesteps = 0`，但后面仍然执行 `make_inference_fn, params, _ = train_fn(...)`。
+
+---
+
+### 4.3 PPO 训练参数覆盖项
+
+这部分包括：
+
+```text id="qbcxsg"
+num_timesteps
+num_evals
+reward_scaling
+episode_length
+normalize_observations
+action_repeat
+unroll_length
+num_minibatches
+num_updates_per_batch
+discounting
+learning_rate
+entropy_cost
+num_envs
+num_eval_envs
+batch_size
+max_grad_norm
+clipping_epsilon
+policy_hidden_layer_sizes
+value_hidden_layer_sizes
+policy_obs_key
+value_obs_key
+```
+
+这些 flags 的作用是覆盖 `locomotion_params.brax_ppo_config()` 返回的默认 PPO 配置。
+
+但是要注意一个非常重要的行为：
+
+```python id="rdk1my"
+if _NUM_TIMESTEPS.present:
+    ppo_params.num_timesteps = _NUM_TIMESTEPS.value
+```
+
+很多参数都使用 `.present` 判断。这通常意味着：
+
+```text id="2q13ye"
+只有用户在命令行显式传了该 flag，才覆盖 locomotion_params.py 中的默认配置。
+```
+
+因此，虽然代码里 `_NUM_ENVS` flag 默认写的是 `1024`，但如果用户没有显式传 `--num_envs`，最终很可能仍然使用 `locomotion_params.brax_ppo_config()` 里的默认 `num_envs`。根据你提供的 filemap，`locomotion_params.py` 中 Brax PPO 默认 `num_envs=8192`，`num_timesteps=200M`，网络结构是 Policy `(512,256,128)`、Value `(512,256,128)`。
+
+所以不能简单说：
+
+```text id="u7b73f"
+这个脚本默认 num_envs=1024
+```
+
+更准确是：
+
+```text id="w9fyyr"
+flag 定义中的默认值是 1024；
+但代码只在 _NUM_ENVS.present 时覆盖 ppo_params；
+实际默认训练值要看 locomotion_params.brax_ppo_config。
+```
+
+这是读这个文件时最容易误解的地方之一。
+
+---
+
+### 4.4 actor / critic observation key
+
+```python id="pc78th"
+_POLICY_OBS_KEY = "state"
+_VALUE_OBS_KEY = "state"
+```
+
+这两个参数会覆盖：
+
+```python id="bhdai6"
+ppo_params.network_factory.policy_obs_key
+ppo_params.network_factory.value_obs_key
+```
+
+它们决定 PPO 网络从 observation dict 中取哪个 key。
+
+结合 `joystick.py`：
+
+```python id="kulrl7"
+obs = {
+    "state": state,
+    "privileged_state": privileged_state,
+}
+```
+
+所以有几种可能：
+
+```text id="vd4458"
+policy_obs_key="state", value_obs_key="state":
+  actor 和 critic 都用普通 state。
+
+policy_obs_key="state", value_obs_key="privileged_state":
+  actor 用部署可用 state；
+  critic 用 privileged_state；
+  这就是 asymmetric actor-critic / privileged critic 路线。
+
+policy_obs_key="privileged_state":
+  actor 也用 privileged_state；
+  这通常会造成训练/部署不一致，除非只做 teacher 或 sim-only policy。
+```
+
+当前脚本的 flag 默认值是 `"state"`，但是否真正覆盖同样取决于 `.present`。因此实际 actor/critic obs key 要看：
+
+```text id="p5m9um"
+1. locomotion_params.brax_ppo_config 里的 network_factory 默认值
+2. 命令行是否显式传了 --policy_obs_key / --value_obs_key
+```
+
+仅凭这个文件不能断言默认 critic 是否使用 `privileged_state`。
+
+---
+
+【5. `get_rl_config(env_name)`：PPO config 选择入口】
+
+```python id="e4y0p7"
+def get_rl_config(env_name: str) -> config_dict.ConfigDict:
+  if env_name in g1_env.locomotion._envs:
+    return locomotion_params.brax_ppo_config(env_name, _IMPL.value)
+
+  raise ValueError(...)
+```
+
+这个函数属于 **训练超参数选择层**。
+
+输入：
+
+```text id="qr0jmf"
+env_name
+```
+
+输出：
+
+```text id="f4j9ld"
+ppo_params: ConfigDict
+```
+
+它做的事情：
+
+```text id="x9vob8"
+检查 env_name 是否在 g1_env.locomotion._envs 中
+→ 如果存在，调用 locomotion_params.brax_ppo_config(env_name, impl)
+→ 返回 Brax PPO 配置
+```
+
+这里有一个值得注意的工程点：
+
+```text id="hieluw"
+它直接访问 g1_env.locomotion._envs 这个内部变量。
+```
+
+更规范的方式本来可以是：
+
+```text id="sv8fe6"
+registry.ALL_ENVS
+```
+
+当前代码用的是内部 `_envs`，这会让训练脚本和 locomotion 内部实现耦合更紧。如果以后 registry 封装方式改变，这里可能受影响。
+
+数据流：
+
+```text id="wswp4e"
+_ENV_NAME.value
+→ get_rl_config(env_name)
+→ locomotion_params.brax_ppo_config(env_name, impl)
+→ ppo_params
+→ ppo.train(**training_params)
+```
+
+---
+
+【6. `rscope_fn(...)`：rscope rollout 回调】
+
+```python id="37gcwg"
+def rscope_fn(full_states, obs, rew, done):
+```
+
+这个函数用于 rscope 可视化/rollout 保存回调，不是主训练必需路径。
+
+它假设输入 shape 是：
+
+```text id="d1wbrl"
+full_states: dict, shape (unroll_length, rscope_envs, ...)
+obs: nd.array 或 dict obs
+rew: shape (unroll_length, rscope_envs)
+done: shape (unroll_length, rscope_envs)
+```
+
+它做的事：
+
+```text id="1nkn6f"
+done_mask = cumsum(done, axis=0)
+valid_rewards = rew * (done_mask == 0)
+episode_rewards = sum(valid_rewards, axis=0)
+print 平均 episode reward 和 std
+```
+
+含义：
+
+```text id="r3xg0o"
+只统计每个 rollout 在第一次 done 前的 reward。
+done 后的 reward 不计入 episode reward。
+```
+
+这个函数只有 `_RSCOPE_ENVS.value` 非空时才会进入相关逻辑。
+
+---
+
+【7. `main(argv)` 主流程总览】
+
+`main()` 是本文件核心。可以先用完整数据流看：
+
+```text id="agjhb7"
+命令行 flags
+→ env_cfg = registry.get_default_config(env_name)
+→ ppo_params = get_rl_config(env_name)
+→ 根据 flags 覆盖 ppo_params
+→ env_cfg_overrides = {"impl": impl, ...}
+→ env = registry.load(env_name, config=env_cfg, config_overrides=env_cfg_overrides)
+→ 创建 logdir / ckpt_path
+→ 保存 config
+→ 创建 network_factory
+→ 可选 randomization_fn
+→ train_fn = functools.partial(ppo.train, ...)
+→ eval_env = registry.load(...)
+→ train_fn(environment=env, eval_env=eval_env, ...)
+→ make_inference_fn, params
+→ inference_fn = make_inference_fn(params, deterministic=True)
+→ infer_env = registry.load(...)
+→ wrapped_infer_env = wrapper.wrap_for_brax_training(...)
+→ rollout
+→ infer_env.render(...)
+→ media.write_video(...)
+```
+
+下面按主流程拆。
+
+---
+
+【8. 环境 config 加载与 PPO config 加载】
+
+```python id="x5l5f0"
+env_cfg = registry.get_default_config(_ENV_NAME.value)
+ppo_params = get_rl_config(_ENV_NAME.value)
+```
+
+这一步从两个不同系统取配置：
+
+```text id="qitz8w"
+env_cfg:
+  环境配置。
+  来自 joystick.default_config。
+  包括 ctrl_dt、sim_dt、reward scales、action_scale、noise、push、command range 等。
+
+ppo_params:
+  PPO 训练配置。
+  来自 locomotion_params.brax_ppo_config。
+  包括 num_timesteps、num_envs、learning_rate、network_factory 等。
+```
+
+不要混淆：
+
+```text id="e1fiey"
+env_cfg 控制环境本身怎么跑；
+ppo_params 控制 PPO 怎么训练。
+```
+
+连接到前面文件：
+
+```text id="mb1ijj"
+registry.get_default_config
+→ locomotion.get_default_config
+→ g1_joystick.default_config
+```
+
+前面 `registry.py` 和 `locomotion.__init__.py` 已经说明了这条路径。 
+
+---
+
+【9. PPO 参数覆盖逻辑】
+
+这一大段：
+
+```python id="q48soc"
+if _NUM_TIMESTEPS.present:
+    ppo_params.num_timesteps = _NUM_TIMESTEPS.value
+...
+if _POLICY_HIDDEN_LAYER_SIZES.present:
+    ppo_params.network_factory.policy_hidden_layer_sizes = ...
+...
+```
+
+属于 **命令行覆盖 PPO config 层**。
+
+作用：
+
+```text id="yogyo1"
+locomotion_params.py 提供默认 PPO 配置
+→ 用户命令行显式传入某些 flags
+→ 覆盖 ppo_params 对应字段
+```
+
+覆盖字段分为：
+
+```text id="q2jddb"
+训练规模：
+  num_timesteps
+  num_envs
+  num_eval_envs
+  batch_size
+
+PPO 算法：
+  discounting
+  learning_rate
+  entropy_cost
+  clipping_epsilon
+  max_grad_norm
+  reward_scaling
+  num_minibatches
+  num_updates_per_batch
+  unroll_length
+
+环境 rollout：
+  episode_length
+  action_repeat
+  normalize_observations
+
+网络：
+  policy_hidden_layer_sizes
+  value_hidden_layer_sizes
+  policy_obs_key
+  value_obs_key
+```
+
+关键风险点：
+
+```text id="exwudk"
+很多 flags 有默认值，但只有 .present 时才覆盖。
+所以命令行没有显式传参时，最终值不是 flags.DEFINE_* 的默认值，而是 locomotion_params.py 的默认值。
+```
+
+这对调参非常重要。你看训练日志时，应该以实际打印的：
+
+```python id="dthmkg"
+print(f"PPO Training Parameters:\n{ppo_params}")
+```
+
+为准，而不是只看 flags 的默认值。
+
+---
+
+【10. env_cfg_overrides：环境参数覆盖逻辑】
+
+```python id="wm8gqm"
+env_cfg_overrides = {"impl": _IMPL.value}
+if _VISION.value:
+  env_cfg_overrides["vision"] = True
+  env_cfg_overrides["vision_config.nworld"] = ppo_params.num_envs
+if _PLAYGROUND_CONFIG_OVERRIDES.value is not None:
+  env_cfg_overrides.update(json.loads(_PLAYGROUND_CONFIG_OVERRIDES.value))
+```
+
+这部分属于 **环境 config override 层**。
+
+它构造一个 flattened dict，然后传给：
+
+```python id="8ozcor"
+registry.load(..., config_overrides=env_cfg_overrides)
+```
+
+下游连接：
+
+```text id="zgy2pt"
+registry.load
+→ locomotion.load
+→ Joystick(config=config, config_overrides=...)
+→ G1Env
+→ MjxEnv.__init__
+→ self._config.update_from_flattened_dict(config_overrides)
+```
+
+结合 `mjx_env.py`，`config_overrides` 是通过 `ConfigDict.update_from_flattened_dict()` 处理的。
+
+这意味着 `playground_config_overrides` 应该传 JSON，例如：
+
+```bash id="7rctc8"
+--playground_config_overrides='{"noise_config.level": 0.0, "push_config.enable": false}'
+```
+
+而不是嵌套 JSON：
+
+```json id="o4pc5f"
+{
+  "noise_config": {
+    "level": 0.0
+  }
+}
+```
+
+是否支持嵌套格式取决于 `ConfigDict.update_from_flattened_dict`，但代码意图明显是 flattened override。
+
+---
+
+### 10.1 `impl` override 的实际影响
+
+`env_cfg_overrides` 总是包含：
+
+```python id="dw6x8q"
+{"impl": _IMPL.value}
+```
+
+`G1Env.__init__()` 中使用：
+
+```python id="e4l7a2"
+self._mjx_model = mjx.put_model(self._mj_model, impl=self._config.impl)
+```
+
+所以：
+
+```text id="wskpqn"
+--impl=jax
+→ config.impl = "jax"
+→ mjx.put_model(..., impl="jax")
+
+--impl=warp
+→ config.impl = "warp"
+→ mjx.put_model(..., impl="warp")
+```
+
+这是训练脚本控制 MJX backend 的关键路径。
+
+---
+
+### 10.2 vision override
+
+如果：
+
+```bash id="a90dam"
+--vision
+```
+
+则：
+
+```text id="4e74i9"
+env_cfg_overrides["vision"] = True
+env_cfg_overrides["vision_config.nworld"] = ppo_params.num_envs
+network_fn = ppo_networks_vision.make_ppo_networks_vision
+```
+
+但当前已经读过的 `joystick.py/default_config()` 里没有看到 `vision` 和 `vision_config` 字段。它们是否存在于其他环境或 wrapper 中，需要继续看 `wrapper.py` 或其他 vision 相关代码。仅凭当前已提供文件，不能确认 G1 joystick 环境真正支持 vision input。
+
+所以这里的准确判断是：
+
+```text id="zmr8y0"
+train_jax_ppo.py 支持 vision flag；
+但当前 G1 Joystick config 是否完整支持 vision，需要继续查 wrapper.py 或环境实现。
+```
+
+---
+
+【11. 创建训练环境 `env`】
+
+```python id="ouahq1"
+env = registry.load(
+    _ENV_NAME.value, config=env_cfg, config_overrides=env_cfg_overrides
+)
+```
+
+这是训练环境实例化。
+
+数据流：
+
+```text id="fszuqy"
+_ENV_NAME.value
+→ registry.load
+→ locomotion.load
+→ ensure_menagerie_exists
+→ Joystick(task=...)
+→ G1Env(xml_path=...)
+→ MjModel / mjx.Model
+→ Joystick._post_init()
+→ env
+```
+
+这个 `env` 是原生 G1 MJX 环境，不是最终直接给 PPO 的 wrapped env。真正给 PPO train 的时候，还传了：
+
+```python id="wqqrgm"
+wrap_env_fn=wrapper.wrap_for_brax_training
+```
+
+所以 Brax PPO 内部会通过 wrapper 把它包装成训练需要的接口。
+
+当前文件没有展开 wrapper 逻辑，因此不能断言 wrapper 如何处理：
+
+```text id="63wnu9"
+done 后自动 reset
+batching
+episode truncation
+privileged obs
+domain randomization
+```
+
+这些必须继续看 `wrapper.py`。filemap 明确指出 `wrapper.py` 是 Brax 环境包装器，包含 `Wrapper` 和 `wrap_for_brax_training`。
+
+---
+
+【12. logging directory 与 experiment name】
+
+```python id="6pdcke"
+timestamp = now.strftime("%Y%m%d-%H%M%S")
+exp_name = f"{_ENV_NAME.value}-{timestamp}"
+if _SUFFIX.value is not None:
+    exp_name += f"-{_SUFFIX.value}"
+logdir = epath.Path(_LOGDIR.value or "logs").resolve() / exp_name
+```
+
+作用：
+
+```text id="l4723e"
+每次运行生成唯一实验目录：
+logs/G1JoystickFlatTerrain-YYYYMMDD-HHMMSS[-suffix]
+```
+
+然后：
+
+```python id="j46u3x"
+ckpt_path = logdir / "checkpoints"
+```
+
+所以输出结构大致是：
+
+```text id="0f2bq8"
+logs/
+└── G1JoystickFlatTerrain-20260427-xxxxxx/
+    ├── checkpoints/
+    │   └── config.json
+    └── rollout0.mp4
+```
+
+如果传了 `--logdir`，日志根目录改变。
+
+---
+
+【13. WandB / TensorBoard 日志】
+
+WandB：
+
+```python id="6c0qzo"
+if _USE_WANDB.value and not _PLAY_ONLY.value:
+    wandb.init(project="mjxrl", name=exp_name)
+    wandb.config.update(env_cfg.to_dict())
+    wandb.config.update({"env_name": _ENV_NAME.value})
+```
+
+TensorBoard：
+
+```python id="zc00xy"
+if _USE_TB.value and not _PLAY_ONLY.value and tensorboardX is not None:
+    writer = tensorboardX.SummaryWriter(logdir)
+```
+
+progress 回调中：
+
+```python id="9evd2w"
+wandb.log(metrics, step=num_steps)
+writer.add_scalar(key, value, num_steps)
+```
+
+作用：
+
+```text id="m0eh5t"
+Brax PPO train 过程中调用 progress_fn
+→ progress 记录 eval/training metrics
+→ 可选写入 WandB/TensorBoard
+```
+
+注意：
+
+```text id="jipl3s"
+play_only 模式下不启用 WandB/TensorBoard 训练日志。
+```
+
+---
+
+【14. checkpoint 加载逻辑】
+
+```python id="p73p2h"
+if _LOAD_CHECKPOINT_PATH.value is not None:
+    ckpt_path = epath.Path(...).resolve()
+    if ckpt_path.is_dir():
+        latest_ckpts = list(ckpt_path.glob("*"))
+        latest_ckpts = [ckpt for ckpt in latest_ckpts if ckpt.is_dir()]
+        latest_ckpts.sort(key=lambda x: int(x.name))
+        latest_ckpt = latest_ckpts[-1]
+        restore_checkpoint_path = latest_ckpt
+    else:
+        restore_checkpoint_path = ckpt_path
+else:
+    restore_checkpoint_path = None
+```
+
+它支持两种输入：
+
+```text id="42zq67"
+1. 传入 checkpoint 根目录
+   → 找该目录下名称为数字的子目录
+   → 取数字最大的那个作为 latest checkpoint
+
+2. 传入具体 checkpoint 路径
+   → 直接使用
+```
+
+潜在风险：
+
+```text id="o6rv27"
+如果目录下有非数字命名的子目录：
+  latest_ckpts.sort(key=lambda x: int(x.name)) 会报错。
+
+如果目录为空：
+  latest_ckpts[-1] 会报错。
+
+如果 play_only=True 但没有 load_checkpoint_path：
+  仍然会调用 train_fn，但 num_timesteps=0，推理结果可能不是你想要的已训练策略。
+```
+
+---
+
+【15. 保存环境配置】
+
+```python id="d6e1dx"
+with open(ckpt_path / "config.json", "w", encoding="utf-8") as fp:
+    json.dump(env_cfg.to_dict(), fp, indent=4)
+```
+
+作用：
+
+```text id="v4yb49"
+保存环境 config 到 checkpoint 目录
+```
+
+注意：
+
+```text id="rpgv7t"
+这里保存的是 env_cfg.to_dict()
+不是 ppo_params
+也不是 env_cfg_overrides 的单独 JSON。
+```
+
+脚本前面会打印 `Environment Config Overrides`，但保存文件只写了 `env_cfg`。由于 `registry.load` 内部可能会原地更新 config，也可能不会，这取决于 `ConfigDict.lock/update_from_flattened_dict` 的对象语义。仅凭这里不能完全确认 `config.json` 是否包含所有 overrides。
+
+更稳妥的工程做法通常是同时保存：
+
+```text id="5gxjbi"
+env_cfg
+env_cfg_overrides
+ppo_params
+命令行 flags
+git commit
+```
+
+当前脚本只明确保存了 `env_cfg`。
+
+---
+
+【16. network_factory：网络结构选择】
+
+```python id="kq3yq9"
+network_fn = (
+    ppo_networks_vision.make_ppo_networks_vision
+    if _VISION.value
+    else ppo_networks.make_ppo_networks
+)
+if hasattr(ppo_params, "network_factory"):
+    network_factory = functools.partial(
+        network_fn, **ppo_params.network_factory
+    )
+else:
+    network_factory = network_fn
+```
+
+作用：
+
+```text id="ovcb7a"
+根据是否 vision，选择普通 PPO 网络或 vision PPO 网络；
+然后把 ppo_params.network_factory 里的参数绑定进去。
+```
+
+`network_factory` 可能包含：
+
+```text id="3b3hi4"
+policy_hidden_layer_sizes
+value_hidden_layer_sizes
+policy_obs_key
+value_obs_key
+activation
+其他 Brax PPO 网络参数
+```
+
+当前脚本支持 actor/critic 读取不同 observation key。这对 `privileged_state` 很关键：
+
+```text id="wz9tyf"
+Joystick._get_obs
+→ obs = {"state", "privileged_state"}
+
+ppo_params.network_factory.policy_obs_key
+→ actor 输入 key
+
+ppo_params.network_factory.value_obs_key
+→ critic 输入 key
+```
+
+如果你要检查是否使用 privileged critic，优先看：
+
+```text id="s72aqi"
+locomotion_params.brax_ppo_config
+```
+
+以及运行命令是否传了：
+
+```bash id="apok7y"
+--value_obs_key=privileged_state
+```
+
+---
+
+【17. domain randomization 接入】
+
+```python id="k292bg"
+if _DOMAIN_RANDOMIZATION.value:
+    training_params["randomization_fn"] = registry.get_domain_randomizer(
+        _ENV_NAME.value
+    )
+```
+
+这是当前文件中 domain randomization 真正接入 Brax PPO 的地方。
+
+数据流：
+
+```text id="3609qf"
+--domain_randomization=True
+→ registry.get_domain_randomizer(env_name)
+→ locomotion.get_domain_randomizer(env_name)
+→ g1_randomize.domain_randomize
+→ training_params["randomization_fn"]
+→ ppo.train(...)
+```
+
+前面 `locomotion.__init__.py` 中两个环境都注册到了：
+
+```python id="jcwul2"
+g1_randomize.domain_randomize
+```
+
+所以这个 flag 是决定 domain randomization 是否生效的关键开关。
+
+注意：
+
+```text id="v2au6b"
+randomize.py 中即使定义了 domain_randomize；
+locomotion registry 中即使注册了 randomizer；
+如果这个脚本没有传 --domain_randomization；
+training_params 就不会包含 randomization_fn。
+```
+
+所以不能只看 `randomize.py` 判断训练用了 domain randomization。必须看训练脚本的这个 flag。
+
+---
+
+【18. 构造 `train_fn`：Brax PPO 真正入口】
+
+```python id="vgd728"
+train_fn = functools.partial(
+    ppo.train,
+    **training_params,
+    network_factory=network_factory,
+    seed=_SEED.value,
+    restore_checkpoint_path=restore_checkpoint_path,
+    save_checkpoint_path=ckpt_path,
+    wrap_env_fn=wrapper.wrap_for_brax_training,
+    num_eval_envs=num_eval_envs,
+    vision=_VISION.value,
+)
+```
+
+这是当前文件的训练核心。
+
+它把以下内容绑定到 Brax PPO：
+
+```text id="k11bvo"
+PPO 算法参数:
+  training_params
+
+网络构造函数:
+  network_factory
+
+随机种子:
+  seed
+
+checkpoint:
+  restore_checkpoint_path
+  save_checkpoint_path
+
+环境包装:
+  wrap_env_fn=wrapper.wrap_for_brax_training
+
+eval 环境数量:
+  num_eval_envs
+
+vision 标志:
+  vision
+```
+
+核心数据流：
+
+```text id="6m510h"
+env
+→ wrapper.wrap_for_brax_training
+→ Brax PPO train
+→ policy params
+```
+
+这里 `wrapper.wrap_for_brax_training` 是必须继续查看的关键文件。当前 train 脚本只把它传给 Brax PPO，并没有展示 wrapper 的内部逻辑。
+
+需要继续确认 wrapper 是否处理：
+
+```text id="e813w5"
+1. obs dict 的选择和保留
+2. episode_length
+3. action_repeat
+4. done 后 reset
+5. randomization_fn
+6. batched env
+7. metrics
+8. vision obs
+```
+
+---
+
+【19. `progress()`：训练日志回调】
+
+```python id="fv13n8"
+def progress(num_steps, metrics):
+```
+
+它由 Brax PPO 在训练过程中调用。
+
+作用：
+
+```text id="euurkf"
+1. 记录时间
+2. 可选写 WandB
+3. 可选写 TensorBoard
+4. 打印 eval episode reward
+5. 可选打印 training episode reward
+```
+
+关键行为：
+
+```python id="a7iykk"
+if _RUN_EVALS.value:
+    print(f"{num_steps}: reward={metrics['eval/episode_reward']:.3f}")
+```
+
+如果 `run_evals=True`，它期望 metrics 中存在：
+
+```text id="hgm9gr"
+eval/episode_reward
+```
+
+如果关闭 eval 或 Brax 返回 metrics 格式变化，这里可能需要同步调整。
+
+---
+
+【20. eval_env 创建】
+
+```python id="rhuffe"
+eval_env_overrides = dict(env_cfg_overrides)
+if _VISION.value:
+    eval_env_overrides["vision_config.nworld"] = num_eval_envs
+
+eval_env = registry.load(
+    _ENV_NAME.value,
+    config=registry.get_default_config(_ENV_NAME.value),
+    config_overrides=eval_env_overrides,
+)
+```
+
+注意它重新取了一份默认 config：
+
+```text id="po0na5"
+config=registry.get_default_config(_ENV_NAME.value)
+```
+
+而不是复用训练 env 的 `env_cfg`。
+
+这意味着：
+
+```text id="vzmghd"
+训练环境和 eval 环境都应用 env_cfg_overrides；
+但 eval 环境重新从默认 config 开始创建。
+```
+
+如果你在训练前直接修改了 `env_cfg` 对象，而不是通过 `env_cfg_overrides`，eval_env 未必同步这些修改。当前脚本主要通过 overrides 传参，所以正常情况下是一致的。
+
+---
+
+【21. rscope 可视化分支】
+
+如果：
+
+```bash id="a80lnv"
+--rscope_envs=N
+```
+
+则进入：
+
+```python id="s8q3ea"
+from rscope import brax as rscope_utils
+...
+rscope_env = registry.load(...)
+rscope_env = wrapper.wrap_for_brax_training(...)
+rscope_handle = rscope_utils.BraxRolloutSaver(...)
+```
+
+作用：
+
+```text id="mvop3q"
+保存或查看并行 rollout，用于 rscope viewer。
+```
+
+注意代码里注释掉了：
+
+```python id="w2usgx"
+# rscope_handle.dump_rollout(params) # Disabled to prevent rendering slice crash
+```
+
+这说明作者遇到过 rscope 渲染 slice crash，所以当前只设置 policy，不主动 dump rollout。
+
+这不是训练主线，可先跳过，除非你需要可视化调试。
+
+---
+
+【22. 调用 `train_fn`：训练或加载模型】
+
+```python id="wirazw"
+make_inference_fn, params, _ = train_fn(
+    environment=env,
+    progress_fn=progress,
+    policy_params_fn=policy_params_fn,
+    eval_env=eval_env,
+)
+```
+
+这是训练实际发生的位置。
+
+输入：
+
+```text id="wyea98"
+environment=env:
+  原生 G1 MJX 环境
+
+progress_fn:
+  日志回调
+
+policy_params_fn:
+  rscope 可视化回调，默认空函数
+
+eval_env:
+  eval 环境
+```
+
+输出：
+
+```text id="yqs2q5"
+make_inference_fn:
+  根据 params 创建 policy inference function
+
+params:
+  训练后的 PPO 参数，或恢复 checkpoint 后的参数
+
+_:
+  其他训练状态/metrics，当前脚本未使用
+```
+
+这里的重要判断：
+
+```text id="o7w98u"
+Brax PPO train 是算法实现；
+train_jax_ppo.py 是算法调用者；
+Joystick 是环境；
+wrapper 是环境适配层。
+```
+
+---
+
+【23. 训练后 inference function】
+
+```python id="jfywn6"
+inference_fn = make_inference_fn(params, deterministic=True)
+jit_inference_fn = jax.jit(inference_fn)
+```
+
+作用：
+
+```text id="j3j8bs"
+把训练后的 params 变成 deterministic policy；
+再 JIT 编译，用于 rollout 和视频生成。
+```
+
+这里 deterministic=True 表示：
+
+```text id="e3s3sf"
+推理时不从 action distribution 中随机采样；
+而是使用确定性动作。
+```
+
+这只影响训练后的评估/视频，不影响前面的 PPO 训练采样过程。
+
+---
+
+【24. inference 环境与 wrapped_infer_env】
+
+```python id="wm3k00"
+infer_env = registry.load(...)
+wrapped_infer_env = wrapper.wrap_for_brax_training(
+    infer_env,
+    episode_length=ppo_params.episode_length,
+    action_repeat=ppo_params.get("action_repeat", 1),
+)
+```
+
+这里又创建了第三个环境：
+
+```text id="vt9qyb"
+训练环境 env
+eval 环境 eval_env
+推理/视频环境 infer_env
+```
+
+它们都是通过 `registry.load` 创建的，但用途不同：
+
+```text id="mdxp3c"
+env:
+  给 PPO train 收集训练 rollout。
+
+eval_env:
+  给 PPO train 做评估。
+
+infer_env:
+  训练结束后用于 rollout 和 render 视频。
+```
+
+注意：`wrapped_infer_env` 没有传入 `randomization_fn`。所以训练后视频 rollout 默认不会使用 domain randomization，除非 wrapper 或环境本身另有逻辑。当前代码这里没有传 randomization_fn。
+
+这通常是合理的：
+
+```text id="be0u24"
+训练时可随机化物理参数；
+评估/视频时使用确定模型，便于观察策略表现。
+```
+
+但这只是根据代码结构的合理解释。源码事实是：inference wrapping 这里没有传 `randomization_fn`。
+
+---
+
+【25. reset 与 rollout 采样】
+
+```python id="02ugow"
+rng = jax.random.split(jax.random.PRNGKey(_SEED.value), _NUM_VIDEOS.value)
+reset_states = jax.jit(wrapped_infer_env.reset)(rng)
+```
+
+这里按视频数量创建并行环境：
+
+```text id="7oqf1e"
+_NUM_VIDEOS
+→ split rng
+→ wrapped_infer_env.reset(rng)
+→ reset_states
+```
+
+也就是说，`_NUM_VIDEOS` 不只是输出视频数量，也决定 inference rollout 的并行环境数量。
+
+---
+
+【26. empty trajectory 构造】
+
+这段代码：
+
+```python id="dnpi90"
+empty_data = reset_states.data.__class__(
+    **{k: None for k in reset_states.data.__annotations__}
+)
+empty_traj = reset_states.__class__(
+    **{k: None for k in reset_states.__annotations__}
+)
+empty_traj = empty_traj.replace(data=empty_data)
+```
+
+作用：
+
+```text id="uwrn2z"
+构造一个与 State / Data 结构相同、字段先置 None 的空模板；
+后续只填需要保存用于渲染的字段。
+```
+
+后续在 rollout step 中只保存：
+
+```text id="s5oz7k"
+data.qpos
+data.qvel
+data.time
+data.ctrl
+data.mocap_pos
+data.mocap_quat
+data.xfrc_applied
+```
+
+而不是保存完整 `State`。
+
+为什么这样做：
+
+```text id="aj3d6e"
+完整 State 很大，包含 obs、metrics、info、sensordata 等；
+渲染只需要 qpos/qvel/time/ctrl/mocap/xfrc。
+```
+
+这属于根据代码结构的合理解释。
+
+---
+
+【27. rollout `step(carry, _)`】
+
+```python id="w8sy2p"
+def step(carry, _):
+    state, rng = carry
+    rng, act_key = jax.random.split(rng)
+    act_keys = jax.random.split(act_key, _NUM_VIDEOS.value)
+    act = jax.vmap(jit_inference_fn)(state.obs, act_keys)[0]
+    state = wrapped_infer_env.step(state, act)
+    traj_data = empty_traj.tree_replace({...})
+    return (state, rng), traj_data
+```
+
+这段是训练后视频 rollout 的单步逻辑。
+
+数据流：
+
+```text id="pij822"
+state.obs
+→ jax.vmap(jit_inference_fn)(state.obs, act_keys)
+→ act
+→ wrapped_infer_env.step(state, act)
+→ new state
+→ 抽取 qpos/qvel/time/ctrl/mocap/xfrc
+→ traj_data
+```
+
+注意：
+
+```python id="fb4rx2"
+act = jax.vmap(jit_inference_fn)(state.obs, act_keys)[0]
+```
+
+`inference_fn` 返回值通常是 `(action, extras)`，所以 `[0]` 取 action。
+
+如果 obs 是 dict，`vmap` 会沿 batch 维映射整个 dict。这要求 `wrapped_infer_env.reset` 返回的 obs 已经是 batched 格式。
+
+---
+
+【28. `do_rollout`：用 `jax.lax.scan` 跑整段 episode】
+
+```python id="mi1w9u"
+@jax.jit
+def do_rollout(state, rng):
+    _, traj = jax.lax.scan(
+        step, (state, rng), None, length=ppo_params.episode_length
+    )
+    return traj
+```
+
+作用：
+
+```text id="097ev4"
+用 JAX scan 一次性跑 episode_length 步 rollout；
+JIT 编译整个 rollout；
+返回 time-major trajectory。
+```
+
+shape 逻辑：
+
+```text id="e60x1u"
+traj_stacked 初始 shape:
+  (time, nworld, ...)
+
+然后：
+  moveaxis(time, nworld)
+→ (nworld, time, ...)
+```
+
+源码中也写了注释：
+
+```text id="n5nejg"
+traj_stacked has shape (time, nworld, ...), swap to (nworld, time, ...).
+```
+
+这说明后续每个视频对应一个 world / env 的整段 trajectory。
+
+---
+
+【29. 视频渲染逻辑】
+
+```python id="jyrdfl"
+render_every = 2
+fps = 1.0 / infer_env.dt / render_every
+```
+
+结合 `joystick.py` 默认：
+
+```text id="4wqyag"
+infer_env.dt = ctrl_dt = 0.02
+render_every = 2
+fps = 1 / 0.02 / 2 = 25 FPS
+```
+
+这段能直接确认视频保存频率逻辑：
+
+```text id="hyq9os"
+控制频率 50Hz
+每 2 个控制步渲染 1 帧
+视频 FPS = 25
+```
+
+然后：
+
+```python id="s1vim9"
+frames = infer_env.render(
+    traj, height=480, width=640, scene_option=scene_option
+)
+media.write_video(logdir / f"rollout{i}.mp4", frames, fps=fps)
+```
+
+数据流：
+
+```text id="6a9u1m"
+trajectory qpos/qvel/time/ctrl
+→ infer_env.render(...)
+→ mjx_env.render_array(...)
+→ mujoco.Renderer
+→ frames
+→ mediapy.write_video
+→ rollout{i}.mp4
+```
+
+这和 `mjx_env.py` 的 render 逻辑连接：训练用 MJX，渲染时把 state.data 的 qpos/qvel 等拷贝回 MuJoCo MjData，再用 MuJoCo Renderer 渲染。
+
+---
+
+【30. 整体训练数据流】
+
+把这个文件完整串起来，可以写成：
+
+```text id="ygeoe4"
+命令行参数
+→ _ENV_NAME / _IMPL / PPO flags / logging flags
+→ env_cfg = registry.get_default_config(env_name)
+→ ppo_params = locomotion_params.brax_ppo_config(env_name, impl)
+→ flags 覆盖 ppo_params
+→ env_cfg_overrides = {"impl": impl, ...}
+→ env = registry.load(env_name, env_cfg, env_cfg_overrides)
+→ network_factory = Brax PPO network factory
+→ 可选 randomization_fn = registry.get_domain_randomizer(env_name)
+→ train_fn = ppo.train(..., wrap_env_fn=wrapper.wrap_for_brax_training)
+→ train_fn(environment=env, eval_env=eval_env)
+→ make_inference_fn, params
+→ deterministic inference_fn
+→ wrapped_infer_env.reset
+→ jax.lax.scan rollout
+→ infer_env.render
+→ rollout.mp4
+```
+
+更贴近 G1 环境内部的数据流：
+
+```text id="8xtrgd"
+Brax PPO
+→ wrapped env.step
+→ Joystick.step
+→ policy action
+→ motor_targets = default_pose + action * action_scale
+→ mjx_env.step(mjx_model, data, motor_targets, n_substeps)
+→ _get_obs / _get_reward / _get_termination
+→ State(obs, reward, done, metrics)
+→ Brax PPO update
+```
+
+---
+
+【31. 当前文件能确认的 shape / 维度 / 频率 / step 数】
+
+### 31.1 训练规模相关
+
+这个文件定义了 flags：
+
+```text id="l5enfa"
+num_timesteps flag default = 1,000,000
+num_envs flag default = 1024
+num_eval_envs flag default = 128
+batch_size flag default = 256
+num_evals flag default = 5
+unroll_length flag default = 10
+num_minibatches flag default = 8
+num_updates_per_batch flag default = 8
+episode_length flag default = 1000
+```
+
+但重要限制是：
+
+```text id="uk3iwn"
+这些 flag 默认值只有在 .present 时才覆盖 ppo_params。
+实际默认训练规模要看 locomotion_params.brax_ppo_config。
+```
+
+根据 filemap，`locomotion_params.py` 的 Brax PPO 默认包括：
+
+```text id="xffgw3"
+num_timesteps = 200M
+num_envs = 8192
+learning_rate = 3e-4
+entropy_cost = 0.005
+clipping_epsilon = 0.2
+network = Policy (512, 256, 128), Value (512, 256, 128)
+```
+
+这个信息来自 filemap，不是 `train_jax_ppo.py` 本身。
+
+---
+
+### 31.2 control/render 频率
+
+训练环境本身的控制频率来自 `joystick.py`：
+
+```text id="34ji0k"
+ctrl_dt = 0.02
+sim_dt = 0.002
+```
+
+`mjx_env.py` 中：
+
+```text id="jycegf"
+n_substeps = round(dt / sim_dt) = 10
+```
+
+本文件视频渲染：
+
+```text id="d9b1hv"
+render_every = 2
+fps = 1 / infer_env.dt / render_every
+```
+
+所以默认视频 FPS：
+
+```text id="x1q1sl"
+1 / 0.02 / 2 = 25 FPS
+```
+
+---
+
+### 31.3 action / obs 维度
+
+本文件本身不定义 action 维度和 obs 维度。
+
+它依赖：
+
+```text id="220g7f"
+env.action_size
+env.observation_size
+ppo network_factory
+```
+
+当前已经从 `joystick.py` 能确认：
+
+```text id="rdvvke"
+policy action 大概率 29 维
+obs["state"] = 103 维
+obs["privileged_state"] 需要结合 sensor/XML 确认
+```
+
+但 `train_jax_ppo.py` 只通过 wrapper/Brax 使用这些信息，不直接写死。
+
+---
+
+【32. 对训练 / 仿真 / 推理的影响】
+
+### 32.1 对训练的影响
+
+它决定：
+
+```text id="n4vzey"
+1. PPO 是否真的启动
+2. 总训练步数
+3. 并行环境数量
+4. PPO batch/minibatch/update 结构
+5. actor/critic 网络结构
+6. actor/critic 读哪个 obs key
+7. 是否 normalize observations
+8. 是否启用 domain randomization
+9. 是否启用 eval
+10. checkpoint 如何保存
+```
+
+这就是训练 pipeline 的主控脚本。
+
+---
+
+### 32.2 对仿真的影响
+
+它间接影响仿真：
+
+```text id="d37i0c"
+--env_name
+→ flat/rough terrain
+
+--impl
+→ jax/warp MJX backend
+
+--playground_config_overrides
+→ 可以覆盖 ctrl_dt、sim_dt、noise、reward scale、push 等环境参数
+
+--domain_randomization
+→ 是否随机化物理参数
+```
+
+但它不直接写 MuJoCo/MJX step。实际仿真推进仍然在：
+
+```text id="vkcb3i"
+joystick.py::step
+mjx_env.py::step
+```
+
+---
+
+### 32.3 对推理/视频的影响
+
+训练后它会自动：
+
+```text id="bdu73a"
+创建 deterministic policy
+创建 inference env
+跑 episode_length 步 rollout
+每 render_every=2 步取一帧
+写 rollout{i}.mp4
+```
+
+所以这个脚本不只是训练脚本，也是：
+
+```text id="5fldpx"
+训练 + eval + checkpoint + inference rollout + video export
+```
+
+的一体化入口。
+
+---
+
+【33. 容易误解或需要注意的点】
+
+### 33.1 flags 默认值不等于实际默认训练参数
+
+这是最重要的点。
+
+例如：
+
+```python id="c7rteo"
+_NUM_ENVS = flags.DEFINE_integer("num_envs", 1024, ...)
+```
+
+但覆盖时：
+
+```python id="of99t5"
+if _NUM_ENVS.present:
+    ppo_params.num_envs = _NUM_ENVS.value
+```
+
+所以如果命令行没有显式传 `--num_envs`，实际 `ppo_params.num_envs` 来自 `locomotion_params.brax_ppo_config`，不是这里的 1024。
+
+读这个脚本时，要以打印出来的：
+
+```text id="h9cywy"
+PPO Training Parameters
+```
+
+为最终准。
+
+---
+
+### 33.2 `impl` 会覆盖环境默认值
+
+`joystick.default_config()` 默认 `impl="warp"`，但本脚本 `_IMPL` 默认 `"jax"`，并且总是放入：
+
+```python id="q5x4je"
+env_cfg_overrides = {"impl": _IMPL.value}
+```
+
+因此：
+
+```text id="u7j3yh"
+运行 train_jax_ppo.py 且不传 --impl=warp
+→ 实际 impl 是 jax
+```
+
+这可能和你读 `joystick.py` 时看到的默认值不同。
+
+---
+
+### 33.3 domain randomization 默认关闭
+
+虽然 `locomotion.__init__.py` 注册了 randomizer，但当前脚本只有：
+
+```python id="6grt0t"
+if _DOMAIN_RANDOMIZATION.value:
+    training_params["randomization_fn"] = registry.get_domain_randomizer(...)
+```
+
+所以默认 `--domain_randomization=False` 时，不会接入 randomizer。
+
+这意味着：
+
+```text id="4aswcb"
+存在 randomize.py
+≠ 训练使用 domain randomization
+```
+
+---
+
+### 33.4 `policy_obs_key` / `value_obs_key` 决定 privileged_state 是否使用
+
+`joystick.py` 构造了：
+
+```text id="j13r4r"
+obs["state"]
+obs["privileged_state"]
+```
+
+但本脚本通过 PPO network config 决定 actor/critic 使用哪个 key。
+
+如果最终配置是：
+
+```text id="pv2g46"
+policy_obs_key = "state"
+value_obs_key = "state"
+```
+
+那 `privileged_state` 虽然被环境构造了，但 critic 不使用它。
+
+如果最终配置是：
+
+```text id="5zs3wy"
+policy_obs_key = "state"
+value_obs_key = "privileged_state"
+```
+
+才是 privileged critic/asymmetric actor-critic。
+
+所以不要看到环境有 `privileged_state` 就直接认为训练用了 privileged learning。
+
+---
+
+### 33.5 `play_only` 不是简单跳过训练函数
+
+`play_only` 做的是：
+
+```text id="pd7xhx"
+ppo_params.num_timesteps = 0
+```
+
+后面仍然调用：
+
+```text id="aznmv1"
+train_fn(...)
+```
+
+所以它更像是“通过 Brax train 加载/构造 params 后直接推理”，不是完全绕开训练流程。
+
+建议使用 `--play_only` 时同时提供：
+
+```bash id="zmtzrq"
+--load_checkpoint_path=...
+```
+
+否则行为可能不符合“播放已训练模型”的直觉。
+
+---
+
+### 33.6 checkpoint 目录解析假设子目录名是数字
+
+如果传入的是目录：
+
+```python id="cpq5kz"
+latest_ckpts.sort(key=lambda x: int(x.name))
+```
+
+所以 checkpoint 子目录必须能转成整数，例如：
+
+```text id="a2jz9u"
+0
+1000000
+2000000
+```
+
+如果目录里有：
+
+```text id="k6rsgl"
+config
+latest
+backup
+```
+
+会报错。
+
+---
+
+### 33.7 保存 config 不一定完整覆盖所有实验信息
+
+脚本保存：
+
+```text id="umlyfi"
+env_cfg.to_dict()
+```
+
+但没有明确保存：
+
+```text id="wh2spw"
+ppo_params 完整内容
+env_cfg_overrides 独立内容
+命令行 flags
+domain_randomization 是否开启
+policy/value obs key 最终值
+```
+
+虽然部分信息会打印到 stdout，也可能进入 WandB/TB，但从源码看，checkpoint 目录中明确写入的 JSON 只有 env config。
+
+---
+
+### 33.8 eval_env / infer_env 是重新创建的环境
+
+训练、评估、推理不是同一个 env 对象：
+
+```text id="pcc3wp"
+env
+eval_env
+infer_env
+```
+
+这通常没问题，但意味着：
+
+```text id="qgokbg"
+如果某些状态只存在于 env 实例中，不会自动复制到 eval_env/infer_env。
+```
+
+当前代码通过 registry 和 config 重新创建环境，所以应当关注 config 是否一致。
+
+---
+
+### 33.9 inference rollout 不传 randomization_fn
+
+训练时如果启用：
+
+```text id="vk1dpv"
+--domain_randomization
+```
+
+则 train_fn 有 randomization_fn。
+
+但视频推理时：
+
+```python id="vg8t1k"
+wrapped_infer_env = wrapper.wrap_for_brax_training(
+    infer_env,
+    episode_length=...,
+    action_repeat=...,
+)
+```
+
+没有传 `randomization_fn`。
+
+所以视频表现是在非随机化 inference 环境中生成的。
+
+---
+
+### 33.10 vision 支持需要进一步确认
+
+脚本里有 vision 分支：
+
+```text id="z2xweh"
+ppo_networks_vision
+env_cfg_overrides["vision"] = True
+vision_config.nworld
+```
+
+但当前已读的 G1 `joystick.py` 没看到 vision observation 构造。要确认 vision 是否真的能跑，必须看：
+
+```text id="mf94wj"
+wrapper.py
+其他 vision 相关代码
+env config 是否支持 vision_config
+```
+
+不能仅凭这个训练脚本断言当前 G1 pipeline 已完整支持视觉输入。
+
+---
+
+【34. 需要继续查看的文件】
+
+### 34.1 `g1_env/config/locomotion_params.py`
+
+这是下一步最重要的文件之一。
+
+原因：
+
+`train_jax_ppo.py` 中：
+
+```python id="mfpmoe"
+ppo_params = locomotion_params.brax_ppo_config(env_name, _IMPL.value)
+```
+
+但 PPO 默认参数具体是什么，不在当前文件里。你需要确认：
+
+```text id="s2fh5a"
+1. num_timesteps 默认值
+2. num_envs 默认值
+3. batch_size / unroll_length / num_minibatches
+4. learning_rate / entropy_cost / clipping_epsilon
+5. reward_scaling / discounting
+6. policy/value 网络结构
+7. policy_obs_key / value_obs_key 默认值
+8. 是否默认使用 privileged_state
+9. 是否对 flat/rough terrain 给不同配置
+10. 是否区分 jax/warp impl
+```
+
+这是判断训练实际规模和 actor/critic 输入的关键文件。
+
+---
+
+### 34.2 `g1_env/_src/wrapper.py`
+
+必须看。
+
+原因：
+
+当前脚本把它传给 Brax PPO：
+
+```python id="8p54cn"
+wrap_env_fn=wrapper.wrap_for_brax_training
+```
+
+并在 inference 时手动调用：
+
+```python id="x86x8x"
+wrapper.wrap_for_brax_training(...)
+```
+
+你需要确认：
+
+```text id="kfwfu1"
+1. Brax PPO 期望的 env interface 是什么
+2. 原始 MjxEnv.State 如何被包装
+3. obs dict 是否原样传给 network_factory
+4. episode_length 如何处理
+5. action_repeat 如何处理
+6. done 后是否 auto reset
+7. metrics 如何汇总
+8. randomization_fn 如何作用到 mjx.Model
+9. vision 是否在 wrapper 中处理
+10. eval/inference 和 training wrapper 是否行为一致
+```
+
+这是连接环境与 Brax PPO 的关键桥梁。
+
+---
+
+### 34.3 `g1_env/_src/locomotion/g1/randomize.py`
+
+如果你关心 domain randomization，必须看。
+
+当前脚本只负责：
+
+```text id="qxygyq"
+如果 --domain_randomization:
+  training_params["randomization_fn"] = registry.get_domain_randomizer(env_name)
+```
+
+但 randomizer 具体做什么在 `randomize.py`。
+
+你需要确认：
+
+```text id="fzklpb"
+1. domain_randomize 随机化哪些参数
+2. 返回的两个 mjx.Model 分别是什么
+3. 是否 batch randomization
+4. 是否和 wrapper/Brax PPO 接口匹配
+5. flat/rough 是否共用同样随机化逻辑
+```
+
+---
+
+### 34.4 `g1_env/_src/wrapper_torch.py` 与 `learning/train_rsl_rl.py`
+
+如果你要比较 JAX PPO 和 RSL-RL 路线，需要继续看这两个文件。
+
+当前 `train_jax_ppo.py` 是 JAX/Brax 路线。它没有 Torch/RSL-RL 逻辑。
+
+你需要确认：
+
+```text id="fnwtyw"
+1. RSL-RL 是否复用 registry.load
+2. 是否复用 Joystick/MjxEnv
+3. JAX array 和 torch.Tensor 如何转换
+4. privileged_state 如何送给 RSL-RL critic
+5. domain randomization 是否也支持
+6. checkpoint 格式是否不同
+```
+
+---
+
+### 34.5 `pyproject.toml`
+
+需要确认入口点。
+
+filemap 说本脚本入口点是：
+
+```text id="idsoic"
+train-g1-jax
+```
+
+但具体命令映射要看 `pyproject.toml`。
+
+你需要确认：
+
+```text id="y1osap"
+[project.scripts]
+train-g1-jax = ...
+```
+
+这样才能知道用户实际运行命令如何进入：
+
+```python id="mxzzgy"
+run()
+→ app.run(main)
+```
+
+---
+
+【35. 当前文件在整个 pipeline 中的定位总结】
+
+一句话总结：
+
+```text id="n36185"
+train_jax_ppo.py 是 G1 JAX/Brax PPO 训练 pipeline 的总入口；它不实现环境和算法细节，但负责把环境、配置、wrapper、Brax PPO、日志、checkpoint、评估、推理和视频录制串起来。
+```
+
+最关键的数据流是：
+
+```text id="iqzcxg"
+env_name
+→ registry.get_default_config
+→ registry.load
+→ Joystick/G1Env/MjxEnv
+→ wrapper.wrap_for_brax_training
+→ brax PPO train
+→ make_inference_fn + params
+→ deterministic rollout
+→ render video
+```
+
+你读后续代码时需要记住这些变量/函数：
+
+```text id="x4m3zd"
+_ENV_NAME
+_IMPL
+_PLAYGROUND_CONFIG_OVERRIDES
+_DOMAIN_RANDOMIZATION
+_POLICY_OBS_KEY
+_VALUE_OBS_KEY
+get_rl_config
+env_cfg
+ppo_params
+env_cfg_overrides
+training_params
+network_factory
+train_fn
+wrapper.wrap_for_brax_training
+registry.get_domain_randomizer
+make_inference_fn
+wrapped_infer_env
+do_rollout
+```
+
+当前文件是训练 pipeline 的关键节点。前面读的 `registry.py / locomotion.__init__.py / joystick.py / base.py / mjx_env.py / g1_constants.py` 解决的是“环境怎么定义和运行”；这个文件解决的是“这个环境如何被 Brax PPO 真正训练、评估、保存和渲染”。

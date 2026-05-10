@@ -1,0 +1,1080 @@
+  # G1 训练 Pipeline 数据流图
+
+  ## 概览
+
+  本文档以数据流的形式描述 G1 人形机器人训练的完整
+  pipeline，从环境初始化到策略训练的全过程。
+
+
+  ## 1. 训练入口数据流
+
+  ### 1.1 JAX PPO 训练流程 (train_jax_ppo.py)
+
+  用户命令
+    │
+    ├─> train-g1-jax --env_name G1JoystickFlatTerrain --num_timesteps 200000000
+    │
+    v
+  命令行参数解析 (absl.flags)
+    │
+    ├─> _ENV_NAME: "G1JoystickFlatTerrain"
+    ├─> _NUM_TIMESTEPS: 200000000
+    ├─> _NUM_ENVS: 8192
+    ├─> _IMPL: "jax"
+    ├─> _DOMAIN_RANDOMIZATION: False
+    └─> _USE_WANDB: False
+    │
+    v
+  获取 RL 配置
+    │
+    ├─> get_rl_config(env_name)
+    │     │
+    │     └─> locomotion_params.brax_ppo_config()
+    │           │
+    │           └─> 返回 ConfigDict:
+    │                 - num_timesteps: 200M
+    │                 - num_evals: 20
+    │                 - num_envs: 8192
+    │                 - learning_rate: 3e-4
+    │                 - entropy_cost: 0.005
+    │                 - network: Policy(512,256,128), Value(512,256,128)
+    │
+    v
+  加载环境
+    │
+    ├─> registry.load(env_name, config, config_overrides)
+    │     │
+    │     └─> locomotion.load()
+    │           │
+    │           └─> g1_joystick.Joystick(task="flat_terrain")
+    │                 │
+    │                 └─> G1Env.init()
+    │                       │
+    │                       ├─> 加载 XML: scene_mjx_feetonly_flat_terrain.xml
+    │                       ├─> 创建 MuJoCo 模型: mujoco.MjModel
+    │                       ├─> 创建 MJX 模型: mjx.put_model(m)
+    │                       └─> 返回 Joystick 环境实例
+    │
+    v
+  环境包装
+    │
+    ├─> wrapper.wrap_for_brax_training(env, episode_length, action_repeat)
+    │     │
+    │     └─> 返回 Brax 兼容的环境
+    │
+    v
+  初始化训练器
+    │
+    ├─> ppo.train(
+    │       environment=env,
+    │       network_factory=make_ppo_networks,
+    │       num_timesteps=200M,
+    │       num_envs=8192,
+    │       ...
+    │     )
+    │
+    v
+  训练循环 (由 Brax PPO 管理)
+    │
+    └─> 返回: (make_inference_fn, params, metrics)
+
+  ### 1.2 RSL-RL 训练流程 (train_rsl_rl.py)
+
+  用户命令
+    │
+    ├─> train-g1-rsl --env_name G1JoystickFlatTerrain --num_envs 4096
+    │
+    v
+  命令行参数解析
+    │
+    ├─> _ENV_NAME: "G1JoystickFlatTerrain"
+    ├─> _NUM_ENVS: 4096
+    ├─> _IMPL: "jax"
+    ├─> _DEVICE: "cuda:0"
+    └─> _MULTI_GPU: False
+    │
+    v
+  获取 RL 配置
+    │
+    ├─> get_rl_config(env_name)
+    │     │
+    │     └─> locomotion_params.rsl_rl_config()
+    │           │
+    │           └─> 返回 ConfigDict:
+    │                 - max_iterations: 1000
+    │                 - num_steps_per_env: 24
+    │                 - learning_rate: 3e-4
+    │                 - actor/critic: [512,256,128]
+    │
+    v
+  加载环境
+    │
+    ├─> registry.load(env_name, config, config_overrides)
+    │     │
+    │     └─> (同 JAX PPO 流程)
+    │
+    v
+  Torch 包装
+    │
+    ├─> wrapper_torch.TorchWrapper(env, device)
+    │     │
+    │     └─> JAX ↔ Torch 张量转换
+    │           RSL-RL VecEnv 接口
+    │
+    v
+  初始化 RSL-RL Runner
+    │
+    ├─> OnPolicyRunner(env, train_cfg, log_dir, device)
+    │
+    v
+  训练循环
+    │
+    └─> runner.learn(num_learning_iterations, init_at_random_ep_len)
+
+
+
+  ## 2. 环境初始化数据流
+
+  registry.load("G1JoystickFlatTerrain")
+    │
+    v
+  locomotion.load(env_name, config, config_overrides)
+    │
+    ├─> 检查环境名称是否在 _envs 字典中
+    ├─> 调用 mjx_env.ensure_menagerie_exists()
+    │     │
+    │     └─> 如果不存在，克隆 mujoco_menagerie 仓库
+    │
+    └─> 调用 _envs[env_name](config, config_overrides)
+          │
+          └─> functools.partial(g1_joystick.Joystick, task="flat_terrain")
+                │
+                v
+              Joystick.init(config, config_overrides, task)
+                │
+                ├─> 合并配置: config + config_overrides
+                ├─> 获取 XML 路径: g1_constants.task_to_xml(task)
+                │     │
+                │     └─> 返回: scene_mjx_feetonly_flat_terrain.xml
+                │
+                └─> 调用父类 G1Env.init(xml_path, config)
+                      │
+                      v
+                    G1Env.init(xml_path, config)
+                      │
+                      ├─> 加载资源: get_assets()
+                      │     │
+                      │     ├─> 读取 XML 文件
+                      │     ├─> 读取纹理: hfield.png, rocky_texture.png
+                      │     └─> 返回 assets 字典
+                      │
+                      ├─> 创建 MuJoCo 模型
+                      │     │
+                      │     └─> mujoco.MjModel.from_xml_string(xml, assets)
+                      │
+                      ├─> 创建 MJX 模型
+                      │     │
+                      │     └─> mjx.put_model(mujoco_model)
+                      │
+                      ├─> 提取传感器信息
+                      │     │
+                      │     ├─> 陀螺仪传感器 ID
+                      │     ├─> 加速度计传感器 ID
+                      │     ├─> 接触力传感器 ID
+                      │     └─> 线速度传感器 ID
+                      │
+                      └─> 调用父类 MjxEnv.init(mujoco_model, mjx_model, config)
+                            │
+                            └─> 初始化环境基类
+                                  │
+                                  ├─> self.dt = config.ctrl_dt
+                                  ├─> self.episode_length =
+  config.episode_length
+                                  └─> 返回环境实例
+
+
+  ## 3. Episode 执行数据流
+
+  ### 3.1 Reset 流程
+
+  env.reset(rng)
+    │
+    v
+  Joystick.reset(rng)
+    │
+    ├─> 分割随机数生成器
+    │     │
+    │     └─> rng_pos, rng_vel, rng_cmd = jax.random.split(rng, 3)
+    │
+    ├─> 初始化关节位置
+    │     │
+    │     ├─> 从 keyframe "knees_bent" 获取默认姿态
+    │     ├─> 添加随机扰动: qpos += random.uniform(-0.1, 0.1)
+    │     └─> qpos: (nq,) 数组
+    │
+    ├─> 初始化关节速度
+    │     │
+    │     ├─> qvel = random.uniform(-0.1, 0.1)
+    │     └─> qvel: (nv,) 数组
+    │
+    ├─> 采样命令
+    │     │
+    │     ├─> lin_vel_x: uniform(0.0, 1.5) m/s
+    │     ├─> lin_vel_y: uniform(-0.5, 0.5) m/s
+    │     ├─> ang_vel_yaw: uniform(-1.0, 1.0) rad/s
+    │     └─> command: (3,) 数组
+    │
+    ├─> 创建初始 MJX data
+    │     │
+    │     └─> data = mjx_model.make_data()
+    │           data.qpos = qpos
+    │           data.qvel = qvel
+    │
+    ├─> 前向仿真
+    │     │
+    │     └─> data = mjx.forward(mjx_model, data)
+    │
+    ├─> 生成初始观测
+    │     │
+    │     └─> obs = self._get_obs(data, command, phase, last_action)
+    │
+    └─> 返回 State
+          │
+          └─> State(
+                data=data,           # MJX data
+                obs=obs,             # 观测字典
+                reward=0.0,          # 初始奖励
+                done=0.0,            # 未结束
+                metrics={},          # 空指标
+                info={"command": command, "phase": phase, ...}
+              )
+
+  ### 3.2 Step 流程
+
+  env.step(state, action)
+    │
+    v
+  Joystick.step(state, action)
+    │
+    ├─> 提取当前状态
+    │     │
+    │     ├─> data = state.data
+    │     ├─> command = state.info["command"]
+    │     ├─> phase = state.info["phase"]
+    │     └─> last_action = state.info.get("last_action", action)
+    │
+    ├─> 应用动作
+    │     │
+    │     ├─> 缩放动作: action_scaled = action * action_scale
+    │     ├─> 添加到默认姿态: ctrl = default_qpos + action_scaled
+    │     └─> data.ctrl = ctrl
+    │
+    ├─> 应用推力扰动 (可选)
+    │     │
+    │     └─> data.xfrc_applied[pelvis_id] = random_force
+    │
+    ├─> 物理仿真 (10 步，sim_dt=0.002s)
+    │     │
+    │     └─> for _ in range(10):
+    │           data = mjx.step(mjx_model, data)
+    │
+    ├─> 更新相位
+    │     │
+    │     └─> phase = (phase + dt * phase_freq) % 1.0
+    │
+    ├─> 生成观测
+    │     │
+    │     └─> obs = self._get_obs(data, command, phase, action)
+    │           │
+    │           v
+    │         _get_obs(data, command, phase, last_action)
+    │           │
+    │           ├─> 提取传感器数据
+    │           │     │
+    │           │     ├─> gyro = data.sensordata[gyro_id]              # (3,)
+    │           │     ├─> gravity = data.sensordata[gravity_id]        # (3,)
+    │           │     ├─> accelerometer = data.sensordata[accel_id]    # (3,)
+    │           │     ├─> qpos = data.qpos[7:]                         # (29,)
+  关节角
+    │           │     ├─> qvel = data.qvel[6:]                         # (29,)
+  关节速度
+    │           │     └─> contact = floor_found(data)                  # (2,)
+  脚部接触
+    │           │
+    │           ├─> 构建 state 观测 (101 维)
+    │           │     │
+    │           │     └─> state = concat([
+    │           │           gyro,              # 3
+    │           │           gravity,           # 3
+    │           │           command,           # 3
+    │           │           qpos,              # 29
+    │           │           qvel,              # 29
+    │           │           last_action,       # 29
+    │           │           sin(2πphase),     # 2
+    │           │           cos(2πphase),     # 2
+    │           │           phase              # 1
+    │           │         ])                   # 总计: 101
+    │           │
+    │           └─> 构建 privileged_state 观测 (150+ 维)
+    │                 │
+    │                 └─> privileged_state = concat([
+    │                       state,                    # 101
+    │                       raw_gyro,                 # 3
+    │                       accelerometer,            # 3
+    │                       raw_gravity,              # 3
+    │                       linvel,                   # 3
+    │                       angvel,                   # 3
+    │                       qpos_full,                # 29
+    │                       qvel_full,                # 29
+    │                       root_height,              # 1
+    │                       actuator_forces,          # 29
+    │                       contact,                  # 2
+    │                       feet_velocity,            # 6
+    │                       air_time                  # 2
+    │                     ])                          # 总计: 150+
+    │
+    ├─> 计算奖励
+    │     │
+    │     └─> reward, reward_dict = self._get_reward(data, command, phase,
+  action)
+    │           │
+    │           v
+    │         _get_reward(data, command, phase, action)
+    │           │
+    │           ├─> 提取状态信息
+    │           │     │
+    │           │     ├─> linvel = data.qvel[:3]                    # 线速度
+    │           │     ├─> angvel = data.qvel[3:6]                   # 角速度
+    │           │     ├─> qpos = data.qpos[7:]                      # 关节角
+    │           │     ├─> qvel = data.qvel[6:]                      # 关节速度
+    │           │     ├─> z_up = data.xmat[pelvis_id, 6:9]          # 躯干朝向
+    │           │     ├─> height = data.xpos[pelvis_id, 2]          # 躯干高度
+    │           │     └─> feet_contact = floor_found(data)          # 脚部接触
+    │           │
+    │           ├─> 计算跟踪奖励
+    │           │     │
+    │           │     ├─> r_lin_vel_x = exp(-|linvel[0] - cmd[0]|²)    #
+  前向速度跟踪
+    │           │     ├─> r_lin_vel_y = exp(-|linvel[1] - cmd[1]|²)    #
+  侧向速度跟踪
+    │           │     └─> r_ang_vel = exp(-|angvel[2] - cmd[2]|²)      #
+  角速度跟踪
+    │           │
+    │           ├─> 计算基础奖励
+    │           │     │
+    │           │     ├─> r_height = exp(-|height - target_height|²)   #
+  高度保持
+    │           │     ├─> r_upright = z_up[2]                          #
+  躯干直立
+    │           │     ├─> r_energy = -sum(|torque * qvel|)             #
+  能量消耗
+    │           │     └─> r_action_rate = -sum(|action - last_action|²) #
+  动作平滑
+    │           │
+    │           ├─> 计算脚部奖励
+    │           │     │
+    │           │     ├─> r_slip = -sum(|feet_linvel_xy|) * contact    #
+  脚部滑动
+    │           │     ├─> r_clearance = feet_height * (1 - contact)    #
+  摆动腿间隙
+    │           │     ├─> r_air_time = air_time * (1 - contact)        #
+  空中时间
+    │           │     └─> r_phase = -|contact - target_contact(phase)| #
+  相位跟踪
+    │           │
+    │           ├─> 计算姿态奖励
+    │           │     │
+    │           │     ├─> r_hip_dev = -|qpos[hip_joints] - default|²  #
+  髋关节偏差
+    │           │     ├─> r_knee_dev = -|qpos[knee_joints] - default|² #
+  膝关节偏差
+    │           │     └─> r_joint_limit = -sum(beyond_limit(qpos))     #
+  关节限位
+    │           │
+    │           ├─> 加权求和
+    │           │     │
+    │           │     └─> total_reward = sum(scale_i * reward_i)
+    │           │           │
+    │           │           ├─> lin_vel: 1.0
+    │           │           ├─> ang_vel: 0.75
+    │           │           ├─> air_time: 2.0
+    │           │           ├─> phase: 1.0
+    │           │           ├─> slip: -0.25
+    │           │           ├─> hip_deviation: -0.25
+    │           │           └─> ...
+    │           │
+    │           └─> 返回: (total_reward, reward_dict)
+    │
+    ├─> 检查终止条件
+    │     │
+    │     └─> done = self._get_termination(data)
+    │           │
+    │           ├─> 检查躯干高度: height < 0.3
+    │           ├─> 检查躯干倾斜: z_up[2] < 0.5
+    │           ├─> 检查碰撞: non_feet_contact > 0
+    │           └─> 返回: done (0 或 1)
+    │
+    ├─> 更新指标
+    │     │
+    │     └─> metrics = {
+    │           "reward/total": reward,
+    │           "reward/lin_vel": reward_dict["lin_vel"],
+    │           "reward/ang_vel": reward_dict["ang_vel"],
+    │           ...
+    │           "state/height": height,
+    │           "state/velocity": linvel_norm,
+    │           ...
+    │         }
+    │
+    └─> 返回新状态
+          │
+          └─> State(
+                data=new_data,
+                obs=obs,
+                reward=reward,
+                done=done,
+                metrics=metrics,
+                info={"command": command, "phase": phase, "last_action":
+  action}
+              )
+
+
+  ## 4. 训练循环数据流 (Brax PPO)
+
+  ppo.train(environment, network_factory, ...)
+    │
+    v
+  初始化
+    │
+    ├─> 创建策略网络
+    │     │
+    │     └─> policy_network = network_factory(
+    │           obs_size=101,
+    │           action_size=29,
+    │           hidden_layers=(512, 256, 128)
+    │         )
+    │
+    ├─> 创建价值网络
+    │     │
+    │     └─> value_network = network_factory(
+    │           obs_size=150+,  # privileged_state
+    │           output_size=1,
+    │           hidden_layers=(512, 256, 128)
+    │         )
+    │
+    └─> 初始化参数
+          │
+          └─> params = init_params(rng, policy_network, value_network)
+    │
+    v
+  训练循环 (200M 步 / 8192 环境)
+    │
+    └─> for iteration in range(num_iterations):
+          │
+          ├─> 收集经验 (Rollout)
+          │     │
+          │     └─> for step in range(unroll_length):  # 20 步
+          │           │
+          │           ├─> 策略推理
+          │           │     │
+          │           │     └─> action, log_prob = policy(params, obs["state"])
+          │           │           │
+          │           │           ├─> obs["state"]: (8192, 101)
+          │           │           ├─> hidden: (8192, 512) → (8192, 256) →
+  (8192, 128)
+          │           │           ├─> mean: (8192, 29)
+          │           │           ├─> std: (8192, 29)
+          │           │           ├─> action = sample(Normal(mean, std))
+          │           │           └─> log_prob = log_prob(action)
+          │           │
+          │           ├─> 环境交互
+          │           │     │
+          │           │     └─> state = env.step(state, action)
+          │           │           │
+          │           │           └─> (见 Section 3.2)
+          │           │
+          │           ├─> 价值估计
+          │           │     │
+          │           │     └─> value = value_network(params,
+  obs["privileged_state"])
+          │           │           │
+          │           │           ├─> obs["privileged_state"]: (8192, 150+)
+          │           │           ├─> hidden: (8192, 512) → (8192, 256) →
+  (8192, 128)
+          │           │           └─> value: (8192, 1)
+          │           │
+          │           └─> 存储 transition
+          │                 │
+          │                 └─> buffer.add(obs, action, reward, value,
+  log_prob, done)
+          │
+          ├─> 计算优势函数 (GAE)
+          │     │
+          │     └─> for t in reversed(range(unroll_length)):
+          │           │
+          │           ├─> delta = reward[t] + gamma * value[t+1] - value[t]
+          │           ├─> advantage[t] = delta + gamma * lambda *
+  advantage[t+1]
+          │           └─> returns[t] = advantage[t] + value[t]
+          │
+          ├─> 策略更新 (4 epochs × 32 minibatches)
+          │     │
+          │     └─> for epoch in range(num_updates_per_batch):
+          │           │
+          │           └─> for minibatch in range(num_minibatches):
+          │                 │
+          │                 ├─> 采样 minibatch
+          │                 │     │
+          │                 │     └─> batch = sample(buffer, batch_size=256)
+          │                 │
+          │                 ├─> 计算策略损失
+          │                 │     │
+          │                 │     ├─> new_log_prob =
+  policy.log_prob(batch.action)
+          │                 │     ├─> ratio = exp(new_log_prob -
+  batch.old_log_prob)
+          │                 │     ├─> clipped_ratio = clip(ratio, 1-ε, 1+ε)  #
+  ε=0.2
+          │                 │     ├─> policy_loss = -min(
+          │                 │     │     ratio * advantage,
+          │                 │     │     clipped_ratio * advantage
+          │                 │     │   ).mean()
+          │                 │     └─> entropy_loss = -entropy(policy).mean()
+          │                 │
+          │                 ├─> 计算价值损失
+          │                 │     │
+          │                 │     ├─> new_value = value_network(batch.obs)
+          │                 │     ├─> clipped_value = batch.old_value + clip(
+          │                 │     │     new_value - batch.old_value, -ε, ε
+          │                 │     │   )
+          │                 │     └─> value_loss = max(
+          │                 │           (new_value - batch.returns)²,
+          │                 │           (clipped_value - batch.returns)²
+          │                 │         ).mean()
+          │                 │
+          │                 ├─> 总损失
+          │                 │     │
+          │                 │     └─> loss = policy_loss
+          │                 │              + value_coef * value_loss
+          │                 │              + entropy_coef * entropy_loss
+          │                 │
+          │                 └─> 梯度更新
+          │                       │
+          │                       ├─> grads = jax.grad(loss)(params)
+          │                       ├─> grads = clip_by_global_norm(grads,
+  max_norm=1.0)
+          │                       └─> params = adam_update(params, grads,
+  lr=3e-4)
+          │
+          ├─> 评估 (每 10M 步)
+          │     │
+          │     └─> eval_metrics = evaluate(params, eval_env, num_episodes=128)
+          │           │
+          │           ├─> episode_reward: 平均 episode 奖励
+          │           ├─> episode_length: 平均 episode 长度
+          │           └─> success_rate: 成功率
+          │
+          ├─> 保存检查点
+          │     │
+          │     └─> save_checkpoint(params, iteration, logdir)
+          │
+          └─> 记录日志
+                │
+                ├─> WandB: wandb.log(metrics)
+                └─> TensorBoard: writer.add_scalar(metrics)
+
+
+
+  ## 5. 域随机化数据流
+
+  训练循环启用域随机化
+    │
+    ├─> randomization_fn = registry.get_domain_randomizer(env_name)
+    │     │
+    │     └─> 返回: g1_randomize.domain_randomize
+    │
+    v
+  每次 reset 时应用
+    │
+    └─> domain_randomize(mjx_model, rng)
+          │
+          ├─> 分割随机数
+          │     │
+          │     └─> rng_friction, rng_armature, rng_mass, ... = split(rng)
+          │
+          ├─> 随机化摩擦力
+          │     │
+          │     ├─> friction_scale = uniform(0.5, 1.5, rng_friction)
+          │     └─> model.geom_friction *= friction_scale
+          │
+          ├─> 随机化关节摩擦
+          │     │
+          │     ├─> frictionloss_scale = uniform(0.0, 2.0, rng_frictionloss)
+          │     └─> model.dof_frictionloss *= frictionloss_scale
+          │
+          ├─> 随机化电枢
+          │     │
+          │     ├─> armature_scale = uniform(0.5, 1.5, rng_armature)
+          │     └─> model.dof_armature *= armature_scale
+          │
+          ├─> 随机化质量
+          │     │
+          │     ├─> mass_scale = uniform(0.8, 1.2, rng_mass)
+          │     └─> model.body_mass *= mass_scale
+          │
+          └─> 返回: (randomized_model, original_model)
+
+
+
+  ## 6. 推理数据流
+
+  加载训练好的模型
+    │
+    ├─> params = load_checkpoint(checkpoint_path)
+    ├─> make_inference_fn = load_inference_fn(checkpoint_path)
+    └─> inference_fn = make_inference_fn(params, deterministic=True)
+    │
+    v
+  推理循环
+    │
+    └─> for episode in range(num_episodes):
+          │
+          ├─> state = env.reset(rng)
+          │
+          └─> for step in range(episode_length):
+                │
+                ├─> 策略推理
+                │     │
+                │     └─> action = inference_fn(state.obs["state"], rng)
+                │           │
+                │           ├─> obs: (101,)
+                │           ├─> obs: (101,)
+                │           ├─> hidden: (512,) → (256,) → (128,)
+                │           ├─> mean: (29,)
+                │           └─> action = mean  # deterministic
+                │
+                ├─> 环境交互
+                │     │
+                │     └─> state = env.step(state, action)
+                │
+                ├─> 渲染 (可选)
+                │     │
+                │     └─> frame = env.render(state.data)
+                │
+                └─> 记录轨迹
+                      │
+                      └─> trajectory.append((state.data.qpos, state.data.qvel))
+
+
+
+  ### 7.1 State (环境状态)
+
+  ```python
+  @dataclass
+  class State:
+    data: mjx.Data              # MJX 物理数据
+      │
+      ├─> qpos: (nq,)           # 广义位置 (7 + 29 = 36)
+      │     ├─> [0:3]: 根位置 (x, y, z)
+      │     ├─> [3:7]: 根四元数 (qw, qx, qy, qz)
+      │     └─> [7:36]: 关节角 (29 个关节)
+      │
+      ├─> qvel: (nv,)           # 广义速度 (6 + 29 = 35)
+      │     ├─> [0:3]: 根线速度 (vx, vy, vz)
+      │     ├─> [3:6]: 根角速度 (ωx, ωy, ωz)
+      │     └─> [6:35]: 关节速度 (29 个关节)
+      │
+      ├─> ctrl: (nu,)           # 控制输入 (29 个执行器)
+      ├─> time: float           # 仿真时间
+      ├─> xpos: (nbody, 3)      # 身体位置
+      ├─> xmat: (nbody, 9)      # 身体旋转矩阵
+      ├─> sensordata: (nsensor,) # 传感器数据
+      └─> contact: ...          # 接触信息
+
+    obs: Dict[str, Array]       # 观测字典
+      │
+      ├─> "state": (101,)       # 策略观测
+      │     ├─> gyro: (3,)              # 陀螺仪
+      │     ├─> gravity: (3,)           # 重力向量
+      │     ├─> command: (3,)           # 速度命令
+      │     ├─> qpos: (29,)             # 关节角
+      │     ├─> qvel: (29,)             # 关节速度
+      │     ├─> last_action: (29,)      # 上一步动作
+      │     ├─> sin_phase: (2,)         # sin(2πφ)
+      │     ├─> cos_phase: (2,)         # cos(2πφ)
+      │     └─> phase: (1,)             # 相位 φ
+      │
+      └─> "privileged_state": (150+,)   # 价值函数观测
+            ├─> state: (101,)           # 包含上述所有
+            ├─> raw_gyro: (3,)          # 原始陀螺仪
+            ├─> accelerometer: (3,)     # 加速度计
+            ├─> raw_gravity: (3,)       # 原始重力
+            ├─> linvel: (3,)            # 线速度
+            ├─> angvel: (3,)            # 角速度
+            ├─> qpos_full: (29,)        # 完整关节角
+            ├─> qvel_full: (29,)        # 完整关节速度
+            ├─> root_height: (1,)       # 根高度
+            ├─> actuator_forces: (29,)  # 执行器力
+            ├─> contact: (2,)           # 脚部接触
+            ├─> feet_velocity: (6,)     # 脚部速度
+            └─> air_time: (2,)          # 空中时间
+
+    reward: float               # 当前步奖励
+    done: float                 # 终止标志 (0 或 1)
+
+    metrics: Dict[str, float]   # 指标字典
+      │
+      ├─> "reward/total": float
+      ├─> "reward/lin_vel": float
+      ├─> "reward/ang_vel": float
+      ├─> "reward/air_time": float
+      ├─> "reward/phase": float
+      ├─> "state/height": float
+      ├─> "state/velocity": float
+      └─> ...
+
+    info: Dict[str, Any]        # 额外信息
+      │
+      ├─> "command": (3,)       # 速度命令
+      ├─> "phase": (2,)         # 步态相位
+      ├─> "last_action": (29,)  # 上一步动作
+      └─> ...
+
+  7.2 Config (配置字典)
+
+  ConfigDict:
+    # 环境配置
+    ctrl_dt: 0.02               # 控制时间步 (50Hz)
+    sim_dt: 0.002               # 仿真时间步 (500Hz)
+    episode_length: 1000        # Episode 长度 (20秒)
+    action_scale: 0.5           # 动作缩放
+    action_repeat: 1            # 动作重复
+    impl: "jax"                 # 后端 (jax/warp)
+
+    # 命令配置
+    command_config:
+      lin_vel_x_range: [0.0, 1.5]      # 前向速度范围
+      lin_vel_y_range: [-0.5, 0.5]     # 侧向速度范围
+      ang_vel_yaw_range: [-1.0, 1.0]   # 角速度范围
+
+    # 奖励配置
+    reward_config:
+      scales:
+        lin_vel: 1.0            # 线速度跟踪
+        ang_vel: 0.75           # 角速度跟踪
+        air_time: 2.0           # 空中时间
+        phase: 1.0              # 相位跟踪
+        slip: -0.25             # 脚部滑动惩罚
+        hip_deviation: -0.25    # 髋关节偏差惩罚
+        knee_deviation: -0.1    # 膝关节偏差惩罚
+        termination: -100.0     # 终止惩罚
+        collision: -0.1         # 碰撞惩罚
+
+    # 终止条件
+    termination_config:
+      min_height: 0.3           # 最小高度
+      min_z_up: 0.5             # 最小直立度
+
+  7.3 PPO Config (训练配置)
+
+  ConfigDict:
+    # 训练参数
+    num_timesteps: 200_000_000  # 总训练步数
+    num_evals: 20               # 评估次数
+    num_envs: 8192              # 并行环境数
+    num_eval_envs: 128          # 评估环境数
+
+    # 超参数
+    learning_rate: 3e-4         # 学习率
+    entropy_cost: 0.005         # 熵成本
+    clipping_epsilon: 0.2       # PPO 裁剪参数
+    discounting: 0.97           # 折扣因子
+    reward_scaling: 1.0         # 奖励缩放
+
+    # 网络架构
+    network_factory:
+      policy_hidden_layer_sizes: (512, 256, 128)
+      value_hidden_layer_sizes: (512, 256, 128)
+      policy_obs_key: "state"
+      value_obs_key: "privileged_state"
+
+    # 训练循环
+    episode_length: 1000        # Episode 长度
+    action_repeat: 1            # 动作重复
+    unroll_length: 20           # Rollout 长度
+    num_minibatches: 32         # Minibatch 数量
+    num_updates_per_batch: 4    # 每批更新次数
+    batch_size: 256             # Batch 大小
+    max_grad_norm: 1.0          # 梯度裁剪
+
+    # 评估
+    num_resets_per_eval: 1      # 每次评估的 reset 次数
+    normalize_observations: True # 观测归一化
+
+
+  8. 数据维度总结
+
+  8.1 输入维度
+
+  观测空间:
+    - state (策略输入): (101,)
+      ├─> 传感器: 3 + 3 = 6
+      ├─> 命令: 3
+      ├─> 关节: 29 + 29 = 58
+      ├─> 动作: 29
+      └─> 相位: 2 + 2 + 1 = 5
+
+    - privileged_state (价值输入): (150+,)
+      └─> state + 额外传感器 + 状态信息
+
+  动作空间:
+    - action: (29,)
+      └─> 关节位置命令（相对于默认姿态）
+
+  8.2 中间维度
+
+  策略网络:
+    input: (batch, 101)
+      ↓ Linear + ReLU
+    hidden1: (batch, 512)
+      ↓ Linear + ReLU
+    hidden2: (batch, 256)
+      ↓ Linear + ReLU
+    hidden3: (batch, 128)
+      ↓ Linear (mean)
+    mean: (batch, 29)
+      ↓ Linear (std)
+    std: (batch, 29)
+      ↓ Sample
+    action: (batch, 29)
+
+  价值网络:
+    input: (batch, 150+)
+      ↓ Linear + ReLU
+    hidden1: (batch, 512)
+      ↓ Linear + ReLU
+    hidden2: (batch, 256)
+      ↓ Linear + ReLU
+    hidden3: (batch, 128)
+      ↓ Linear
+    value: (batch, 1)
+
+  8.3 批处理维度
+
+  训练时:
+    - 并行环境: 8192
+    - Rollout 长度: 20
+    - 总样本: 8192 × 20 = 163,840
+    - Minibatch 大小: 256
+    - Minibatch 数量: 32
+    - 每批更新: 4 epochs
+
+  数据流:
+    obs: (8192, 101) → policy → action: (8192, 29)
+    obs: (8192, 150+) → value → value: (8192, 1)
+
+    buffer: (163840, ...)
+      ↓ shuffle + split
+    minibatch: (256, ...)
+      ↓ 32 batches × 4 epochs
+    updates: 128 次梯度更新
+
+
+  9. 性能优化数据流
+
+  9.1 JIT 编译
+
+  首次调用
+    │
+    ├─> env.reset(rng)
+    │     │
+    │     └─> JAX 追踪计算图
+    │           │
+    │           ├─> 记录所有操作
+    │           ├─> 优化计算图
+    │           └─> 编译为 XLA
+    │
+    ├─> env.step(state, action)
+    │     │
+    │     └─> JAX 追踪计算图
+    │           │
+    │           └─> 编译为 XLA
+    │
+    └─> policy(params, obs)
+          │
+          └─> JAX 追踪计算图
+                │
+                └─> 编译为 XLA
+
+  后续调用
+    │
+    └─> 直接执行编译后的 XLA 代码
+          │
+          └─> 速度提升 10-100x
+
+  9.2 向量化
+
+  单环境 (慢):
+    for i in range(8192):
+      state[i] = env.step(state[i], action[i])
+
+  向量化 (快):
+    states = vmap(env.step)(states, actions)
+      │
+      └─> 并行执行 8192 个环境
+            │
+            ├─> GPU: 真正的并行
+            └─> CPU: SIMD 向量化
+
+  9.3 内存布局
+
+  数据对齐:
+    obs: (8192, 101) → 连续内存
+      │
+      └─> GPU 合并访问
+            │
+            └─> 高带宽利用率
+
+  避免复制:
+    JAX 数组 → 零拷贝 → GPU
+      │
+      └─> 减少 CPU-GPU 传输
+
+
+  10. 完整训练流程时序图
+
+  时间轴 (200M 步 / 8192 环境 ≈ 24,414 iterations)
+  │
+  ├─ Iteration 0 (0M 步)
+  │    │
+  │    ├─> Rollout (20 步 × 8192 环境 = 163,840 样本)
+  │    │     │
+  │    │     └─> 耗时: ~2 秒 (GPU)
+  │    │
+  │    ├─> 计算 GAE
+  │    │     │
+  │    │     └─> 耗时: ~0.1 秒
+  │    │
+  │    ├─> 策略更新 (128 次梯度更新)
+  │    │     │
+  │    │     └─> 耗时: ~5 秒
+  │    │
+  │    └─> 总耗时: ~7 秒/iteration
+  │
+  ├─ Iteration 1,220 (10M 步)
+  │    │
+  │    ├─> Rollout + 更新
+  │    │
+  │    └─> 评估
+  │          │
+  │          ├─> 128 个 episode
+  │          ├─> 平均奖励: 150.2
+  │          └─> 耗时: ~30 秒
+  │
+  ├─ Iteration 2,441 (20M 步)
+  │    │
+  │    └─> 评估 + 保存检查点
+  │
+  ...
+  │
+  ├─ Iteration 24,414 (200M 步)
+  │    │
+  │    └─> 最终评估
+  │          │
+  │          ├─> 平均奖励: 850.5
+  │          └─> 成功率: 95%
+  │
+  └─ 总训练时间: ~47 小时 (单 GPU)
+
+
+  11. 数据流关键路径
+
+  11.1 前向传播 (推理)
+
+  观测 → 策略网络 → 动作 → 环境 → 新观测
+    │        │         │       │        │
+    101    512→256   29      MJX      101
+           →128              仿真
+
+  关键瓶颈: MJX 仿真 (10 步 × 500Hz)
+  优化: JIT 编译 + GPU 加速
+
+  11.2 反向传播 (训练)
+
+  样本 → 计算损失 → 反向传播 → 梯度裁剪 → 参数更新
+    │        │          │           │           │
+   256     标量      梯度        梯度         新参数
+                    (自动微分)   (clip)      (Adam)
+
+  关键瓶颈: 梯度计算
+  优化: 混合精度训练 (FP16)
+
+  11.3 端到端延迟
+
+  用户命令 → 环境初始化 → 训练循环 → 保存模型 → 推理
+      │            │            │          │         │
+    <1秒         ~10秒       ~47小时     ~1秒      <0.1秒
+
+  总延迟: ~47 小时 (200M 步训练)
+  实时因子: ~1000x (仿真速度 / 真实时间)
+
+
+  12. 数据流监控点
+
+  12.1 训练监控
+
+  每 iteration:
+    - 平均奖励
+    - 策略损失
+    - 价值损失
+    - 熵
+    - 梯度范数
+    - 学习率
+
+  每 10M 步:
+    - 评估奖励
+    - 成功率
+    - Episode 长度
+    - 各项奖励分量
+
+  每 50M 步:
+    - 保存检查点
+    - 录制视频
+
+  12.2 调试监控
+
+  环境状态:
+    - 躯干高度
+    - 躯干速度
+    - 关节角度
+    - 接触状态
+
+  策略行为:
+    - 动作分布
+    - 动作幅度
+    - 动作平滑度
+
+  奖励分解:
+    - 跟踪奖励
+    - 基础奖励
+    - 脚部奖励
+    - 姿态奖励
+
+   总结
+
+  本数据流文档完整描述了 G1 人形机器人训练 pipeline 的所有数据流动路径，包括：
+
+  1. 训练入口: JAX PPO 和 RSL-RL 两种训练方式
+  2. 环境初始化: 从 XML 加载到 MJX 模型创建
+  3. Episode 执行: Reset 和 Step 的详细数据流
+  4. 训练循环: Rollout、GAE、策略更新的完整流程
+  5. 域随机化: 物理参数随机化的数据流
+  6. 推理: 训练后模型的推理数据流
+  7. 数据结构: State、Config、PPO Config 的详细定义
+  8. 数据维度: 输入、中间、批处理的维度总结
+  9. 性能优化: JIT、向量化、内存布局的优化数据流
+  10. 时序图: 完整训练流程的时间线
+  11. 关键路径: 前向、反向、端到端的瓶颈分析
+  12. 监控点: 训练和调试的关键监控指标
+
+  所有数据流均以 输入 → 处理 → 输出 的形式清晰展示，便于理解和调试。

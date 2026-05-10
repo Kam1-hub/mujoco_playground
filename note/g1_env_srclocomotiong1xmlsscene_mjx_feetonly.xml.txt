@@ -1,0 +1,1165 @@
+【1. 这段代码在 pipeline 中的位置】
+
+`scene_mjx_feetonly.xml` 属于 **G1 机器人 XML / MJCF 场景模型层**。
+
+它不是 Python 环境逻辑，也不是 reward / observation / wrapper / PPO 训练入口。它是 MuJoCo 模型组合文件，作用是把几个模型组成部分拼成一个完整仿真场景：
+
+```text
+G1 主机器人模型
++ 可视化配置
++ 地面 plane
++ 材质 / 纹理
++ sensor.xml
+→ 一个可被 MuJoCo 编译的完整 scene XML
+```
+
+它在 pipeline 中的位置大致是：
+
+```text
+env_name
+→ registry.load(...)
+→ locomotion.load(...)
+→ Joystick(task=...)
+→ consts.task_to_xml(task)
+→ 某个 scene XML
+→ G1Env.__init__(xml_path=...)
+→ mujoco.MjModel.from_xml_string(...)
+→ mjx.put_model(...)
+→ mjx.Model
+```
+
+但要注意：你当前上传的文件名是 `scene_mjx_feetonly.xml`，它更像 **基础场景模板**。从 `g1_constants.py` 看，当前 registry 中的 flat / rough 任务实际指向的是：
+
+```text
+scene_mjx_feetonly_flat_terrain.xml
+scene_mjx_feetonly_rough_terrain.xml
+```
+
+而不是直接指向 `scene_mjx_feetonly.xml`。`filemap.txt` 也把 `scene_mjx_feetonly.xml` 标为“基础场景模板”，把 flat / rough 分别标为平坦地形和粗糙地形场景。
+
+所以当前文件的准确定位是：
+
+```text
+XML 基础场景模板层
+```
+
+它定义的是“一个最小平面地面 + G1 + sensor”的场景组合方式。
+
+---
+
+【2. 核心作用】
+
+这个 XML 文件做了四件事：
+
+```text
+1. include G1 主模型：
+   <include file="g1_mjx_feetonly.xml"/>
+
+2. 设置仿真可视化参数：
+   statistic / visual / light / force display / shadow quality 等
+
+3. 定义一个平面地面：
+   <geom name="floor" type="plane" .../>
+
+4. include sensor.xml：
+   <include file="sensor.xml"/>
+```
+
+也就是说，它把机器人本体、场景地面、传感器定义合在一起，形成一个可以被 MuJoCo 编译的完整 MJCF 场景。文件中明确包含 `g1_mjx_feetonly.xml`、定义 `floor` 平面，并在最后 include `sensor.xml`。
+
+它接收的输入不是 Python 参数，而是 XML include 依赖：
+
+```text
+g1_mjx_feetonly.xml
+sensor.xml
+```
+
+它产生的输出也不是 Python 对象，而是：
+
+```text
+完整 MuJoCo XML scene
+```
+
+这个 scene 再由 `G1Env.__init__()` 读取并编译：
+
+```text
+XML 文本
+→ mujoco.MjModel.from_xml_string(...)
+→ mujoco.MjModel
+→ mjx.put_model(...)
+→ mjx.Model
+```
+
+`base.py` 中确实是通过 `mujoco.MjModel.from_xml_string(epath.Path(xml_path).read_text(), assets=...)` 来编译 XML 的。
+
+---
+
+【3. 关键 XML 块解释】
+
+### 3.1 根节点：`<mujoco model="g1 scene">`
+
+```xml
+<mujoco model="g1 scene">
+```
+
+这表示当前 XML 是一个 MuJoCo 模型文件，模型名为：
+
+```text
+g1 scene
+```
+
+这个名字主要用于 MuJoCo 模型标识和调试，不直接决定训练逻辑。
+
+---
+
+### 3.2 include 主机器人模型
+
+```xml
+<include file="g1_mjx_feetonly.xml"/>
+```
+
+这是当前文件最关键的一行。
+
+它说明：
+
+```text
+当前 scene XML 本身不定义 G1 的身体、关节、执行器、keyframe
+而是通过 include 引入 g1_mjx_feetonly.xml
+```
+
+根据 `filemap.txt`，`g1_mjx_feetonly.xml` 是 G1 主模型文件，包含 29 个关节、身体、几何体、执行器定义。
+
+所以这里的数据流是：
+
+```text
+scene_mjx_feetonly.xml
+→ include g1_mjx_feetonly.xml
+→ 获得 G1 robot body / joint / actuator / keyframe / site / geom
+→ 后续 Python 可以查 keyframe("knees_bent")、joint、site、geom、actuator
+```
+
+这和 `joystick.py` 强相关。`Joystick._post_init()` 里会查：
+
+```text
+keyframe("knees_bent")
+joint(...)
+site("left_foot")
+site("right_foot")
+geom("left_foot")
+geom("right_foot")
+geom("left_shin")
+geom("right_shin")
+geom("left_thigh")
+geom("right_thigh")
+geom("left_hand_collision")
+geom("right_hand_collision")
+```
+
+这些大概率来自 `g1_mjx_feetonly.xml`，而不是当前 scene 文件本身。`joystick.py` 中确实大量通过 `_mj_model.keyframe/site/geom/joint/sensor` 绑定这些对象。
+
+---
+
+### 3.3 `<statistic>`：模型显示与尺度统计
+
+```xml
+<statistic center="0 0 0.7" extent="1.2" meansize="0.04"/>
+```
+
+这个块主要影响 MuJoCo viewer / renderer 的场景尺度统计与可视化，不是训练动力学核心。
+
+含义大致是：
+
+```text
+center="0 0 0.7"：
+  场景可视化中心大约在 z=0.7 处。
+
+extent="1.2"：
+  场景显示范围尺度。
+
+meansize="0.04"：
+  可视化默认尺寸相关统计。
+```
+
+它不会直接影响：
+
+```text
+reward
+observation
+action
+joint dynamics
+contact dynamics
+PPO training
+```
+
+但会影响：
+
+```text
+viewer 默认视角
+render 画面尺度
+debug 可视化体验
+```
+
+---
+
+### 3.4 `<visual>`：可视化配置
+
+```xml
+<visual>
+  <headlight diffuse=".8 .8 .8" ambient=".2 .2 .2" specular="1 1 1"/>
+  <rgba force="1 0 0 1"/>
+  <global azimuth="140" elevation="-20"/>
+  <map force="0.01"/>
+  <scale forcewidth="0.3" contactwidth="0.5" contactheight="0.2"/>
+  <quality shadowsize="8192"/>
+</visual>
+```
+
+这一块全部属于 **渲染 / 可视化层**。
+
+逐项看：
+
+```text
+headlight:
+  设置默认头灯的 diffuse / ambient / specular 光照。
+
+rgba force:
+  设置力显示颜色为红色。
+
+global azimuth / elevation:
+  设置默认相机观察角度，方位角 140，高度角 -20。
+
+map force="0.01":
+  设置力可视化缩放映射。
+
+scale forcewidth/contactwidth/contactheight:
+  设置力、接触显示的线宽/高度等。
+
+quality shadowsize="8192":
+  设置阴影贴图分辨率，渲染质量较高。
+```
+
+对训练影响：
+
+```text
+一般不影响训练 rollout。
+```
+
+对仿真/可视化影响：
+
+```text
+影响 render / viewer 画面质量、接触显示、力显示、阴影质量。
+```
+
+潜在工程点：
+
+```text
+shadowsize=8192 较高。
+如果在 WSL2 / headless / GPU 显存紧张环境下渲染，可能增加渲染压力。
+```
+
+但这只影响可视化，不影响 MJX rollout 本身。
+
+---
+
+### 3.5 `<asset>`：天空盒、地面纹理、材质
+
+```xml
+<asset>
+  <texture type="skybox" builtin="gradient" rgb1="1 1 1" rgb2="1 1 1" width="800" height="800"/>
+  <texture type="2d" name="groundplane" builtin="checker" mark="edge" rgb1="1 1 1" rgb2="1 1 1"
+    markrgb="0 0 0" width="300" height="300"/>
+  <material name="groundplane" texture="groundplane" texuniform="true" texrepeat="5 5" reflectance="0"/>
+</asset>
+```
+
+这一块定义可视化资源：
+
+```text
+skybox:
+  白色渐变天空盒。
+
+groundplane texture:
+  名为 groundplane 的 checker 纹理。
+  rgb1/rgb2 都是白色，markrgb 是黑色。
+
+groundplane material:
+  使用 groundplane 纹理。
+  texrepeat="5 5"。
+  reflectance="0"。
+```
+
+对训练影响：
+
+```text
+通常不影响动力学和 reward。
+```
+
+因为当前 pipeline 中，policy observation 不是 RGB 图像，而是 proprioception / command / privileged state。`joystick.py` 中 `_get_obs()` 构造的是数值向量，而不是图像。
+
+对渲染影响：
+
+```text
+影响地面显示效果和视频录制画面。
+```
+
+---
+
+### 3.6 `<worldbody>`：定义地面 geom
+
+```xml
+<worldbody>
+  <geom name="floor" size="0 0 0.01" type="plane" material="groundplane" contype="1" conaffinity="0"/>
+</worldbody>
+```
+
+这是当前文件里对仿真最重要的直接定义。
+
+它定义了一个名为 `floor` 的地面平面：
+
+```text
+name="floor"
+type="plane"
+size="0 0 0.01"
+material="groundplane"
+contype="1"
+conaffinity="0"
+```
+
+其中最关键的是：
+
+```text
+geom name = floor
+```
+
+因为 `joystick.py::_post_init()` 明确会查：
+
+```python
+self._floor_geom_id = self._mj_model.geom("floor").id
+```
+
+也就是说，Python 任务环境依赖 XML 里存在名为 `"floor"` 的 geom。你当前这个 XML 正好定义了它。
+
+数据流是：
+
+```text
+<geom name="floor" .../>
+→ MuJoCo 编译成 mj_model.geom("floor")
+→ Joystick._post_init()
+→ self._floor_geom_id
+```
+
+但注意：在已看到的 `joystick.py` 中，`_floor_geom_id` 被缓存后没有明显直接用于 reward 计算。脚-地接触主要通过 sensor 读取：
+
+```text
+left_foot_floor_found
+right_foot_floor_found
+```
+
+这些 sensor 很可能在 `sensor.xml` 中定义，并依赖 `floor` 这个 geom 名称。
+
+所以更完整的数据流是：
+
+```text
+scene_mjx_feetonly.xml:
+  geom name="floor"
+
+sensor.xml:
+  定义 left_foot_floor_found / right_foot_floor_found 之类 contact sensor
+
+Joystick._post_init():
+  读取这些 sensor id
+
+Joystick.reset / step:
+  data.sensordata[sensor_adr] > 0
+  → contact
+  → feet_air_time / first_contact / feet reward / privileged_state
+```
+
+这条链路必须结合 `sensor.xml` 才能完全确认。
+
+---
+
+### 3.7 `contype="1" conaffinity="0"`：接触过滤相关
+
+当前 floor geom 设置：
+
+```xml
+contype="1" conaffinity="0"
+```
+
+这属于 MuJoCo contact filtering 配置。
+
+源码能直接确认的是：
+
+```text
+floor 的 contype 是 1
+floor 的 conaffinity 是 0
+```
+
+合理推断：
+
+```text
+floor 本身声明自己的 contact type 为 bit 1；
+floor 不主动接受其他 contype，但如果其他 geom 的 conaffinity 包含 bit 1，则仍可与 floor 产生接触。
+```
+
+是否脚部 geom 能和 floor 接触，需要继续看 `g1_mjx_feetonly.xml` 中 `left_foot` / `right_foot` geom 的 `contype/conaffinity` 配置。
+
+当前文件不能单独确认：
+
+```text
+脚和地面一定会碰撞
+```
+
+它只能确认：
+
+```text
+场景里有 floor plane，且 floor 的 contact type 是 1。
+```
+
+真正接触是否成立，需要检查：
+
+```text
+g1_mjx_feetonly.xml 中 feet geom 的 conaffinity / contype
+sensor.xml 中 foot-floor contact sensor 定义
+```
+
+---
+
+### 3.8 include 传感器定义
+
+```xml
+<include file="sensor.xml"/>
+```
+
+这是当前文件第二个核心 include。
+
+它说明传感器不是在当前 scene 文件里直接定义，而是拆到了 `sensor.xml`。
+
+根据 `filemap.txt`，`sensor.xml` 定义 IMU、接触力传感器、线速度传感器。
+
+这和 Python 侧的 sensor 读取链路直接对应：
+
+```text
+sensor.xml
+→ MuJoCo 编译 sensor
+→ data.sensordata
+→ mjx_env.get_sensor_data(...)
+→ base.py get_gyro/get_gravity/get_local_linvel/...
+→ joystick.py obs/reward/termination
+```
+
+`mjx_env.py` 中 `get_sensor_data()` 的逻辑是根据 sensor name 找 `sensor_id`、`sensor_adr`、`sensor_dim`，再从 `data.sensordata` 切片。
+
+所以 `sensor.xml` 是否被 include，直接决定：
+
+```text
+gyro_pelvis 是否存在
+upvector_torso 是否存在
+local_linvel_pelvis 是否存在
+left_foot_force 是否存在
+left_foot_floor_found 是否存在
+```
+
+如果没有 include `sensor.xml`，`joystick.py` 中大量 sensor 查询都会失败。
+
+---
+
+【4. 数据流：输入 → 处理 → 输出】
+
+### 4.1 当前 XML 文件内部组合流
+
+```text
+g1_mjx_feetonly.xml
+→ 当前 scene include
+→ 加入 G1 主体、关节、执行器、site、geom、keyframe
+
+当前 scene 自己定义 visual / asset / floor
+→ 加入可视化配置和平面地面
+
+sensor.xml
+→ 当前 scene include
+→ 加入 IMU、速度、接触、力传感器
+
+三者组合
+→ 完整 MuJoCo scene XML
+→ mujoco.MjModel
+```
+
+---
+
+### 4.2 从 scene XML 到 MJX 环境
+
+```text
+scene_mjx_feetonly.xml
+→ G1Env.__init__(xml_path)
+→ epath.Path(xml_path).read_text()
+→ mujoco.MjModel.from_xml_string(xml_text, assets=model_assets)
+→ self._mj_model
+→ self._mj_model.opt.timestep = self.sim_dt
+→ mjx.put_model(self._mj_model, impl=config.impl)
+→ self._mjx_model
+→ Joystick.reset / step 使用该模型
+```
+
+`base.py` 中正是用这条路径把 XML 编译成 `MjModel`，然后转为 `mjx.Model`。
+
+---
+
+### 4.3 从 floor 到脚部接触逻辑
+
+```text
+当前 XML:
+  <geom name="floor" type="plane" .../>
+
+sensor.xml:
+  foot-floor contact sensor
+  例如 left_foot_floor_found / right_foot_floor_found
+
+Joystick._post_init:
+  self._feet_floor_found_sensor = [
+      sensor("left_foot_floor_found").id,
+      sensor("right_foot_floor_found").id
+  ]
+
+Joystick.step:
+  contact = data.sensordata[sensor_adr] > 0
+
+contact
+→ contact_filt
+→ first_contact
+→ feet_air_time
+→ feet_air_time reward
+→ privileged_state contact
+```
+
+`joystick.py` 中确实通过 `left_foot_floor_found` / `right_foot_floor_found` 的 sensor id 构造 contact，并在 step 中更新 `feet_air_time`、`first_contact`、reward 和 privileged observation。
+
+---
+
+### 4.4 从 visual/asset 到 render
+
+```text
+visual / asset / floor material
+→ mujoco.MjModel
+→ mjx_env.render_array(...)
+→ mujoco.Renderer
+→ render image / video
+```
+
+`mjx_env.render_array()` 会用 `mujoco.Renderer(mj_model, ...)` 渲染轨迹。它渲染的是 MuJoCo `MjModel/MjData`，不是直接渲染 JAX 数组。
+
+---
+
+【5. 与其他文件的连接】
+
+### 5.1 与 `g1_mjx_feetonly.xml`
+
+当前文件通过：
+
+```xml
+<include file="g1_mjx_feetonly.xml"/>
+```
+
+依赖 G1 主模型。
+
+你需要从 `g1_mjx_feetonly.xml` 确认：
+
+```text
+1. 是否存在 keyframe "knees_bent"
+   → joystick.py 用它作为 init_q 和 default_pose
+
+2. 是否存在 29 个 actuator
+   → G1Env.action_size = mjx_model.nu
+   → joystick.py action/motor_targets 维度依赖它
+
+3. 是否存在 left_foot/right_foot site 和 geom
+   → FEET_SITES / FEET_GEOMS / contact sensor 依赖它
+
+4. 是否存在 imu_in_torso / imu_in_pelvis site
+   → joystick.py::_post_init() 明确查询它们
+
+5. foot geom 的 contype/conaffinity
+   → 决定是否能和 floor 接触
+```
+
+---
+
+### 5.2 与 `sensor.xml`
+
+当前文件通过：
+
+```xml
+<include file="sensor.xml"/>
+```
+
+接入所有传感器定义。
+
+你需要从 `sensor.xml` 确认：
+
+```text
+1. upvector_torso / upvector_pelvis
+2. gyro_pelvis
+3. accelerometer_pelvis
+4. local_linvel_pelvis
+5. global_linvel_pelvis / global_linvel_torso
+6. global_angvel_pelvis / global_angvel_torso
+7. left_foot_global_linvel / right_foot_global_linvel
+8. left_foot_force / right_foot_force
+9. left_foot_floor_found / right_foot_floor_found
+10. forbidden contact sensors:
+    right_foot_left_foot_found
+    left_foot_right_shin_found
+    right_foot_left_shin_found
+    left_hand_left_thigh_found
+    right_hand_right_thigh_found
+```
+
+因为这些名字都在 `joystick.py` 和 `base.py` 中被使用。`base.py` 的 sensor wrapper 会用 `g1_constants.py` 的前缀拼出 sensor name，例如 `gyro_pelvis`、`local_linvel_pelvis`，再交给 `mjx_env.get_sensor_data()` 读取。
+
+---
+
+### 5.3 与 `g1_constants.py`
+
+当前文件本身不被 `g1_constants.task_to_xml()` 直接指向。`g1_constants.py` 指向的是：
+
+```text
+scene_mjx_feetonly_flat_terrain.xml
+scene_mjx_feetonly_rough_terrain.xml
+```
+
+这一点非常关键。`g1_constants.py` 中 `task_to_xml()` 只支持 `"flat_terrain"` 和 `"rough_terrain"`，并分别返回 flat / rough scene XML。
+
+所以当前 `scene_mjx_feetonly.xml` 更像是：
+
+```text
+可复用基础模板 / 原始平面场景模板
+```
+
+而不是当前 registry 中两个环境的直接入口。
+
+如果 flat scene XML 与当前文件内容非常接近，那么它可能是 flat scene 的来源或模板。但这个结论需要直接查看 `scene_mjx_feetonly_flat_terrain.xml` 才能确认。
+
+---
+
+### 5.4 与 `base.py`
+
+`base.py::get_assets()` 会加载：
+
+```text
+consts.ROOT_PATH / "xmls" 下的 *.xml
+consts.ROOT_PATH / "xmls" / "assets"
+Menagerie unitree_g1 资源
+```
+
+这意味着当前 `scene_mjx_feetonly.xml`、`g1_mjx_feetonly.xml`、`sensor.xml` 等 XML 文件都会作为 assets 被读入，供 `mujoco.MjModel.from_xml_string(..., assets=...)` 解析 include 引用。
+
+连接关系：
+
+```text
+base.py.get_assets()
+→ 读取 xmls/*.xml
+→ assets["scene_mjx_feetonly.xml"]
+→ assets["g1_mjx_feetonly.xml"]
+→ assets["sensor.xml"]
+→ MuJoCo include 能解析这些文件
+```
+
+---
+
+### 5.5 与 `joystick.py`
+
+当前 XML 间接支撑 `joystick.py` 的以下逻辑：
+
+```text
+1. floor geom
+   → self._mj_model.geom("floor").id
+
+2. sensor.xml include
+   → foot-floor contact sensors
+   → IMU / velocity / force sensors
+
+3. g1_mjx_feetonly.xml include
+   → keyframe("knees_bent")
+   → 29 个关节/执行器
+   → feet sites
+   → hand sites
+   → shin/thigh/hand/foot geoms
+
+4. plane ground
+   → 机器人可站立、接触、行走
+```
+
+如果这个 XML 缺少 floor 或 sensor include，`Joystick` 初始化或 step 时会出错。`Joystick._post_init()` 中确实查询 floor、feet site、hand site、foot linvel sensor、手脚碰撞 sensor 等对象。
+
+---
+
+【6. 对训练/仿真/推理的影响】
+
+### 6.1 对训练的影响
+
+当前文件本身不定义 reward，但它会影响训练是否能正常进行。
+
+它提供：
+
+```text
+floor 平面
+sensor include
+G1 主模型 include
+```
+
+因此它间接影响：
+
+```text
+1. 机器人是否有地面接触
+2. foot-floor contact sensor 是否可用
+3. force / velocity / IMU sensor 是否可用
+4. observation 是否能构造
+5. reward 是否能计算
+6. termination 是否能判断
+```
+
+但当前文件不直接决定：
+
+```text
+tracking reward scale
+action scale
+control frequency
+episode length
+command sampling
+PPO 超参数
+```
+
+这些由 `joystick.py` 和训练配置决定。
+
+---
+
+### 6.2 对仿真的影响
+
+直接影响仿真的部分主要是：
+
+```xml
+<geom name="floor" size="0 0 0.01" type="plane" material="groundplane" contype="1" conaffinity="0"/>
+```
+
+它提供了一个无限平面地面。
+
+因此当前 scene 适合：
+
+```text
+平地站立 / 平地行走 / 平地 joystick tracking
+```
+
+它不提供：
+
+```text
+height field
+stairs
+rocks
+slopes
+obstacles
+可变地形
+```
+
+所以如果把这个文件直接作为任务 XML，环境是平面地形，而不是 rough terrain。
+
+---
+
+### 6.3 对推理 / 部署的影响
+
+这个文件只属于仿真模型，不会直接进入真实机器人部署。
+
+但训练出来的 policy 会受它影响：
+
+```text
+如果训练用这个 plane floor：
+  policy 主要适应平面接触
+
+如果训练用 rough terrain scene：
+  policy 才会接触高度场/粗糙地形
+```
+
+所以它影响 sim policy 的经验分布，但不是部署代码。
+
+---
+
+### 6.4 对 render / 可视化的影响
+
+`visual` 和 `asset` 对渲染影响明显：
+
+```text
+白色天空盒
+checker 地面纹理
+groundplane 材质
+默认视角 azimuth=140 elevation=-20
+高阴影质量 shadowsize=8192
+```
+
+如果你录制训练视频或 eval 视频，这些会影响画面效果。
+
+但如果你只跑 PPO rollout，不 render，则这些基本不影响训练速度和结果。
+
+---
+
+【7. shape / 维度 / 频率 / action 含义】
+
+这个文件本身没有给出：
+
+```text
+action 维度
+qpos 维度
+qvel 维度
+observation 维度
+privileged_state 维度
+reward scale
+ctrl_dt
+sim_dt
+episode_length
+```
+
+这些要看：
+
+```text
+g1_mjx_feetonly.xml
+joystick.py
+mjx_env.py
+```
+
+当前文件可以确认的结构性信息是：
+
+```text
+1. 场景包含一个 plane floor。
+2. floor geom 名称是 "floor"。
+3. include G1 主模型 g1_mjx_feetonly.xml。
+4. include sensor.xml。
+5. 没有 height field。
+6. 没有定义新的 actuator。
+7. 没有定义 control timestep。
+8. 没有定义 keyframe。
+9. 没有定义 reward 或 policy observation。
+```
+
+也就是说，它是场景组合文件，不是维度定义文件。
+
+---
+
+【8. 容易误解或需要注意的点】
+
+### 8.1 当前文件不是 `G1JoystickFlatTerrain` 的直接入口，至少从已读代码看不是
+
+`g1_constants.py` 中 `task_to_xml("flat_terrain")` 指向的是：
+
+```text
+scene_mjx_feetonly_flat_terrain.xml
+```
+
+不是：
+
+```text
+scene_mjx_feetonly.xml
+```
+
+所以不能直接说：
+
+```text
+G1JoystickFlatTerrain 一定加载当前文件
+```
+
+当前只能说：
+
+```text
+当前文件是基础场景模板；
+flat terrain 是否复用它，需要继续看 scene_mjx_feetonly_flat_terrain.xml。
+```
+
+---
+
+### 8.2 当前文件 include 了 `sensor.xml`，但 sensor 细节不在这里
+
+不要在这个文件里找：
+
+```text
+gyro_pelvis
+upvector_torso
+left_foot_force
+left_foot_floor_found
+```
+
+这些应该在 `sensor.xml` 里。
+
+当前文件只负责：
+
+```text
+把 sensor.xml 接入场景
+```
+
+---
+
+### 8.3 当前文件 include 了 G1 主模型，但机器人关节/执行器不在这里
+
+不要在这个文件里找：
+
+```text
+29 joints
+29 actuators
+knees_bent keyframe
+left_hip_pitch_joint
+right_knee_joint
+actuator ctrlrange
+```
+
+这些应该在 `g1_mjx_feetonly.xml` 里。
+
+---
+
+### 8.4 `floor` 名称是强约束
+
+`joystick.py` 会查：
+
+```python
+self._mj_model.geom("floor").id
+```
+
+当前文件定义了：
+
+```xml
+<geom name="floor" .../>
+```
+
+所以匹配。
+
+如果你复制这个 scene 并把 floor 改名为：
+
+```text
+ground
+terrain
+plane
+```
+
+而不改 `joystick.py` 或 sensor.xml，就可能导致初始化失败或 contact sensor 失效。
+
+---
+
+### 8.5 当前文件是平面地形，不是 rough terrain
+
+它的地面是：
+
+```xml
+type="plane"
+```
+
+没有：
+
+```text
+hfield
+mesh terrain
+height map
+rocky_texture
+```
+
+所以这个文件不是粗糙地形版本。
+
+rough terrain 需要看：
+
+```text
+scene_mjx_feetonly_rough_terrain.xml
+```
+
+`filemap.txt` 明确把 rough scene 描述为高度场地形和岩石纹理。
+
+---
+
+### 8.6 `contype/conaffinity` 需要和脚部 geom 配套看
+
+当前文件只给 floor 设置：
+
+```text
+contype=1
+conaffinity=0
+```
+
+但是否能和脚发生碰撞，需要看脚部 geom 的 `contype/conaffinity`。
+
+所以不能只凭当前文件判断：
+
+```text
+foot-floor collision 一定配置正确
+```
+
+必须检查 `g1_mjx_feetonly.xml`。
+
+---
+
+### 8.7 visual 配置可能影响 render 性能，但不影响训练主逻辑
+
+`shadowsize=8192` 是高质量阴影设置，可能让渲染更重。
+
+如果你在 WSL2 或 headless 环境中遇到 render 问题，不应先怀疑 PPO 或 MJX step，而应把渲染配置、OpenGL/EGL、MuJoCo Renderer 分开排查。
+
+---
+
+【9. 需要继续查看的文件】
+
+### 9.1 `scene_mjx_feetonly_flat_terrain.xml`
+
+必须看。
+
+原因：
+
+`g1_constants.task_to_xml("flat_terrain")` 指向的是 flat terrain scene，而不是当前基础模板。
+
+需要确认：
+
+```text
+1. 它是否和当前 scene_mjx_feetonly.xml 内容相同或高度相似。
+2. 它是否 include g1_mjx_feetonly.xml。
+3. 它是否 include sensor.xml。
+4. 它是否定义 geom name="floor"。
+5. 它是否只使用 plane 地面。
+```
+
+这能回答：
+
+```text
+当前 scene_mjx_feetonly.xml 是否只是旧模板？
+flat terrain 任务实际加载的 XML 和它有什么差异？
+```
+
+---
+
+### 9.2 `scene_mjx_feetonly_rough_terrain.xml`
+
+必须看。
+
+原因：
+
+rough terrain 任务实际加载它。需要确认 rough terrain 与当前平面模板的差别。
+
+重点看：
+
+```text
+1. 是否使用 hfield。
+2. hfield name / file 是否指向 assets/hfield.png。
+3. 是否使用 rocky_texture.png。
+4. floor geom 是否仍然叫 "floor"。
+5. foot-floor contact sensor 是否仍然能引用 floor。
+6. 地形 geom 的 contype/conaffinity 是否与脚部 geom 匹配。
+```
+
+---
+
+### 9.3 `g1_mjx_feetonly.xml`
+
+必须看。
+
+原因：
+
+当前文件 include 它，但不展开机器人本体。
+
+重点看：
+
+```text
+1. 29 个 actuator 的定义和顺序。
+2. 29 个 joint 的定义和顺序。
+3. keyframe "knees_bent"。
+4. site left_foot / right_foot / left_palm / right_palm。
+5. geom left_foot / right_foot / left_shin / right_shin / left_thigh / right_thigh。
+6. foot geom 的 contact type 和 affinity。
+7. actuator 是 position 目标还是 torque/motor。
+```
+
+这决定 `joystick.py` 中 action 到 motor target 的语义能否正确理解。
+
+---
+
+### 9.4 `sensor.xml`
+
+必须看。
+
+原因：
+
+当前文件 include 它，且 `joystick.py` 强依赖 sensor。
+
+重点看：
+
+```text
+1. IMU sensor：
+   gyro_pelvis
+   accelerometer_pelvis
+   upvector_pelvis
+   upvector_torso
+
+2. velocity sensor：
+   local_linvel_pelvis
+   global_linvel_pelvis
+   global_linvel_torso
+   global_angvel_pelvis
+   global_angvel_torso
+   left_foot_global_linvel
+   right_foot_global_linvel
+
+3. contact / force sensor：
+   left_foot_force
+   right_foot_force
+   left_foot_floor_found
+   right_foot_floor_found
+   right_foot_left_foot_found
+   left_foot_right_shin_found
+   right_foot_left_shin_found
+   left_hand_left_thigh_found
+   right_hand_right_thigh_found
+```
+
+---
+
+### 9.5 `joystick.py`
+
+需要回看它与 XML 的硬连接点。
+
+重点对照：
+
+```text
+1. _post_init() 查了哪些 body/site/geom/sensor。
+2. reset() 使用 keyframe("knees_bent")。
+3. _get_obs() 读取哪些 sensor。
+4. _get_reward() 读取哪些 sensor。
+5. _get_termination() 读取哪些 sensor。
+```
+
+---
+
+【10. 当前文件在整个 pipeline 中的定位总结】
+
+`scene_mjx_feetonly.xml` 可以概括为：
+
+```text
+G1 平面基础场景模板：
+include G1 主模型
++ 定义平面 floor
++ 定义可视化/地面材质
++ include sensor.xml
+```
+
+它的主要数据流是：
+
+```text
+scene_mjx_feetonly.xml
+→ include g1_mjx_feetonly.xml
+→ include sensor.xml
+→ define floor plane
+→ MuJoCo 编译
+→ MjModel
+→ MJX Model
+→ Joystick reset/step/obs/reward 可用
+```
+
+它是 **模型场景组合层**，不是训练逻辑层。
+
+当前最重要的判断是：
+
+```text
+它提供了一个平面地面场景模板；
+但当前 registry 的 flat/rough 任务是否直接使用它，需要看 g1_constants.py 和 flat/rough scene XML。
+```
+
+从已读 `g1_constants.py` 看，实际任务入口是 flat/rough 两个 scene XML；当前文件更像基础模板或中间版本。

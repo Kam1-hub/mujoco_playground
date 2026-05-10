@@ -1,0 +1,1954 @@
+【1. 这段代码在 pipeline 中的位置】
+
+`mjx_env.py` 是整个工程的 **MJX 环境基类层 / 通用环境底座层 / MuJoCo-MJX 工具层**。
+
+它比 `base.py` 更底层，比 `joystick.py` 更通用。前面几个文件的层级关系可以整理为：
+
+```text id="3qio57"
+registry.py
+→ locomotion.__init__.py
+→ joystick.py::Joystick
+→ base.py::G1Env
+→ mjx_env.py::MjxEnv / State / make_data / step
+→ mujoco.MjModel / mjx.Model / mjx.Data
+```
+
+它不属于 G1 专用任务逻辑层。这个文件并不知道 “G1 joystick reward 是什么”，也不知道 “feet_air_time 怎么算”。它负责提供所有 MJX 环境通用需要的底座能力：
+
+```text id="0kfx4m"
+1. 外部资源路径管理
+2. MuJoCo Menagerie 下载检查
+3. assets 加载
+4. mjx.Data 初始化
+5. 单步 / 多子步 MJX 仿真推进
+6. 环境 State 数据结构
+7. 抽象环境基类 MjxEnv
+8. observation_size 推断
+9. render
+10. sensor data 查询
+11. qpos / qvel index 工具函数
+```
+
+因此它是 **所有具体环境的通用支撑层**。`G1Env` 继承它，`Joystick` 再继承 `G1Env`。
+
+---
+
+【2. 核心作用】
+
+这个文件的核心作用可以概括成一句话：
+
+```text id="e0d4go"
+把 MuJoCo / MJX 环境运行所需的通用机制封装起来，让上层 G1Env 和 Joystick 只需要关心机器人模型与任务逻辑。
+```
+
+它接收的典型输入包括：
+
+```text id="yb4p55"
+config
+config_overrides
+mujoco.MjModel
+mjx.Model
+qpos / qvel / ctrl
+mjx.Data
+action
+trajectory
+sensor_name
+joint_names
+```
+
+它产生的典型输出包括：
+
+```text id="5o38s4"
+mjx.Data
+mjx_env.State
+Observation shape
+rendered image array
+sensor data slice
+qpos index ids
+qvel index ids
+```
+
+它被谁调用：
+
+```text id="bnwhzq"
+locomotion.__init__.py:
+  调用 ensure_menagerie_exists()
+
+base.py:
+  继承 MjxEnv
+  调用 update_assets()
+  使用 MENAGERIE_PATH
+  间接依赖 config/dt/sim_dt/n_substeps
+
+joystick.py:
+  调用 make_data()
+  调用 step()
+  使用 State
+  使用 get_sensor_data()
+  通过 G1Env 继承 MjxEnv 的 dt / sim_dt / n_substeps
+```
+
+它调用了谁：
+
+```text id="kgwwq6"
+subprocess / git:
+  下载 mujoco_menagerie
+
+mujoco:
+  Renderer / MjData / mj_forward / mjr_uploadHField
+
+mjx:
+  make_data / step
+
+jax:
+  lax.scan / eval_shape / tree_map
+
+flax.struct:
+  定义可 JAX pytree 化的 State
+```
+
+---
+
+【3. 总体数据流】
+
+结合目前已经看的文件，完整环境创建与运行的数据流是：
+
+```text id="hafec9"
+env_name
+→ registry.load(env_name)
+→ locomotion.load(env_name)
+→ ensure_menagerie_exists()
+→ Joystick(task="flat_terrain" / "rough_terrain")
+→ G1Env.__init__(xml_path, config, config_overrides)
+→ MjxEnv.__init__(config, config_overrides)
+→ G1Env 加载 XML + assets
+→ mujoco.MjModel
+→ mjx.put_model(...)
+→ mjx.Model
+→ Joystick.reset(rng)
+→ mjx_env.make_data(...)
+→ mjx.forward(...)
+→ State(data, obs, reward, done, metrics, info)
+→ PPO rollout 调用 Joystick.step(state, action)
+→ mjx_env.step(mjx_model, data, motor_targets, n_substeps)
+→ mjx.step 被重复执行 n_substeps 次
+→ 新 State
+```
+
+这个文件主要负责其中的：
+
+```text id="m8fr61"
+ensure_menagerie_exists
+update_assets
+make_data
+step
+State
+MjxEnv
+render
+sensor/index 工具
+```
+
+---
+
+【4. 路径与外部资源管理】
+
+文件开头定义了几个全局路径：
+
+```python id="rxs3t1"
+ROOT_PATH = epath.Path(__file__).parent
+EXTERNAL_DEPS_PATH = epath.Path(__file__).parent.parent / "external_deps"
+MENAGERIE_PATH = EXTERNAL_DEPS_PATH / "mujoco_menagerie"
+MENAGERIE_COMMIT_SHA = "1b86ece576591213e2b666ebf59508454200ca97"
+```
+
+这些变量属于 **资源路径层**。
+
+含义如下：
+
+```text id="x0cbff"
+ROOT_PATH:
+  当前 _src 目录路径，用于项目内部 XML / 资源定位。
+
+EXTERNAL_DEPS_PATH:
+  外部依赖目录，位于 _src 的上一级 external_deps。
+
+MENAGERIE_PATH:
+  MuJoCo Menagerie 仓库本地路径。
+
+MENAGERIE_COMMIT_SHA:
+  固定 Menagerie 仓库版本。
+```
+
+这和前面的 `base.py::get_assets()` 直接连接：
+
+```text id="3qx02g"
+mjx_env.MENAGERIE_PATH / "unitree_g1"
+→ base.py 加载 Unitree G1 Menagerie XML 和 assets
+```
+
+所以 `mjx_env.py` 是 Menagerie 路径的源头。
+
+---
+
+【5. `_clone_with_progress()`：下载 Menagerie 的底层函数】
+
+这个函数属于 **外部依赖下载工具层**。
+
+输入：
+
+```python id="xj1sl2"
+repo_url: str
+target_path: str
+commit_sha: str
+```
+
+作用：
+
+```text id="5plr1g"
+git clone 指定仓库
+→ 用 tqdm 显示 clone 进度
+→ clone 完成后 checkout 到指定 commit
+```
+
+它做两步：
+
+第一步：
+
+```python id="abnrxl"
+git clone --progress repo_url target_path
+```
+
+第二步：
+
+```python id="jgfp7p"
+git -C target_path checkout commit_sha
+```
+
+对 pipeline 的意义：
+
+```text id="labd5s"
+保证 G1 依赖的 MuJoCo Menagerie 资源存在，并且版本固定
+```
+
+这不是训练逻辑，但对复现实验很重要。因为 XML / mesh / actuator / sensor 如果随 Menagerie 版本变化，环境行为也可能变化。
+
+---
+
+【6. `ensure_menagerie_exists()`：外部模型资源检查入口】
+
+这个函数属于 **外部资源准备层**。
+
+作用：
+
+```text id="9qj7rg"
+检查 external_deps/mujoco_menagerie 是否存在
+如果不存在，则 clone DeepMind mujoco_menagerie 仓库
+并 checkout 到固定 commit
+```
+
+数据流：
+
+```text id="mo5nne"
+locomotion.load(...)
+→ mjx_env.ensure_menagerie_exists()
+→ 检查 MENAGERIE_PATH
+→ 若不存在：
+    创建 EXTERNAL_DEPS_PATH
+    git clone mujoco_menagerie
+    checkout MENAGERIE_COMMIT_SHA
+→ 后续 G1Env.get_assets() 可以读取 unitree_g1 资源
+```
+
+这个函数在前面的 `locomotion.__init__.py` 中被调用：
+
+```text id="3q7rc0"
+load(env_name, ...)
+→ mjx_env.ensure_menagerie_exists()
+→ 再实例化具体环境
+```
+
+所以正常走 registry 加载环境时，会先保证 Menagerie 存在。
+
+工程影响：
+
+```text id="652bpt"
+如果本地没有 mujoco_menagerie：
+  第一次 load 环境时会联网 git clone
+
+如果网络不可用 / Git 不可用 / GitHub 无法访问：
+  环境加载会失败
+
+如果绕过 registry 直接实例化 Joystick：
+  不一定会提前调用 ensure_menagerie_exists()
+```
+
+这对你的 WSL2 + agent 工作流很重要：这个函数可能触发网络下载，不是纯本地操作。
+
+---
+
+【7. `Observation` 和 `ObservationSize` 类型别名】
+
+```python id="0unli5"
+Observation = Union[jax.Array, Mapping[str, jax.Array]]
+ObservationSize = Union[int, Mapping[str, Union[Tuple[int, ...], int]]]
+```
+
+这定义了环境 observation 的通用格式。
+
+它允许两种 observation：
+
+第一种，单一数组：
+
+```text id="fig8dw"
+obs = jax.Array
+```
+
+第二种，字典形式：
+
+```text id="ei3szs"
+obs = {
+  "state": jax.Array,
+  "privileged_state": jax.Array,
+  ...
+}
+```
+
+这直接解释了为什么 `joystick.py::_get_obs()` 可以返回：
+
+```python id="q3bhd4"
+{
+    "state": state,
+    "privileged_state": privileged_state,
+}
+```
+
+也就是说，`mjx_env.py` 的设计已经允许 asymmetric observation / privileged observation。
+
+---
+
+【8. `update_assets()`：递归或非递归加载资源文件】
+
+这个函数属于 **XML/assets 读取工具层**。
+
+输入：
+
+```python id="x7bg2g"
+assets: Dict[str, Any]
+path: str | epath.Path
+glob: str = "*"
+recursive: bool = False
+```
+
+处理逻辑：
+
+```text id="yhij37"
+遍历 path.glob(glob)
+如果是文件：
+  assets[f.name] = f.read_bytes()
+如果是目录且 recursive=True：
+  递归 update_assets
+```
+
+输出：
+
+```text id="k8mf1v"
+原地更新 assets 字典
+```
+
+它在 `base.py::get_assets()` 中被调用：
+
+```text id="v8s9xt"
+update_assets(assets, consts.ROOT_PATH / "xmls", "*.xml")
+update_assets(assets, consts.ROOT_PATH / "xmls" / "assets")
+update_assets(assets, MENAGERIE_PATH / "unitree_g1", "*.xml")
+update_assets(assets, MENAGERIE_PATH / "unitree_g1" / "assets")
+```
+
+注意一个重要细节：
+
+```python id="5goqdo"
+assets[f.name] = f.read_bytes()
+```
+
+key 只使用文件名 `f.name`，不是完整相对路径。
+
+工程影响：
+
+```text id="u0a5ch"
+如果不同目录里有同名 asset 文件：
+  后加载的文件会覆盖先加载的同名 key
+
+如果 XML 里引用资源路径不是单纯文件名：
+  是否能解析取决于 MuJoCo from_xml_string 对 assets key 的匹配方式
+```
+
+当前文件没有处理重名冲突，也没有记录冲突警告。这是一个真实的潜在移植风险，但是否会发生要看具体 assets 文件名。
+
+---
+
+【9. `make_data()`：初始化 MJX Data】
+
+这是当前文件非常关键的函数。它属于 **MJX data 初始化层**。
+
+输入：
+
+```python id="vcp407"
+model: mujoco.MjModel
+qpos: Optional[jax.Array]
+qvel: Optional[jax.Array]
+ctrl: Optional[jax.Array]
+act: Optional[jax.Array]
+mocap_pos: Optional[jax.Array]
+mocap_quat: Optional[jax.Array]
+impl: Optional[str]
+naconmax: Optional[int]
+naccdmax: Optional[int]
+njmax: Optional[int]
+device: Optional[jax.Device]
+```
+
+输出：
+
+```python id="wrvmyz"
+mjx.Data
+```
+
+它的核心逻辑：
+
+```text id="mm0squ"
+mjx.make_data(model, impl=..., naconmax=..., naccdmax=..., njmax=..., device=...)
+→ 得到空的 mjx.Data
+→ 如果传了 qpos，则 data.replace(qpos=qpos)
+→ 如果传了 qvel，则 data.replace(qvel=qvel)
+→ 如果传了 ctrl，则 data.replace(ctrl=ctrl)
+→ 如果传了 act，则 data.replace(act=act)
+→ 如果传了 mocap_pos / mocap_quat，则 reshape 后写入
+→ 返回 data
+```
+
+在 `joystick.py::reset()` 中，它被这样使用：
+
+```text id="ua2u39"
+qpos / qvel / ctrl
+→ mjx_env.make_data(...)
+→ mjx.Data
+→ mjx.forward(self.mjx_model, data)
+→ 传感器和派生量可用
+```
+
+具体连接：
+
+```text id="pg51vx"
+Joystick.reset
+→ qpos = randomized initial qpos
+→ qvel = randomized initial qvel
+→ ctrl = qpos[7:]
+→ make_data(self.mj_model, qpos, qvel, ctrl, impl, naconmax, njmax)
+→ mjx.Data
+```
+
+注意这里传入的是：
+
+```python id="ilwfwc"
+model: mujoco.MjModel
+```
+
+不是 `mjx.Model`。这是因为 `mjx.make_data()` 接收的是 MuJoCo model 或可由 MJX 处理的 model 参数。当前代码直接用 `mujoco.MjModel` 创建 `mjx.Data`。
+
+---
+
+### 9.1 `naconmax / naccdmax / njmax` 的作用
+
+当前文件只是把这些参数传给 `mjx.make_data()`，没有解释它们的物理含义。
+
+在 `joystick.py::default_config()` 中有：
+
+```python id="i1a6sq"
+naconmax = 8 * 8192
+njmax = 29 * 2 + 8 * 4
+```
+
+当前能确认的数据流是：
+
+```text id="5yb1zu"
+default_config.naconmax / njmax
+→ Joystick.reset
+→ make_data(...)
+→ mjx.make_data(...)
+→ mjx.Data 的 contact / constraint 相关容量
+```
+
+不能仅凭这个文件断言这些数值为什么这样设置。合理推断是与 MJX 接触/约束 buffer 容量有关，但要确认需要查 MJX 文档或 MuJoCo Playground 原始代码背景。
+
+---
+
+### 9.2 `mocap_pos / mocap_quat` reshape
+
+```python id="ni6z1q"
+data = data.replace(mocap_pos=mocap_pos.reshape(model.nmocap, -1))
+data = data.replace(mocap_quat=mocap_quat.reshape(model.nmocap, -1))
+```
+
+这说明该工具函数也支持 mocap body 初始化。
+
+当前 G1 `joystick.py` 没有传 mocap 参数，所以这部分对当前 joystick 任务不生效，但对其他环境可能有用。
+
+---
+
+【10. `step()`：通用 MJX 多子步推进函数】
+
+这是当前文件另一个核心函数。它属于 **MJX step 封装层**。
+
+函数签名：
+
+```python id="n0czxw"
+def step(
+    model: mjx.Model,
+    data: mjx.Data,
+    action: jax.Array,
+    n_substeps: int = 1,
+) -> mjx.Data:
+```
+
+输入：
+
+```text id="paqp7n"
+model:
+  mjx.Model，JAX/MJX 物理模型
+
+data:
+  当前 mjx.Data
+
+action:
+  要写入 data.ctrl 的控制量
+
+n_substeps:
+  每个控制步包含多少个仿真步
+```
+
+输出：
+
+```text id="za8t5e"
+推进 n_substeps 后的新 mjx.Data
+```
+
+核心逻辑：
+
+```python id="6yhze3"
+def single_step(data, _):
+    data = data.replace(ctrl=action)
+    data = mjx.step(model, data)
+    return data, None
+
+return jax.lax.scan(single_step, data, (), n_substeps)[0]
+```
+
+数据流：
+
+```text id="p68p9p"
+action
+→ data.ctrl = action
+→ mjx.step(model, data)
+→ 重复 n_substeps 次
+→ new data
+```
+
+在 `joystick.py::step()` 中，对应关系是：
+
+```text id="hh63ml"
+policy action
+→ motor_targets = default_pose + action * action_scale
+→ mjx_env.step(self.mjx_model, state.data, motor_targets, self.n_substeps)
+→ 每个 control step 内重复 mjx.step n_substeps 次
+```
+
+---
+
+### 10.1 这个 `action` 实际上是 `ctrl`
+
+当前 `mjx_env.step()` 不知道 action 的语义。它只做：
+
+```python id="bd8535"
+data = data.replace(ctrl=action)
+```
+
+因此，对 `mjx_env.step()` 来说，传入的 `action` 就是 MuJoCo actuator control `ctrl`。
+
+在 G1 joystick 任务中，传入的是：
+
+```python id="ctcug0"
+motor_targets = default_pose + action * action_scale
+```
+
+所以：
+
+```text id="v8c144"
+policy action
+≠ data.ctrl
+
+policy action
+→ Joystick 转成 motor_targets
+→ mjx_env.step 写入 data.ctrl
+```
+
+这个分层很重要：
+
+```text id="cx3y2y"
+mjx_env.step:
+  通用物理推进，不负责 action scaling
+
+joystick.step:
+  负责把策略 action 解释成电机目标
+```
+
+---
+
+### 10.2 `n_substeps` 的来源
+
+`n_substeps` 在 `MjxEnv` 里定义：
+
+```python id="j9okc1"
+return int(round(self.dt / self.sim_dt))
+```
+
+结合 `joystick.py::default_config()`：
+
+```text id="8zk0oa"
+ctrl_dt = 0.02
+sim_dt = 0.002
+n_substeps = round(0.02 / 0.002) = 10
+```
+
+所以 G1 joystick 默认：
+
+```text id="pzk8xi"
+一个 RL/control step = 10 个 MJX simulation steps
+控制频率 = 50 Hz
+仿真频率 = 500 Hz
+```
+
+这个结论由 `joystick.py` 的 config 和当前 `MjxEnv.n_substeps` 共同确认。
+
+---
+
+### 10.3 为什么用 `jax.lax.scan`
+
+源码直接事实：
+
+```text id="x4tzqz"
+它用 jax.lax.scan 重复执行 single_step
+```
+
+根据 JAX 结构可以合理推断：
+
+```text id="2gr1zq"
+这样比 Python for loop 更适合 JIT 编译
+可以把多个仿真子步编译成一个 JAX computation
+便于在 GPU/TPU 上批量 rollout
+```
+
+但当前文件没有写性能解释，这是根据 JAX 编程范式的合理解释，不是源码注释事实。
+
+---
+
+【11. `State`：训练和推理时的环境状态结构】
+
+```python id="zbfp3y"
+@struct.dataclass
+class State:
+    data: mjx.Data
+    obs: Observation
+    reward: jax.Array
+    done: jax.Array
+    metrics: Dict[str, jax.Array]
+    info: Dict[str, Any]
+```
+
+这是整个环境接口最关键的数据结构。
+
+它属于 **环境 step API 层 / rollout 状态层**。
+
+每次 reset / step 都返回一个 `State`：
+
+```text id="7er9yz"
+reset(rng) -> State
+step(state, action) -> State
+```
+
+字段含义：
+
+```text id="on83xz"
+data:
+  mjx.Data，完整物理状态，包括 qpos/qvel/ctrl/sensordata/site_xpos 等。
+
+obs:
+  policy/critic 输入。
+  可以是 jax.Array，也可以是 dict。
+  G1 joystick 中是 {"state", "privileged_state"}。
+
+reward:
+  当前 step 的标量 reward。
+
+done:
+  当前 episode 是否结束。
+
+metrics:
+  日志指标，例如 reward 子项、swing_peak 等。
+
+info:
+  环境内部状态缓存，例如 rng、command、last_act、phase、feet_air_time。
+```
+
+为什么用 `flax.struct.dataclass`：
+
+源码事实：
+
+```text id="yjyubd"
+State 被定义为 flax.struct.dataclass
+```
+
+合理推断：
+
+```text id="3q0t97"
+这是为了让 State 成为 JAX pytree
+支持 JIT / vmap / scan / pmap 等 JAX 变换
+同时通过 .replace(...) 进行函数式更新
+```
+
+你在 `joystick.py` 里已经看到：
+
+```python id="97h4hd"
+state = state.replace(data=data, obs=obs, reward=reward, done=done)
+```
+
+这就是不可变 dataclass 风格。
+
+---
+
+【12. `State.tree_replace()` 和 `_tree_replace()`】
+
+`tree_replace()` 提供了通过字符串路径替换 State 内部字段的能力。
+
+输入：
+
+```python id="0kxs01"
+params: Dict[str, Optional[jax.typing.ArrayLike]]
+```
+
+例如可能支持类似：
+
+```text id="9ggvh6"
+{"data.qpos": new_qpos}
+{"obs.state": new_obs}
+```
+
+处理逻辑：
+
+```text id="1mdk4o"
+遍历 params
+→ 按 "." 切分路径
+→ 递归进入 struct.dataclass
+→ 调用 replace 替换对应字段
+```
+
+限制：
+
+```python id="lhk62u"
+if len(attr) > 1 and isinstance(getattr(base, attr[0]), list):
+    raise NotImplementedError("List attributes are not supported.")
+```
+
+也就是说：
+
+```text id="xhugdh"
+支持嵌套 dataclass / mapping 风格字段替换
+不支持替换 list 内部元素
+```
+
+当前 G1 `joystick.py` 没有直接调用 `tree_replace()`，但 wrapper、训练后端或测试脚本可能会用它修改 batched state 或某些内部变量。
+
+---
+
+【13. `MjxEnv`：所有 playground 环境的抽象基类】
+
+这是当前文件最核心的类。
+
+```python id="tvx13c"
+class MjxEnv(abc.ABC):
+    """Base class for playground environments."""
+```
+
+它属于 **MJX 环境抽象接口层**。
+
+它定义了所有子环境必须实现的接口：
+
+```text id="elhh46"
+reset(rng) -> State
+step(state, action) -> State
+xml_path
+action_size
+mj_model
+mjx_model
+```
+
+`G1Env` 继承它并实现：
+
+```text id="yj54d4"
+xml_path
+action_size
+mj_model
+mjx_model
+```
+
+`Joystick` 继承 `G1Env` 并实现：
+
+```text id="d3cr9d"
+reset
+step
+```
+
+所以抽象接口的完整实现分布是：
+
+```text id="4o06g5"
+MjxEnv:
+  定义抽象接口
+
+G1Env:
+  实现模型相关 property
+
+Joystick:
+  实现 reset / step 任务逻辑
+```
+
+---
+
+【14. `MjxEnv.__init__()`：config 处理与时间参数】
+
+```python id="91u2hr"
+def __init__(self, config, config_overrides=None):
+    self._config = config.lock()
+    if config_overrides:
+      self._config.update_from_flattened_dict(config_overrides)
+
+    self._ctrl_dt = config.ctrl_dt
+    self._sim_dt = config.sim_dt
+```
+
+这是 config 进入环境对象的入口。
+
+输入：
+
+```text id="lktezr"
+config:
+  默认环境配置，来自 joystick.default_config()
+
+config_overrides:
+  外部覆盖配置，通常来自训练脚本或命令行
+```
+
+处理：
+
+```text id="11ozvp"
+config.lock()
+→ 保存到 self._config
+→ 如果有 config_overrides，调用 update_from_flattened_dict
+→ 读取 ctrl_dt / sim_dt
+```
+
+这里有一个需要重点注意的地方：
+
+```python id="m5oll3"
+self._ctrl_dt = config.ctrl_dt
+self._sim_dt = config.sim_dt
+```
+
+它读取的是传入的 `config`，而不是 `self._config`。如果 `update_from_flattened_dict(config_overrides)` 修改的是同一个 ConfigDict 对象，那么 `config.ctrl_dt` 会同步改变；如果不是原地修改，就可能有不一致风险。
+
+根据 `ConfigDict` 常见行为，`update_from_flattened_dict` 通常是原地更新，所以大概率正常。但如果你遇到 `ctrl_dt/sim_dt` override 不生效的问题，这里是需要检查的地方。
+
+---
+
+### 14.1 `config_overrides` 的格式
+
+源码使用：
+
+```python id="4tvh7h"
+self._config.update_from_flattened_dict(config_overrides)
+```
+
+这说明 overrides 不是普通嵌套 dict，而是 **flattened dict** 风格。
+
+典型形式可能是：
+
+```python id="nt9jni"
+{
+  "reward_config.scales.tracking_lin_vel": 2.0,
+  "noise_config.level": 0.0,
+  "ctrl_dt": 0.02,
+}
+```
+
+而不是：
+
+```python id="ah4090"
+{
+  "reward_config": {
+    "scales": {
+      "tracking_lin_vel": 2.0
+    }
+  }
+}
+```
+
+具体支持格式以 `ml_collections.ConfigDict.update_from_flattened_dict` 为准。当前源码能确认的是：它调用 flattened dict 更新接口。
+
+---
+
+### 14.2 时间参数属性
+
+`MjxEnv` 提供：
+
+```python id="bmwjtb"
+@property
+def dt(self) -> float:
+    return self._ctrl_dt
+
+@property
+def sim_dt(self) -> float:
+    return self._sim_dt
+
+@property
+def n_substeps(self) -> int:
+    return int(round(self.dt / self.sim_dt))
+```
+
+这三个属性是整个环境时间尺度的基础。
+
+结合 `joystick.default_config()`：
+
+```text id="jxqi0e"
+dt = ctrl_dt = 0.02
+sim_dt = 0.002
+n_substeps = round(0.02 / 0.002) = 10
+```
+
+在 `joystick.py` 中：
+
+```text id="g3dpnc"
+reset:
+  phase_dt = 2*pi*self.dt*gait_freq
+  push_interval_steps = round(push_interval / self.dt)
+
+step:
+  feet_air_time += self.dt
+  reward = sum(rewards) * self.dt
+  mjx_env.step(..., self.n_substeps)
+```
+
+所以 `MjxEnv` 的 `dt/sim_dt/n_substeps` 会直接影响：
+
+```text id="y0o2pw"
+控制频率
+仿真子步数
+reward 积分尺度
+步态相位推进速度
+脚离地时间统计
+push interval step 数
+```
+
+---
+
+【15. `observation_size`：通过 JAX shape inference 推断 obs 维度】
+
+```python id="4yqr32"
+abstract_state = jax.eval_shape(self.reset, jax.random.PRNGKey(0))
+obs = abstract_state.obs
+if isinstance(obs, Mapping):
+    return jax.tree_util.tree_map(lambda x: x.shape, obs)
+return obs.shape[-1]
+```
+
+这个属性属于 **环境接口元信息层**。
+
+作用：
+
+```text id="psxams"
+不实际跑完整数值仿真
+而是用 jax.eval_shape 推断 reset 输出 State 的 obs shape
+```
+
+对 G1 joystick 来说，`obs` 是 dict，所以返回应该类似：
+
+```python id="ebm53t"
+{
+  "state": (103,),
+  "privileged_state": (...,),
+}
+```
+
+`state = 103` 是前面根据 `joystick.py` 能算出的。`privileged_state` 需要结合 feet sensor 维度确认。
+
+它会被谁用：
+
+```text id="usyl9o"
+训练 wrapper
+网络初始化
+actor/critic 输入维度推断
+日志或 sanity check
+```
+
+注意点：
+
+```text id="x1v4dp"
+observation_size 会调用 self.reset 的 shape tracing
+因此 reset 必须能被 jax.eval_shape 正确 trace
+reset 里不能依赖非 JAX-friendly 的动态 Python 副作用
+```
+
+`Joystick.reset()` 基本使用 JAX array 和 MJX API，符合这个设计。
+
+---
+
+【16. `model_assets` property】
+
+```python id="d9o5ef"
+@property
+def model_assets(self) -> Dict[str, Any]:
+    if hasattr(self, "_model_assets"):
+      return self._model_assets
+    raise NotImplementedError(...)
+```
+
+这个属性用于暴露模型资源字典。
+
+在 `G1Env.__init__()` 中：
+
+```python id="2f6ldc"
+self._model_assets = get_assets()
+```
+
+所以 G1 环境可以正常访问 `model_assets`。
+
+如果某个子环境没有定义 `_model_assets`，调用这个 property 会报错。
+
+---
+
+【17. `render()` 和 `render_array()`：渲染轨迹】
+
+`MjxEnv.render()` 是实例方法：
+
+```python id="w0f4ap"
+def render(self, trajectory, height=240, width=320, camera=None, ...)
+    return render_array(self.mj_model, trajectory, ...)
+```
+
+它只是把当前环境的 `mj_model` 和 trajectory 传给 `render_array()`。
+
+`render_array()` 是实际渲染函数。
+
+输入：
+
+```text id="gvs4oq"
+mj_model
+trajectory: List[State] 或单个 State
+height / width
+camera
+scene_option
+modify_scene_fns
+hfield_data
+```
+
+输出：
+
+```text id="50hexw"
+np.ndarray 图像
+或图像列表
+```
+
+核心逻辑：
+
+```text id="57oam4"
+创建 mujoco.Renderer
+对每个 State:
+  创建 mujoco.MjData(mj_model)
+  把 state.data.qpos/qvel/mocap/xfrc_applied 拷贝到 MjData
+  mujoco.mj_forward(mj_model, d)
+  renderer.update_scene(...)
+  renderer.render()
+关闭 renderer
+返回图像
+```
+
+重要点：
+
+```text id="wr840j"
+渲染使用的是 mujoco.MjData，不是 mjx.Data 直接渲染
+它把 mjx.Data 中的 qpos/qvel 等字段复制回 MuJoCo MjData
+然后调用 mujoco.mj_forward 和 renderer
+```
+
+也就是说：
+
+```text id="ou4tu6"
+训练 / rollout:
+  用 MJX
+
+渲染 / 可视化:
+  把 MJX state 转成 MuJoCo MjData，再用 MuJoCo Renderer 渲染
+```
+
+---
+
+### 17.1 `hfield_data` 支持
+
+```python id="xvbvgk"
+if hfield_data is not None:
+    mj_model.hfield_data = hfield_data.reshape(mj_model.hfield_data.shape)
+    mujoco.mjr_uploadHField(mj_model, renderer._mjr_context, 0)
+```
+
+这说明渲染函数支持动态修改 height field 数据并上传到 renderer。
+
+当前 G1 joystick 文件没有显式使用 `hfield_data`，但如果 rough terrain 使用 height field，这个接口可能用于渲染更新后的地形。
+
+需要注意：这里修改的是传入的 `mj_model.hfield_data`，属于渲染侧操作，不是训练 rollout 中的 MJX model 更新。
+
+---
+
+### 17.2 WSL2 / headless 渲染注意点
+
+源码里使用：
+
+```python id="sc13ju"
+mujoco.Renderer(...)
+```
+
+这通常依赖 EGL / OpenGL / OSMesa 等渲染后端。当前文件没有处理 headless fallback，也没有捕获 renderer 初始化失败。
+
+所以工程风险是：
+
+```text id="mnljid"
+训练可能正常
+render 可能因为 WSL2/OpenGL/EGL 配置失败
+```
+
+这不影响 PPO rollout 本身，但影响视频导出和可视化调试。
+
+---
+
+【18. `get_sensor_data()`：根据 sensor 名称读取 sensordata】
+
+这是 `base.py` 中所有 sensor wrapper 的底层。
+
+函数签名：
+
+```python id="h7n24m"
+def get_sensor_data(model: mujoco.MjModel, data: mjx.Data, sensor_name: str) -> jax.Array:
+```
+
+处理逻辑：
+
+```text id="q99ylm"
+sensor_name
+→ model.sensor(sensor_name).id
+→ model.sensor_adr[sensor_id]
+→ model.sensor_dim[sensor_id]
+→ data.sensordata[sensor_adr : sensor_adr + sensor_dim]
+→ 返回该 sensor 对应的 jax.Array
+```
+
+这解释了 `base.py` 里的函数：
+
+```python id="wiayyu"
+get_gyro(data, "pelvis")
+→ get_sensor_data(mj_model, data, "gyro_pelvis" 或类似名字)
+```
+
+实际 sensor 名称由 `g1_constants.py` 的前缀决定。
+
+对 `joystick.py` 的影响：
+
+```text id="7b22dl"
+_get_obs:
+  get_gyro
+  get_accelerometer
+  get_gravity
+  get_local_linvel
+  get_global_angvel
+
+_get_reward:
+  get_local_linvel
+  get_global_linvel
+  get_global_angvel
+  get_gravity
+  get_sensor_data(left_foot_force/right_foot_force)
+
+_get_termination:
+  get_gravity
+```
+
+工程风险：
+
+```text id="k7fnma"
+如果 XML 没有 sensor_name：
+  model.sensor(sensor_name) 会失败
+
+如果 sensor_dim 和代码预期不一致：
+  obs shape / reward 计算可能出错
+
+如果 XML sensor 顺序变化：
+  只要名字不变，sensor_adr 会自动定位，一般没问题
+```
+
+---
+
+【19. `dof_width()` 和 `qpos_width()`：MuJoCo joint 类型维度工具】
+
+这两个函数属于 **joint index 工具层**。
+
+MuJoCo 中不同 joint 类型在 `qpos` 和 `qvel` 中占用维度不同：
+
+```python id="xsvhit"
+dof_width:
+  {0: 6, 1: 3, 2: 1, 3: 1}
+
+qpos_width:
+  {0: 7, 1: 4, 2: 1, 3: 1}
+```
+
+对应 MuJoCo 常见 joint 类型：
+
+```text id="q10u4m"
+free joint:
+  qpos width = 7
+  qvel width = 6
+
+ball joint:
+  qpos width = 4
+  qvel width = 3
+
+slide / hinge:
+  qpos width = 1
+  qvel width = 1
+```
+
+当前文件没有显式写 joint 类型名字，只用整数映射。它支持传入：
+
+```python id="czu7np"
+Union[int, mujoco.mjtJoint]
+```
+
+如果是 `mujoco.mjtJoint`，先取 `.value`。
+
+用途：为下面的 `get_qpos_ids()` 和 `get_qvel_ids()` 计算每个 joint 覆盖的 index 范围。
+
+---
+
+【20. `get_qpos_ids()`：根据 joint 名称获取 qpos indices】
+
+输入：
+
+```python id="1mwgoh"
+model: mujoco.MjModel
+joint_names: Sequence[str]
+```
+
+处理：
+
+```text id="ouq1h7"
+对每个 joint name:
+  model.joint(jnt_name).id
+  model.jnt_type[jnt]
+  model.jnt_qposadr[jnt]
+  qdim = qpos_width(jnt_type)
+  index_list.extend(range(qadr, qadr + qdim))
+→ 返回 np.ndarray
+```
+
+输出：
+
+```text id="s48y7f"
+这些 joint 在 qpos 中对应的 index 列表
+```
+
+用途：
+
+```text id="ljy59e"
+如果你想从完整 qpos 中抽取某几个 joint 的位置
+或者构造 reward / observation 子集
+可以用它避免手写 index
+```
+
+当前 `joystick.py` 没有用这个函数，而是手动：
+
+```python id="yk1cgw"
+self._mj_model.joint(...).qposadr - 7
+```
+
+所以这个工具在当前 G1 joystick 中没有直接接上，但对其他环境或扩展任务有用。
+
+---
+
+【21. `get_qvel_ids()`：根据 joint 名称获取 qvel indices】
+
+类似 `get_qpos_ids()`，但针对 `qvel`：
+
+```text id="11w40r"
+joint name
+→ joint id
+→ joint type
+→ model.jnt_dofadr[jnt]
+→ dof_width(jnt_type)
+→ qvel index range
+```
+
+输出：
+
+```text id="0b3843"
+这些 joint 在 qvel 中对应的 index 列表
+```
+
+它处理了 free joint / ball joint / hinge / slide 的维度差异。
+
+对 G1 来说：
+
+```text id="uccyxk"
+floating base 的 qpos 是 7 维
+floating base 的 qvel 是 6 维
+普通 hinge 关节 qpos/qvel 各 1 维
+```
+
+这也解释了为什么 `joystick.py` 中常见：
+
+```python id="eyuxn0"
+qpos[7:]
+qvel[6:]
+```
+
+即：
+
+```text id="n0ec1j"
+qpos 前 7 维是 floating base
+qvel 前 6 维是 floating base
+后面才是关节部分
+```
+
+---
+
+【22. shape / 维度 / 频率信息】
+
+这个文件本身能直接确认或和前面文件联合确认的内容如下。
+
+### 22.1 时间频率
+
+`MjxEnv` 定义：
+
+```python id="yie1j8"
+dt = ctrl_dt
+sim_dt = sim_dt
+n_substeps = round(dt / sim_dt)
+```
+
+结合 `joystick.py` 默认配置：
+
+```text id="kq2r78"
+ctrl_dt = 0.02
+sim_dt = 0.002
+n_substeps = 10
+控制频率 = 50 Hz
+仿真频率 = 500 Hz
+```
+
+---
+
+### 22.2 observation shape
+
+`MjxEnv.observation_size` 通过 `reset` 自动推断，不在这里写死。
+
+结合 `joystick.py`：
+
+```text id="bes7ft"
+obs 是 dict:
+  obs["state"]
+  obs["privileged_state"]
+```
+
+`state` 维度前面可算为：
+
+```text id="jzyewb"
+3 + 3 + 3 + 3 + 29 + 29 + 29 + 4 = 103
+```
+
+但 `mjx_env.py` 自己不包含 G1 observation 维度。
+
+---
+
+### 22.3 action shape
+
+`MjxEnv` 只要求子类实现：
+
+```python id="ko51z3"
+action_size
+```
+
+`G1Env` 中实现为：
+
+```text id="hjml9c"
+action_size = mjx_model.nu
+```
+
+因此 action 维度最终由 XML actuator 数量决定。
+
+`mjx_env.step()` 不检查 action shape，只是写入：
+
+```python id="ci7wh2"
+data.ctrl = action
+```
+
+所以如果 action shape 和 `model.nu` 不一致，错误大概率会在 JAX/MJX 执行或编译时报出。
+
+---
+
+### 22.4 qpos/qvel 宽度
+
+当前文件直接给出 MuJoCo joint 类型到 qpos/qvel 维度的映射：
+
+```text id="mva5x7"
+free joint:
+  qpos 7
+  qvel 6
+
+ball joint:
+  qpos 4
+  qvel 3
+
+hinge/slide:
+  qpos 1
+  qvel 1
+```
+
+这对理解 G1 的：
+
+```text id="qrdlad"
+qpos[7:]
+qvel[6:]
+```
+
+非常关键。
+
+---
+
+【23. 与其他文件的连接】
+
+### 23.1 与 `locomotion.__init__.py`
+
+连接点：
+
+```text id="kllr61"
+locomotion.load(...)
+→ mjx_env.ensure_menagerie_exists()
+```
+
+作用：
+
+```text id="kdzc6l"
+加载环境前保证 MuJoCo Menagerie 存在
+```
+
+如果不走 registry，这一步可能被绕过。
+
+---
+
+### 23.2 与 `base.py`
+
+连接点：
+
+```text id="sb1tg6"
+G1Env(mjx_env.MjxEnv)
+```
+
+`base.py` 使用当前文件提供的：
+
+```text id="cl3plw"
+MjxEnv
+MENAGERIE_PATH
+update_assets
+get_sensor_data
+```
+
+具体连接：
+
+```text id="q516rb"
+G1Env.__init__
+→ super().__init__(config, config_overrides)
+→ 获得 self._config / dt / sim_dt
+→ update_assets 加载资源
+→ MENAGERIE_PATH 定位 Menagerie
+→ get_sensor_data 被传感器 wrapper 使用
+```
+
+---
+
+### 23.3 与 `joystick.py`
+
+连接点非常多：
+
+```text id="d81hzm"
+reset:
+  mjx_env.make_data
+  mjx_env.State
+
+step:
+  mjx_env.step
+  mjx_env.State
+
+reward:
+  mjx_env.get_sensor_data
+
+父类属性:
+  self.dt
+  self.sim_dt
+  self.n_substeps
+```
+
+最关键的数据流：
+
+```text id="lh3q4y"
+Joystick.step
+→ motor_targets
+→ mjx_env.step(mjx_model, data, motor_targets, n_substeps)
+→ data.ctrl = motor_targets
+→ mjx.step 重复 n_substeps
+→ 新 mjx.Data
+```
+
+---
+
+### 23.4 与 training wrapper / PPO
+
+当前文件没有直接 import Brax PPO 或 RSL-RL，但它定义了它们会依赖的环境接口：
+
+```text id="s8owjj"
+env.reset(rng) -> State
+env.step(state, action) -> State
+env.action_size
+env.observation_size
+State.obs
+State.reward
+State.done
+State.metrics
+```
+
+Brax/JAX PPO 一般会围绕这些字段收集 rollout。
+
+RSL-RL 如果要接这个环境，需要额外 wrapper 把：
+
+```text id="0nf502"
+JAX State / obs / reward / done
+→ Torch tensor / VecEnv 接口
+```
+
+当前文件没有做 JAX→Torch 转换。
+
+---
+
+【24. 对训练 / 仿真 / 推理的实际影响】
+
+### 24.1 对训练 rollout 的影响
+
+`mjx_env.step()` 决定了每个控制步内部如何推进物理：
+
+```text id="1sumuc"
+写入 ctrl
+→ 执行 n_substeps 次 mjx.step
+```
+
+所以它是实际仿真的核心封装。
+
+---
+
+### 24.2 对频率和 reward 尺度的影响
+
+`dt/sim_dt/n_substeps` 由 `MjxEnv` 管理。
+
+在 `Joystick` 中：
+
+```text id="b42g9l"
+reward *= self.dt
+phase_dt = 2*pi*self.dt*gait_freq
+feet_air_time += self.dt
+push_interval_steps = round(push_interval / self.dt)
+```
+
+所以改 `ctrl_dt` 不只是改变仿真频率，还会改变：
+
+```text id="cv0woi"
+reward 数值尺度
+gait phase 推进
+脚离地时间统计
+command/push 的 step 换算
+```
+
+---
+
+### 24.3 对 observation 接口的影响
+
+`Observation` 支持 dict，这是 privileged observation 能存在的前提。
+
+如果训练后端不支持 dict obs，就需要 wrapper 处理：
+
+```text id="2tbcua"
+obs["state"] 给 actor
+obs["privileged_state"] 给 critic
+```
+
+当前文件只允许这种结构存在，不决定如何使用。
+
+---
+
+### 24.4 对模型资源复现的影响
+
+`MENAGERIE_COMMIT_SHA` 固定外部模型版本。
+
+这对复现有正向作用：
+
+```text id="dfurot"
+避免 Menagerie 上游更新导致 XML/assets 变化
+```
+
+但也有工程依赖：
+
+```text id="k4r7qu"
+第一次运行可能需要联网 clone
+环境部署时需要 Git
+代理/网络失败会导致 load 失败
+```
+
+---
+
+### 24.5 对渲染的影响
+
+`render_array()` 用 MuJoCo Renderer 渲染轨迹。
+
+训练和渲染是分开的：
+
+```text id="y6c9cp"
+MJX 用于高速仿真
+MuJoCo Renderer 用于可视化
+```
+
+因此：
+
+```text id="3f0eyz"
+训练能跑 ≠ 渲染一定能跑
+渲染失败 ≠ MJX rollout 一定失败
+```
+
+---
+
+【25. 容易误解或需要注意的点】
+
+### 25.1 `mjx_env.step()` 的 `action` 其实是 MuJoCo ctrl
+
+函数名里叫 `action`，但内部直接：
+
+```python id="un97kh"
+data.replace(ctrl=action)
+```
+
+所以它不负责策略动作的缩放、裁剪、PD 转换。
+
+在 G1 joystick 中：
+
+```text id="iev8g4"
+policy action
+→ Joystick.step 转成 motor_targets
+→ mjx_env.step 写入 ctrl
+```
+
+不要把这两层混掉。
+
+---
+
+### 25.2 `MjxEnv` 不实现具体环境
+
+`MjxEnv` 是抽象基类。它只规定接口，不知道 G1 怎么 reset，也不知道 reward 怎么算。
+
+真正实现：
+
+```text id="cgb17j"
+G1Env:
+  实现模型访问属性
+
+Joystick:
+  实现 reset / step
+```
+
+---
+
+### 25.3 `observation_size` 会触发 reset 的 shape tracing
+
+这不是简单读取一个常量，而是：
+
+```python id="rk4grh"
+jax.eval_shape(self.reset, PRNGKey(0))
+```
+
+如果 `reset()` 里有不适合 JAX tracing 的逻辑，`observation_size` 会失败。
+
+当前 `Joystick.reset()` 依赖 MJX/JAX array 操作，设计上是为了支持这个属性。
+
+---
+
+### 25.4 `update_assets()` 可能有同名文件覆盖风险
+
+它用：
+
+```python id="wywp5e"
+assets[f.name] = f.read_bytes()
+```
+
+不是相对路径 key。多个 assets 目录中同名文件会互相覆盖。
+
+这不是凭空制造的问题，而是由源码直接可见的行为。
+
+是否影响当前 G1，需要检查实际 XML/assets 文件名。
+
+---
+
+### 25.5 `ensure_menagerie_exists()` 会联网并调用 git
+
+这对 agent 自动执行任务有影响。
+
+如果环境没有 Menagerie，它会：
+
+```text id="13b1gz"
+联网访问 GitHub
+执行 git clone
+checkout 固定 commit
+```
+
+潜在失败点：
+
+```text id="l00806"
+无网络
+代理问题
+没有 git
+GitHub 连接失败
+磁盘权限问题
+external_deps 路径不可写
+```
+
+如果你希望完全离线复现，需要提前把 `external_deps/mujoco_menagerie` 准备好。
+
+---
+
+### 25.6 `n_substeps = round(dt / sim_dt)` 可能掩盖非整数比例
+
+源码使用：
+
+```python id="h2cslk"
+int(round(self.dt / self.sim_dt))
+```
+
+如果你设置：
+
+```text id="5mydbi"
+ctrl_dt / sim_dt 不是接近整数
+```
+
+它会四舍五入，而不是报错。
+
+这可能导致实际控制周期和期望控制周期略有不一致：
+
+```text id="r98n40"
+实际仿真时间 = n_substeps * sim_dt
+期望控制时间 = ctrl_dt
+```
+
+当前默认 `0.02 / 0.002 = 10`，没有问题。但你改 config 时要注意。
+
+---
+
+### 25.7 `render_array()` 修改 `mj_model.hfield_data`
+
+如果传入 `hfield_data`，函数会原地修改：
+
+```python id="d3x39w"
+mj_model.hfield_data = ...
+```
+
+这影响的是渲染用的 `mj_model`。如果后续复用同一个 `mj_model` 渲染不同地形，需要注意状态残留。
+
+当前 G1 joystick 文件没直接用 `hfield_data`，但 rough terrain 可视化时可能相关。
+
+---
+
+### 25.8 当前文件没有 domain randomization
+
+不要因为它是 MJX 基类就以为 domain randomization 在这里发生。当前文件没有随机化 mass、friction、damping、actuator gain。
+
+domain randomization 应该继续看：
+
+```text id="p5gu2o"
+g1_env/_src/locomotion/g1/randomize.py
+training script 是否调用 registry.get_domain_randomizer
+```
+
+---
+
+### 25.9 当前文件没有 Torch / RSL-RL 适配
+
+它是 JAX/MJX 风格环境接口：
+
+```text id="n24zav"
+jax.Array
+mjx.Data
+flax.struct.dataclass
+jax.lax.scan
+```
+
+如果要接 RSL-RL，需要额外 wrapper 做：
+
+```text id="b75gxh"
+JAX array → torch.Tensor
+State 管理
+batched env
+device 同步
+done/reset 逻辑
+privileged obs 分流
+```
+
+当前文件没有提供这些转换。
+
+---
+
+【26. 需要继续查看的文件】
+
+### 26.1 `randomize.py`
+
+为了确认 domain randomization：
+
+```text id="td00z9"
+随机化哪些 MJX model 参数
+domain_randomize 返回什么
+如何和 Brax PPO 接口对接
+```
+
+当前 `mjx_env.py` 没有实现 domain randomization。
+
+---
+
+### 26.2 wrapper / training script
+
+为了确认：
+
+```text id="oq0ss4"
+env.observation_size 如何被网络使用
+obs["state"] 和 obs["privileged_state"] 如何分给 actor/critic
+State.done 如何触发 reset
+metrics 如何记录
+domain randomizer 是否接入
+JAX PPO 或 RSL-RL 如何调用 env.step
+```
+
+---
+
+### 26.3 `g1_constants.py`
+
+为了确认：
+
+```text id="ftqg4v"
+ROOT_PATH
+task_to_xml
+sensor name prefix
+FEET_SITES
+RESTRICTED_JOINT_RANGE
+Menagerie 资源路径与项目 XML 的关系
+```
+
+---
+
+### 26.4 XML / MJCF 文件
+
+为了确认：
+
+```text id="s7mdhc"
+sensor 是否和 get_sensor_data 名称匹配
+actuator 数量是否为 29
+freejoint 是否为第一个 joint
+timestep 是否被 config 覆盖
+hfield / floor / terrain 定义
+```
+
+---
+
+【27. 当前文件在整个 G1 pipeline 中的定位总结】
+
+`mjx_env.py` 是当前 G1 pipeline 的 **通用 MJX 环境底座**。
+
+一句话总结：
+
+```text id="wr4cd7"
+它不定义 G1 怎么走路，但定义了 G1 环境如何作为一个 JAX/MJX 环境被创建、推进、记录、渲染和查询。
+```
+
+和其他文件的职责分工：
+
+```text id="2q7z29"
+registry.py:
+  对外环境加载入口
+
+locomotion.__init__.py:
+  env_name → Joystick / config / randomizer
+
+joystick.py:
+  G1 joystick 任务逻辑，包括 reset、step、obs、reward、termination
+
+base.py:
+  G1 模型加载，XML → MjModel → mjx.Model，sensor wrapper
+
+mjx_env.py:
+  通用 MJX 环境接口，State，make_data，step，render，assets，sensor/index 工具
+```
+
+最需要记住的几个符号：
+
+```text id="sm7v2k"
+ensure_menagerie_exists()
+update_assets()
+make_data()
+step()
+State
+MjxEnv
+dt
+sim_dt
+n_substeps
+observation_size
+render_array()
+get_sensor_data()
+get_qpos_ids()
+get_qvel_ids()
+```
+
+最关键的数据流是：
+
+```text id="bsdtfv"
+Joystick.reset
+→ mjx_env.make_data
+→ mjx.Data
+
+Joystick.step
+→ motor_targets
+→ mjx_env.step
+→ data.ctrl = motor_targets
+→ mjx.step × n_substeps
+→ new mjx.Data
+
+Joystick._get_obs / _get_reward
+→ G1Env sensor wrapper
+→ mjx_env.get_sensor_data
+→ data.sensordata slice
+```
+
+这个文件是训练 pipeline 的底层连接件。它不决定训练目标，但它决定了环境以什么接口、什么时间尺度、什么数据结构接入 JAX/MJX rollout。

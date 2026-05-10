@@ -1,0 +1,1474 @@
+【1. 这段代码在 pipeline 中的位置】
+
+`wrapper.py` 属于 **Brax/JAX PPO wrapper 层**。
+
+它位于环境本体和 Brax PPO 训练后端之间，不属于 G1 任务环境本身，也不定义 reward、observation、termination 或 XML 模型。它的作用是把原始 `MjxEnv` 环境包装成 Brax PPO 能够训练的形式。
+
+在整个 pipeline 中的位置是：
+
+```text
+registry.load(...)
+→ Joystick / G1Env / MjxEnv 原始环境
+→ wrapper.wrap_for_brax_training(...)
+→ Brax Vmap / Episode / AutoReset / DomainRandomization wrappers
+→ brax.training.agents.ppo.train(...)
+```
+
+结合你前面看的 `train_jax_ppo.py`，这个文件正是通过这里接入训练后端的：
+
+```python
+train_fn = functools.partial(
+    ppo.train,
+    ...
+    wrap_env_fn=wrapper.wrap_for_brax_training,
+    ...
+)
+```
+
+也就是说，`train_jax_ppo.py` 负责启动训练，`wrapper.py` 负责把 G1/MJX 原生环境适配成 Brax PPO 可消费的环境接口。
+
+---
+
+【2. 核心作用】
+
+这个文件主要做三件事：
+
+```text
+1. 提供一个通用 Wrapper 基类
+   → 透明转发 reset / step / action_size / observation_size / mj_model / mjx_model / render 等接口
+
+2. 提供 wrap_for_brax_training(...)
+   → 把原始 MjxEnv 包装成 Brax PPO 训练环境
+
+3. 提供两个关键训练 wrapper
+   → BraxAutoResetWrapper：done 后自动 reset
+   → BraxDomainRandomizationVmapWrapper：带 domain randomization 的 batched vmap 环境
+```
+
+它接收的输入：
+
+```text
+env: mjx_env.MjxEnv
+episode_length: int
+action_repeat: int
+randomization_fn: Optional[Callable]
+full_reset: bool
+```
+
+它产生的输出：
+
+```text
+一个被包装后的 env
+该 env 仍然有 reset / step / observation_size / action_size 等接口
+但已经适配 Brax PPO 的训练方式
+```
+
+它被谁调用：
+
+```text
+train_jax_ppo.py
+→ ppo.train(..., wrap_env_fn=wrapper.wrap_for_brax_training)
+
+train_jax_ppo.py 推理阶段
+→ wrapper.wrap_for_brax_training(infer_env, episode_length, action_repeat)
+```
+
+它调用谁：
+
+```text
+brax.envs.wrappers.training.VmapWrapper
+brax.envs.wrappers.training.EpisodeWrapper
+BraxAutoResetWrapper
+BraxDomainRandomizationVmapWrapper
+env.reset
+env.step
+jax.vmap
+jax.tree.map
+```
+
+---
+
+【3. 总体数据流】
+
+没有 domain randomization 时：
+
+```text
+原始 G1 env
+→ brax_training.VmapWrapper(env)
+→ brax_training.EpisodeWrapper(env, episode_length, action_repeat)
+→ BraxAutoResetWrapper(env)
+→ Brax PPO train
+```
+
+有 domain randomization 时：
+
+```text
+原始 G1 env
+→ BraxDomainRandomizationVmapWrapper(env, randomization_fn)
+→ brax_training.EpisodeWrapper(env, episode_length, action_repeat)
+→ BraxAutoResetWrapper(env)
+→ Brax PPO train
+```
+
+训练时的每一步大致是：
+
+```text
+Brax PPO policy 输出 batched action
+→ wrapped_env.step(state, action)
+→ AutoResetWrapper.step
+→ EpisodeWrapper.step
+→ VmapWrapper 或 DomainRandomizationVmapWrapper.step
+→ Joystick.step
+→ mjx_env.step
+→ 新 State
+→ 如果 done，则 AutoResetWrapper 替换 data / obs
+→ 返回给 PPO
+```
+
+---
+
+【4. `Wrapper`：基础透明包装器】
+
+```python
+class Wrapper(mjx_env.MjxEnv):
+  """Wraps an environment to allow modular transformations."""
+```
+
+这是一个非常轻量的 wrapper 基类。
+
+它保存：
+
+```python
+self.env = env
+```
+
+然后把大多数接口直接转发给内部环境：
+
+```python
+reset(rng)       → self.env.reset(rng)
+step(state, a)   → self.env.step(state, a)
+observation_size → self.env.observation_size
+action_size      → self.env.action_size
+mj_model         → self.env.mj_model
+mjx_model        → self.env.mjx_model
+xml_path         → self.env.xml_path
+render(...)      → self.env.render(...)
+```
+
+它还实现：
+
+```python
+def __getattr__(self, name):
+    return getattr(self.env, name)
+```
+
+这意味着如果 wrapper 本身没有某个属性，就会继续向内部环境查找。
+
+这对 pipeline 的意义是：
+
+```text
+Wrapper 本身不改变环境语义；
+它只是提供包装链条的基础结构；
+真正改变训练行为的是后面的 Vmap / Episode / AutoReset / DomainRandomization wrapper。
+```
+
+---
+
+### 4.1 `unwrapped`
+
+```python
+@property
+def unwrapped(self) -> Any:
+    return self.env.unwrapped
+```
+
+这个属性用于拿到最内部的原始环境。
+
+比如 domain randomization wrapper 中会用：
+
+```python
+env = self.env.unwrapped
+old_mjx_model = env._mjx_model
+env.unwrapped._mjx_model = mjx_model
+```
+
+也就是说，`unwrapped` 是 wrapper 链条中“穿透包装、拿到原始环境”的通道。
+
+对当前 G1 pipeline：
+
+```text
+BraxAutoResetWrapper
+→ EpisodeWrapper
+→ VmapWrapper / DomainRandomizationWrapper
+→ Joystick / G1Env
+```
+
+如果要修改最底层的 `_mjx_model`，就需要 `unwrapped`。
+
+---
+
+【5. `wrap_for_brax_training(...)`：Brax PPO 包装入口】
+
+这是当前文件最关键的函数。
+
+```python
+def wrap_for_brax_training(
+    env: mjx_env.MjxEnv,
+    episode_length: int = 1000,
+    action_repeat: int = 1,
+    randomization_fn: Optional[Callable[[mjx.Model], Tuple[mjx.Model, mjx.Model]]] = None,
+    full_reset: bool = False,
+) -> Wrapper:
+```
+
+它接收：
+
+```text
+env:
+  原始 G1/MJX 环境，例如 Joystick。
+
+episode_length:
+  episode 最大长度。
+
+action_repeat:
+  每个 policy action 重复执行多少次。
+
+randomization_fn:
+  domain randomization 函数。
+  如果为 None，走普通 VmapWrapper。
+  如果不为 None，走 BraxDomainRandomizationVmapWrapper。
+
+full_reset:
+  done 后是否真正重新调用 env.reset。
+```
+
+处理逻辑：
+
+```python
+if randomization_fn is None:
+    env = brax_training.VmapWrapper(env)
+else:
+    env = BraxDomainRandomizationVmapWrapper(env, randomization_fn)
+
+env = brax_training.EpisodeWrapper(env, episode_length, action_repeat)
+env = BraxAutoResetWrapper(env, full_reset=full_reset)
+return env
+```
+
+所以 wrapper 顺序非常重要：
+
+```text
+第一层：Vmap 或 DomainRandomizationVmap
+第二层：EpisodeWrapper
+第三层：AutoResetWrapper
+```
+
+注意“第三层”是最外层，Brax PPO 直接调用的是 `BraxAutoResetWrapper`。
+
+---
+
+### 5.1 没有 domain randomization 的情况
+
+```text
+env
+→ brax_training.VmapWrapper(env)
+→ EpisodeWrapper
+→ AutoResetWrapper
+```
+
+`VmapWrapper` 的作用是把单个环境变成 batched env，使它能接收一批 rng / action / state。
+
+也就是说，原始环境 `Joystick.reset(rng)` 只处理一个环境：
+
+```text
+rng: shape (2,)
+→ State
+```
+
+经过 `VmapWrapper` 后：
+
+```text
+rng: shape (num_envs, 2)
+→ batched State
+```
+
+训练时 PPO 的 `num_envs` 并行环境依赖这一层。
+
+---
+
+### 5.2 有 domain randomization 的情况
+
+```text
+env
+→ BraxDomainRandomizationVmapWrapper(env, randomization_fn)
+→ EpisodeWrapper
+→ AutoResetWrapper
+```
+
+这里不用 Brax 自带的 `VmapWrapper`，而是用自定义 `BraxDomainRandomizationVmapWrapper`。
+
+原因是 domain randomization 不只是对 `rng` 做 vmap，还要对不同环境实例使用不同的 `mjx.Model` 参数。
+
+数据流：
+
+```text
+env.mjx_model
+→ randomization_fn(env.mjx_model)
+→ mjx_model_v, in_axes
+→ reset/step 时 jax.vmap over mjx_model_v + rng/action/state
+→ 每个 parallel env 使用随机化后的 model
+```
+
+这就是当前 JAX/Brax 训练路线中 domain randomization 真正进入 rollout 的位置。
+
+---
+
+### 5.3 `episode_length` 与 `action_repeat`
+
+这两个参数不是在 `Joystick` 里处理的，而是在 `EpisodeWrapper` 中处理：
+
+```python
+env = brax_training.EpisodeWrapper(env, episode_length, action_repeat)
+```
+
+因此：
+
+```text
+Joystick.default_config.episode_length = 1000
+→ train_jax_ppo.py 读取 ppo_params.episode_length
+→ wrapper.wrap_for_brax_training(..., episode_length=...)
+→ Brax EpisodeWrapper 处理 episode 长度
+```
+
+`Joystick.step()` 里本身没有看到 “episode_length 达到 1000 就 done” 的逻辑。它只处理 fall/contact/NaN 等 termination。时间截断由这里的 EpisodeWrapper 管。
+
+这点非常关键：
+
+```text
+环境内部 done:
+  由 Joystick._get_termination 给出，例如摔倒、非法接触、NaN。
+
+episode 超时 done:
+  由 Brax EpisodeWrapper 给出。
+```
+
+---
+
+【6. `BraxAutoResetWrapper`：done 后自动 reset】
+
+这是当前文件最复杂、也最容易误解的类。
+
+```python
+class BraxAutoResetWrapper(Wrapper):
+  """Automatically resets Brax envs that are done."""
+```
+
+它负责在某个并行环境 `done=True` 后，把该 env 的 `data` 和 `obs` 重置。
+
+---
+
+### 6.1 reset 逻辑
+
+```python
+def reset(self, rng):
+    rng_key = jax.vmap(jax.random.split)(rng)
+    rng, key = rng_key[..., 0], rng_key[..., 1]
+    state = self.env.reset(key)
+    state.info["AutoResetWrapper_first_data"] = state.data
+    state.info["AutoResetWrapper_first_obs"] = state.obs
+    state.info["AutoResetWrapper_rng"] = rng
+    state.info["AutoResetWrapper_done_count"] = zeros(...)
+    return state
+```
+
+输入：
+
+```text
+rng: batched rng
+shape 通常是 (num_envs, 2)
+```
+
+处理：
+
+```text
+对每个 env 的 rng split
+→ key 用于真正 env.reset
+→ rng 保存起来供后续 reset 使用
+→ 缓存第一次 reset 后的 data 和 obs
+```
+
+它保存了几个关键字段：
+
+```text
+AutoResetWrapper_first_data:
+  初始物理状态 data
+
+AutoResetWrapper_first_obs:
+  初始 observation
+
+AutoResetWrapper_rng:
+  后续 full_reset 用的 rng
+
+AutoResetWrapper_done_count:
+  每个 env 已经 done 的次数
+```
+
+这说明默认自动 reset 并不是每次 done 都重新采样一个完整随机初始状态，而是先缓存第一次 reset 的 `data/obs`。
+
+---
+
+### 6.2 `full_reset=False` 默认行为
+
+文档写得很清楚：
+
+```text
+If full_reset is disabled:
+  the environment will reset to a cached first state.
+  only data and obs are reset, not the environment info.
+```
+
+具体代码：
+
+```python
+if self._full_reset:
+    reset_state = self.reset(reset_key)
+    reset_data = reset_state.data
+    reset_obs = reset_state.obs
+else:
+    reset_data = state.info["AutoResetWrapper_first_data"]
+    reset_obs = state.info["AutoResetWrapper_first_obs"]
+```
+
+默认 `full_reset=False`，所以 done 后：
+
+```text
+reset_data = 第一次 reset 时缓存的 data
+reset_obs = 第一次 reset 时缓存的 obs
+```
+
+然后：
+
+```python
+data = jax.tree.map(where_done, reset_data, state.data)
+obs = jax.tree.map(where_done, reset_obs, state.obs)
+```
+
+这表示：
+
+```text
+如果某个 env done=True:
+  用 reset_data/reset_obs 替换当前 data/obs
+
+如果 done=False:
+  保留当前 data/obs
+```
+
+---
+
+### 6.3 默认 auto reset 的关键影响
+
+默认 `full_reset=False` 时，done 后只替换：
+
+```text
+data
+obs
+```
+
+但不完整重置：
+
+```text
+info
+```
+
+源码注释明确说：
+
+```text
+only data and obs are reset, not the environment info
+```
+
+这对当前 `Joystick` 很重要，因为 `Joystick.info` 里包含：
+
+```text
+rng
+step
+command
+last_act
+last_last_act
+motor_targets
+feet_air_time
+last_contact
+swing_peak
+phase
+phase_dt
+push
+push_step
+push_interval_steps
+```
+
+默认 auto reset 后，这些 `info` 不会全部恢复到初始值。只有 `data/obs` 被替换成第一次 reset 的状态。
+
+这可能导致：
+
+```text
+done 后新 episode 的物理状态和 observation 回到初始状态；
+但 command、phase、feet_air_time、last_act、push_step 等 info 可能沿用上一个 episode 的值。
+```
+
+源码文档本身已经提示这一点，因此这是一个真实需要注意的训练行为，而不是猜测。
+
+---
+
+### 6.4 `full_reset=True` 行为
+
+如果设置：
+
+```python
+full_reset=True
+```
+
+则 done 后会执行：
+
+```python
+reset_state = self.reset(reset_key)
+reset_data = reset_state.data
+reset_obs = reset_state.obs
+```
+
+后续还会：
+
+```python
+next_info = jax.tree.map(where_done, reset_state.info, state.info)
+```
+
+即 done 的 env 会使用新 reset 出来的 info。
+
+但代码又做了几个保留：
+
+```python
+next_info[done_count_key] = state.info[done_count_key]
+
+if "steps" in next_info:
+    next_info["steps"] = state.info["steps"]
+
+preserve_info_key = "AutoResetWrapper_preserve_info"
+if preserve_info_key in next_info:
+    next_info[preserve_info_key] = state.info[preserve_info_key]
+```
+
+含义：
+
+```text
+full_reset=True:
+  done 后重新调用 env.reset，获得新的随机初始状态和 info；
+  但 done_count 保留；
+  如果有 steps，则 steps 特殊保留；
+  如果有 AutoResetWrapper_preserve_info，也保留。
+```
+
+代价：
+
+```text
+full_reset=True 会更慢；
+因为 step 内部 done 后要真的调用 reset。
+```
+
+这和注释一致。
+
+---
+
+### 6.5 `where_done(x, y)` 的作用
+
+```python
+def where_done(x, y):
+    done = state.done
+    if done.shape and done.shape[0] != x.shape[0]:
+        return y
+    if done.shape:
+        done = jp.reshape(done, [x.shape[0]] + [1] * (len(x.shape) - 1))
+    return jp.where(done, x, y)
+```
+
+这个函数用于 batched tree 替换。
+
+含义：
+
+```text
+x:
+  reset_data 或 reset_obs 中的某个叶子
+
+y:
+  当前 state.data 或 state.obs 中的某个叶子
+
+done:
+  shape 通常是 (num_envs,)
+```
+
+如果某个叶子第一维不是 `num_envs`，则不替换：
+
+```python
+if done.shape and done.shape[0] != x.shape[0]:
+    return y
+```
+
+这说明 wrapper 只替换带 batch 维的数组叶子，避免错误替换某些非 batch 结构。
+
+然后 reshape done：
+
+```text
+done: (num_envs,)
+→ (num_envs, 1, 1, ...)
+```
+
+用于广播到 `qpos/qvel/obs` 这类多维数组。
+
+---
+
+### 6.6 `done_count`
+
+```python
+next_info[done_count_key] += state.done.astype(int)
+```
+
+这个字段累计每个 env done 的次数。
+
+可能用途：
+
+```text
+统计 reset 次数
+debug episode 终止频率
+curriculum 或 logging
+```
+
+当前文件只维护它，没有看到外部使用。是否被训练日志使用，需要看 Brax PPO metrics 或其他 callback。
+
+---
+
+【7. `BraxDomainRandomizationVmapWrapper`：domain randomization + vmap】
+
+这个类属于 **domain randomization wrapper 层**。
+
+```python
+class BraxDomainRandomizationVmapWrapper(Wrapper):
+  """Brax wrapper for domain randomization."""
+```
+
+它的作用是：
+
+```text
+把一个原始 env 变成 batched env；
+同时让每个 batch 里的 env 使用随机化后的 mjx.Model。
+```
+
+---
+
+### 7.1 初始化：调用 randomization_fn
+
+```python
+self._mjx_model_v, self._in_axes = randomization_fn(self.mjx_model)
+```
+
+输入：
+
+```text
+self.mjx_model:
+  原始环境的 mjx.Model
+```
+
+输出：
+
+```text
+self._mjx_model_v:
+  随机化后的 vectorized model
+
+self._in_axes:
+  vmap 时如何沿 model 维度映射
+```
+
+这说明 `randomization_fn` 的真实接口是：
+
+```text
+mjx.Model
+→ (mjx_model_v, in_axes)
+```
+
+这和前面 `registry.py` 中的类型注解不完全一致。`registry.py` 里写的是：
+
+```python
+Callable[[mjx.Model, jax.Array], Tuple[mjx.Model, mjx.Model]]
+```
+
+但当前 wrapper 实际调用：
+
+```python
+randomization_fn(self.mjx_model)
+```
+
+只传了一个 `mjx.Model`，没有传 `jax.Array`。这说明 `registry.py` 的类型注解可能过时或不准确；以当前 wrapper 源码为准。这个是重要的工程细节。
+
+---
+
+### 7.2 `v_env_fn(...)`：临时替换底层 `_mjx_model`
+
+```python
+@contextlib.contextmanager
+def v_env_fn(self, mjx_model):
+    env = self.env.unwrapped
+    old_mjx_model = env._mjx_model
+    try:
+        env.unwrapped._mjx_model = mjx_model
+        yield env
+    finally:
+        env.unwrapped._mjx_model = old_mjx_model
+```
+
+这段代码非常关键。
+
+它做的是：
+
+```text
+1. 拿到最底层原始环境 env.unwrapped
+2. 保存旧的 _mjx_model
+3. 临时把 env._mjx_model 替换成当前随机化 model
+4. 调用 reset 或 step
+5. 调用结束后恢复旧的 _mjx_model
+```
+
+为什么要这样做？
+
+源码事实：
+
+```text
+reset/step 内部会通过 self.mjx_model 访问 env._mjx_model。
+```
+
+比如 `Joystick.step()` 中：
+
+```python
+data = mjx_env.step(
+    self.mjx_model, state.data, motor_targets, self.n_substeps
+)
+```
+
+所以如果想让不同并行环境使用不同的 randomized `mjx.Model`，必须在调用 `reset/step` 时让 `self.mjx_model` 返回对应的模型。
+
+这个 wrapper 用“临时替换 `_mjx_model`”实现了这一点。
+
+---
+
+### 7.3 reset：对 model 和 rng 做 vmap
+
+```python
+def reset(self, rng):
+    def reset(mjx_model, rng):
+        with self.v_env_fn(mjx_model) as v_env:
+            return v_env.reset(rng)
+
+    state = jax.vmap(reset, in_axes=[self._in_axes, 0])(
+        self._mjx_model_v, rng
+    )
+    return state
+```
+
+数据流：
+
+```text
+self._mjx_model_v
++ batched rng
+→ jax.vmap(reset, in_axes=[self._in_axes, 0])
+→ 每个并行 env：
+    临时替换 _mjx_model
+    调用原始 env.reset(rng_i)
+→ batched State
+```
+
+因此有 domain randomization 时，reset 过程不是普通 `VmapWrapper`，而是：
+
+```text
+model_i + rng_i → env.reset_i
+```
+
+---
+
+### 7.4 step：对 model、state、action 做 vmap
+
+```python
+def step(self, state, action):
+    def step(mjx_model, s, a):
+        with self.v_env_fn(mjx_model) as v_env:
+            return v_env.step(s, a)
+
+    res = jax.vmap(step, in_axes=[self._in_axes, 0, 0])(
+        self._mjx_model_v, state, action
+    )
+    return res
+```
+
+数据流：
+
+```text
+self._mjx_model_v
++ batched state
++ batched action
+→ jax.vmap(step, in_axes=[self._in_axes, 0, 0])
+→ 每个并行 env：
+    使用自己的 randomized mjx_model_i
+    调用 Joystick.step(s_i, a_i)
+→ batched State
+```
+
+这就是 domain randomization 真正作用于 rollout 的位置。
+
+---
+
+【8. 与 `train_jax_ppo.py` 的连接】
+
+在 `train_jax_ppo.py` 中，训练入口这样构造：
+
+```python
+train_fn = functools.partial(
+    ppo.train,
+    ...
+    wrap_env_fn=wrapper.wrap_for_brax_training,
+    ...
+)
+```
+
+如果用户启用：
+
+```bash
+--domain_randomization
+```
+
+则：
+
+```python
+training_params["randomization_fn"] = registry.get_domain_randomizer(env_name)
+```
+
+Brax PPO 会把这个 `randomization_fn` 传给 `wrap_env_fn`。然后当前文件中：
+
+```python
+if randomization_fn is None:
+    env = brax_training.VmapWrapper(env)
+else:
+    env = BraxDomainRandomizationVmapWrapper(env, randomization_fn)
+```
+
+完整链条是：
+
+```text
+--domain_randomization
+→ train_jax_ppo.py
+→ registry.get_domain_randomizer(env_name)
+→ locomotion.get_domain_randomizer(env_name)
+→ g1_randomize.domain_randomize
+→ ppo.train(..., randomization_fn=...)
+→ wrapper.wrap_for_brax_training(..., randomization_fn=...)
+→ BraxDomainRandomizationVmapWrapper
+→ randomized mjx.Model enters reset/step
+```
+
+如果不开启：
+
+```text
+--domain_randomization=False
+→ randomization_fn 不进入 training_params
+→ wrap_for_brax_training 中 randomization_fn=None
+→ 使用 brax_training.VmapWrapper
+→ 不随机化 mjx.Model
+```
+
+所以这个文件说明：**domain randomization 不是只靠 `randomize.py` 存在就会生效，而是必须从 `train_jax_ppo.py` 传入，并在 `wrapper.py` 中选择 domain-randomized vmap wrapper。**
+
+---
+
+【9. 与 `Joystick / MjxEnv` 的连接】
+
+`wrapper.py` 假设原始环境满足 `MjxEnv` 接口：
+
+```text
+reset(rng) -> State
+step(state, action) -> State
+action_size
+observation_size
+mj_model
+mjx_model
+xml_path
+render(...)
+unwrapped
+```
+
+这些接口来自 `mjx_env.MjxEnv`，由 `G1Env` 和 `Joystick` 实现。
+
+结合你前面看的 `Joystick.step()`：
+
+```text
+wrapped_env.step
+→ AutoResetWrapper.step
+→ EpisodeWrapper.step
+→ VmapWrapper 或 DomainRandomizationVmapWrapper.step
+→ Joystick.step
+→ motor_targets = default_pose + action * action_scale
+→ mjx_env.step(mjx_model, data, motor_targets, n_substeps)
+→ obs / reward / done
+```
+
+所以 wrapper 不关心 action 是什么含义。
+
+对 wrapper 来说：
+
+```text
+action 就是 PPO 输出的 batched action
+```
+
+具体 action 解释在 `Joystick.step()`：
+
+```text
+policy action
+→ default_pose + action * action_scale
+→ motor_targets
+→ data.ctrl
+```
+
+这符合分层设计：
+
+```text
+wrapper.py:
+  负责 batching / episode / auto-reset / domain randomization
+
+joystick.py:
+  负责 action 语义 / reward / obs / termination
+
+mjx_env.py:
+  负责实际 MJX step
+```
+
+---
+
+【10. 与 `EpisodeWrapper` 的连接】
+
+当前文件直接使用 Brax 的：
+
+```python
+brax_training.EpisodeWrapper(env, episode_length, action_repeat)
+```
+
+这部分代码不在当前文件里，但可以根据调用确认它承担两个职责：
+
+```text
+1. episode_length
+   → 限制 episode 最大步数
+
+2. action_repeat
+   → 每个 agent action 重复执行若干环境 step
+```
+
+在当前工程中：
+
+```text
+Joystick.default_config.episode_length = 1000
+Joystick.default_config.action_repeat = 1
+```
+
+但训练脚本里真正传给 wrapper 的是 PPO config：
+
+```text
+ppo_params.episode_length
+ppo_params.action_repeat
+```
+
+因此实际训练 episode length / action_repeat 由 `train_jax_ppo.py` 的 `ppo_params` 决定，而不是由 `Joystick.step()` 自己处理。
+
+需要注意：
+
+```text
+Joystick.step 内部没有“step >= episode_length 就 done”的逻辑；
+episode 超时 done 是 EpisodeWrapper 的职责。
+```
+
+---
+
+【11. shape / 维度 / batch 行为】
+
+当前文件本身没有定义 G1 的 obs/action 维度，但它定义了 batch 维的来源。
+
+### 11.1 无 domain randomization
+
+```text
+rng shape:
+  (num_envs, 2)
+
+action shape:
+  (num_envs, action_size)
+
+state:
+  所有叶子一般都有 num_envs batch 维
+
+通过:
+  brax_training.VmapWrapper
+```
+
+### 11.2 有 domain randomization
+
+```text
+mjx_model_v:
+  vectorized randomized model
+
+rng:
+  (num_envs, 2)
+
+state:
+  batched State
+
+action:
+  (num_envs, action_size)
+
+通过:
+  jax.vmap(reset, in_axes=[self._in_axes, 0])
+  jax.vmap(step, in_axes=[self._in_axes, 0, 0])
+```
+
+### 11.3 done shape
+
+`BraxAutoResetWrapper.where_done()` 假设：
+
+```text
+done shape 通常是 (num_envs,)
+```
+
+并把它 reshape 成：
+
+```text
+(num_envs, 1, 1, ...)
+```
+
+以便对 `data.qpos`、`obs["state"]` 等高维数组广播替换。
+
+---
+
+【12. 对训练/仿真/推理的影响】
+
+### 12.1 对训练的影响
+
+这个文件直接影响训练行为：
+
+```text
+1. 是否并行化环境
+   → VmapWrapper / DomainRandomizationVmapWrapper
+
+2. 是否启用 domain randomization
+   → randomization_fn 是否传入
+
+3. episode 超时如何处理
+   → EpisodeWrapper
+
+4. done 后如何 reset
+   → BraxAutoResetWrapper
+
+5. action_repeat 如何处理
+   → EpisodeWrapper
+
+6. reset 是否完整随机化
+   → full_reset 参数
+```
+
+尤其是 `full_reset=False` 的默认行为，对 G1 locomotion 训练有实际影响：done 后只替换 `data/obs`，不完整重置 `info`。
+
+---
+
+### 12.2 对仿真的影响
+
+这个文件不直接调用 `mjx.step`，但它决定每次 PPO rollout 是否：
+
+```text
+1. 对 num_envs 并行执行环境 step
+2. 对每个并行环境使用不同 randomized mjx.Model
+3. episode done 后恢复到什么状态
+```
+
+真正的物理推进仍然在：
+
+```text
+Joystick.step
+→ mjx_env.step
+→ mjx.step
+```
+
+---
+
+### 12.3 对推理/视频的影响
+
+在 `train_jax_ppo.py` 的 inference 阶段：
+
+```python
+wrapped_infer_env = wrapper.wrap_for_brax_training(
+    infer_env,
+    episode_length=ppo_params.episode_length,
+    action_repeat=ppo_params.get("action_repeat", 1),
+)
+```
+
+这里没有传 `randomization_fn`，所以推理视频默认走：
+
+```text
+VmapWrapper
+→ EpisodeWrapper
+→ AutoResetWrapper
+```
+
+不会走 domain randomization wrapper。
+
+这意味着：
+
+```text
+训练时如果开启 domain randomization:
+  rollout 训练使用 randomized model
+
+训练后视频:
+  默认使用 deterministic 原始 infer_env model
+```
+
+这是源码能确认的行为。
+
+---
+
+【13. 容易误解或需要注意的点】
+
+### 13.1 wrapper 不改变 observation 内容
+
+`Wrapper` 只是转发 `observation_size` 和 `reset/step` 返回的 `obs`。
+
+它不会把：
+
+```text
+obs["state"]
+obs["privileged_state"]
+```
+
+自动分给 actor/critic。
+
+actor/critic 用哪个 obs key，是 `train_jax_ppo.py` 中 `ppo_params.network_factory.policy_obs_key` 和 `value_obs_key` 决定的。
+
+所以：
+
+```text
+wrapper.py 允许 obs dict 被保留；
+但不决定 privileged_state 是否用于 critic。
+```
+
+---
+
+### 13.2 domain randomization 类型注解存在不一致风险
+
+`registry.py` / `locomotion.__init__.py` 里对 randomizer 的类型注解写成类似：
+
+```python
+Callable[[mjx.Model, jax.Array], Tuple[mjx.Model, mjx.Model]]
+```
+
+但当前 `BraxDomainRandomizationVmapWrapper` 实际调用：
+
+```python
+randomization_fn(self.mjx_model)
+```
+
+只传一个参数。
+
+因此必须以当前 wrapper 的调用方式为准：
+
+```text
+randomization_fn 必须能接收 mjx.Model 单参数；
+返回 randomized model 和 in_axes。
+```
+
+如果你自己写新的 randomizer，必须按 `wrapper.py` 的实际调用接口写，否则训练时会报参数不匹配。
+
+---
+
+### 13.3 默认 auto reset 不完整重置 info
+
+这是当前文件最重要的训练语义陷阱。
+
+默认：
+
+```python
+full_reset=False
+```
+
+done 后：
+
+```text
+data 和 obs 回到 first_data / first_obs；
+info 不完整重置。
+```
+
+对于 `Joystick`，`info` 包含 command、phase、feet_air_time、last_act、push_step 等。默认不完整 reset 可能造成跨 episode 的内部状态延续。
+
+这不一定是 bug，因为注释明确说明了这是默认行为，目的是更快。但如果你观察到 episode 初始 command/phase/push 状态异常，要优先检查这里。
+
+---
+
+### 13.4 `full_reset=True` 会更慢但更干净
+
+如果你希望 done 后真正重新随机 reset：
+
+```text
+重新采样 qpos/qvel
+重新采样 command
+重新采样 phase/gait_freq
+重新采样 push_interval
+重置信息缓存
+```
+
+需要让 `wrap_for_brax_training(..., full_reset=True)`。
+
+但当前 `train_jax_ppo.py` 调用 `wrapper.wrap_for_brax_training` 时没有传 `full_reset=True`，所以默认是 `False`。
+
+---
+
+### 13.5 EpisodeWrapper 和 Joystick 内部 step 计数不是同一个东西
+
+`Joystick.info["step"]` 主要用于 command 更新：
+
+```text
+step > 500
+→ 重新 sample_command
+```
+
+Episode 长度则由：
+
+```text
+EpisodeWrapper(env, episode_length, action_repeat)
+```
+
+管理。
+
+所以不要把 `Joystick.info["step"]` 理解成完整 episode step。尤其在 AutoResetWrapper 下，`info` 可能不完整 reset，这个变量的语义更需要小心。
+
+---
+
+### 13.6 Domain randomization 通过临时替换 `_mjx_model` 实现
+
+`BraxDomainRandomizationVmapWrapper` 会直接访问：
+
+```python
+env._mjx_model
+```
+
+这是对底层环境私有变量的修改。
+
+这在当前工程中可行，因为 `G1Env` 确实保存了：
+
+```python
+self._mjx_model = mjx.put_model(...)
+```
+
+但它是强耦合设计：
+
+```text
+如果以后环境不叫 _mjx_model；
+或者 mjx_model property 不再对应 _mjx_model；
+这个 wrapper 会坏。
+```
+
+---
+
+### 13.7 randomization_fn 返回的 `in_axes` 必须正确
+
+wrapper 中：
+
+```python
+jax.vmap(reset, in_axes=[self._in_axes, 0])
+jax.vmap(step, in_axes=[self._in_axes, 0, 0])
+```
+
+这意味着 `randomization_fn` 不只要返回 randomized model，还要返回与这个 model pytree 结构匹配的 `in_axes`。
+
+如果 `in_axes` 错了，可能出现：
+
+```text
+vmap 维度错误
+某些 model 参数没有按 env batch 随机化
+某些非 batch 参数被错误 vmap
+JAX tree structure mismatch
+```
+
+所以看 `randomize.py` 时必须重点看它返回的第二个对象。
+
+---
+
+### 13.8 wrapper 没有做 JAX↔Torch 转换
+
+这个文件是 Brax/JAX wrapper。
+
+它使用：
+
+```text
+jax.vmap
+jax.tree.map
+mjx.Model
+mjx_env.State
+```
+
+不涉及 PyTorch。
+
+如果你要看 RSL-RL 训练路线，不能从这个文件判断，需要看：
+
+```text
+wrapper_torch.py
+train_rsl_rl.py
+```
+
+---
+
+【14. 需要继续查看的文件】
+
+### 14.1 `g1_env/_src/locomotion/g1/randomize.py`
+
+优先级最高。
+
+原因：
+
+当前文件只说明：
+
+```text
+randomization_fn(self.mjx_model)
+→ mjx_model_v, in_axes
+```
+
+但没有说明 randomizer 如何构造这两个返回值。
+
+你需要确认：
+
+```text
+1. domain_randomize 的真实签名
+2. 是否只接收 mjx.Model 一个参数
+3. 返回的 mjx_model_v 是怎样的 pytree
+4. in_axes 如何构造
+5. 随机化了哪些字段
+   - friction
+   - mass
+   - armature
+   - joint frictionloss
+   - qpos0/body_pos 等
+6. 随机化 batch 维是否等于 num_envs
+7. 是否与 BraxDomainRandomizationVmapWrapper 的 in_axes 匹配
+```
+
+---
+
+### 14.2 `g1_env/config/locomotion_params.py`
+
+原因：
+
+`wrapper.py` 中的：
+
+```text
+episode_length
+action_repeat
+randomization_fn 是否传入
+```
+
+都来自 `train_jax_ppo.py` 的 `ppo_params`。
+
+你需要确认：
+
+```text
+1. brax_ppo_config 默认 episode_length 是多少
+2. action_repeat 默认是多少
+3. num_envs 是多少
+4. 是否默认启用 privileged critic
+5. network_factory.policy_obs_key / value_obs_key 默认是什么
+```
+
+---
+
+### 14.3 `learning/train_jax_ppo.py`
+
+虽然已经看过，但需要和 wrapper 交叉复核：
+
+```text
+1. wrap_for_brax_training 是否传 full_reset
+   → 当前没有传，默认 False。
+
+2. 是否传 randomization_fn
+   → 只有 --domain_randomization=True 时传。
+
+3. inference wrapper 是否传 randomization_fn
+   → 当前没有传。
+
+4. episode_length/action_repeat 来自哪里
+   → ppo_params。
+```
+
+---
+
+### 14.4 `g1_env/_src/wrapper_torch.py`
+
+如果你关心 RSL-RL 路线，下一步看它。
+
+原因：
+
+当前 `wrapper.py` 是 Brax/JAX wrapper，不适配 RSL-RL。
+
+你需要确认：
+
+```text
+1. TorchWrapper 是否也自动 reset
+2. 是否也支持 episode_length
+3. JAX State 如何转 torch.Tensor
+4. obs["state"] / obs["privileged_state"] 如何给 RSL-RL
+5. domain randomization 是否支持
+```
+
+---
+
+### 14.5 `brax.envs.wrappers.training.EpisodeWrapper / VmapWrapper`
+
+这是外部库，不在当前文件里。但如果你要精确理解：
+
+```text
+episode_length 如何触发 done
+action_repeat 是否累积 reward
+metrics 如何处理
+done 是否 time_out
+```
+
+需要查 Brax wrapper 源码。
+
+当前文件只能确认它调用了这两个 wrapper，不能确认它们内部所有细节。
+
+---
+
+【15. 当前文件在整个 pipeline 中的定位总结】
+
+一句话总结：
+
+```text
+wrapper.py 是 G1 原生 MJX 环境进入 Brax PPO 训练系统的适配层。
+```
+
+它的核心职责是：
+
+```text
+原始 env
+→ batched env
+→ episode-limited env
+→ auto-reset env
+→ optional domain-randomized env
+→ Brax PPO 可训练 env
+```
+
+最关键的数据流是：
+
+```text
+train_jax_ppo.py
+→ ppo.train(..., wrap_env_fn=wrapper.wrap_for_brax_training)
+→ wrap_for_brax_training
+→ VmapWrapper 或 BraxDomainRandomizationVmapWrapper
+→ EpisodeWrapper
+→ BraxAutoResetWrapper
+→ Joystick.step/reset
+```
+
+当前文件是训练 pipeline 的关键节点。前面 `joystick.py` 解决“单个环境怎么 step”，`mjx_env.py` 解决“MJX 状态和仿真怎么表示”，而 `wrapper.py` 解决“这个环境如何并行化、如何处理 episode、如何自动 reset、如何接 domain randomization、如何交给 Brax PPO”。

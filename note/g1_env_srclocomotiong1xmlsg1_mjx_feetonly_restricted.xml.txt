@@ -1,0 +1,588 @@
+【1. 结论先行】
+
+`g1_mjx_feetonly_restricted.xml` 相比普通 `g1_mjx_feetonly.xml`，核心区别不是“多了一个训练功能”，而是 **XML 层面预先收紧了部分关节范围，并且改了少量 collision/contact/sensor 定义**。
+
+主要差异有四类：
+
+```text id="0dq8tt"
+1. 腿部关节 range 被收紧
+2. 左右小腿 collision capsule 半径从 0.08 改成 0.07
+3. contact pair 发生变化：取消脚-脚 pair，启用脚-对侧小腿、左右小腿 pair
+4. restricted 版本少了 left_foot_force / right_foot_force 两个 force sensor
+```
+
+更重要的是：**当前 pipeline 默认并没有直接使用这个 restricted XML。**
+
+目前 `g1_constants.py` 中 `task_to_xml()` 只把：
+
+```text id="anz639"
+flat_terrain  → scene_mjx_feetonly_flat_terrain.xml
+rough_terrain → scene_mjx_feetonly_rough_terrain.xml
+```
+
+没有指向 `g1_mjx_feetonly_restricted.xml`。
+
+而 filemap 也说明 flat terrain scene 包含的是 `g1_mjx_feetonly.xml`，不是 restricted 版本。
+
+---
+
+【2. 它在 pipeline 中的位置】
+
+这两个文件都属于：
+
+```text id="lfsure"
+G1 机器人 XML / MJCF 模型层
+```
+
+区别是：
+
+```text id="9gegg2"
+g1_mjx_feetonly.xml
+→ 普通 G1 主模型
+
+g1_mjx_feetonly_restricted.xml
+→ 受限关节范围版本的 G1 主模型
+```
+
+它们不是环境类，不是 reward，不是 wrapper，不是训练脚本。
+
+如果被加载，它们都会走同一条模型加载链：
+
+```text id="6ur77x"
+scene XML
+→ include / 引用 G1 主模型 XML
+→ G1Env.__init__
+→ mujoco.MjModel.from_xml_string(...)
+→ mjx.put_model(...)
+→ mjx.Model
+→ Joystick.reset / step
+```
+
+但是当前你已经看到的 Python 路径里，`Joystick` 是通过：
+
+```text id="dhwyzm"
+consts.task_to_xml(task)
+```
+
+选择 scene XML，而 `task_to_xml()` 没有直接选择 restricted XML。
+
+---
+
+【3. 差异一：腿部 joint range 被收紧】
+
+这是 restricted 版本最核心的变化。
+
+普通版中腿部默认 range 比较宽，例如：
+
+```text id="g3e4xi"
+hip_pitch:   -2.5307 ~ 2.8798
+hip_roll:    -0.5236 ~ 2.9671
+hip_yaw:     -2.7576 ~ 2.7576
+knee:        -0.087267 ~ 2.8798
+ankle_pitch: -0.87267 ~ 0.5236
+ankle_roll:  -0.2618 ~ 0.2618
+```
+
+这些可以在普通 `g1_mjx_feetonly.xml` 的 default joint class 中看到。
+
+restricted 版本中对应改成：
+
+```text id="e2a96o"
+hip_pitch:   -1.57 ~ 1.57
+hip_roll:    -0.5 ~ 0.5
+hip_yaw:     -0.7 ~ 0.7
+knee:         0 ~ 1.57
+ankle_pitch: -0.4 ~ 0.4
+ankle_roll:  -0.2 ~ 0.2
+```
+
+restricted 文件中可以看到这些收紧后的范围。
+
+也就是说，它主要限制的是 **双腿 12 个关节**：
+
+```text id="bohix3"
+左腿 6 个
+右腿 6 个
+```
+
+腰部和手臂的大部分 range 看起来与普通版基本一致。
+
+---
+
+【4. 这些 restricted range 和 `g1_constants.RESTRICTED_JOINT_RANGE` 的关系】
+
+`g1_constants.py` 里也定义了一套 `RESTRICTED_JOINT_RANGE`，其中左腿和右腿的范围正是：
+
+```text id="uqetv5"
+hip_pitch:   -1.57 ~ 1.57
+hip_roll:    -0.5 ~ 0.5
+hip_yaw:     -0.7 ~ 0.7
+knee:         0 ~ 1.57
+ankle_pitch: -0.4 ~ 0.4
+ankle_roll:  -0.2 ~ 0.2
+```
+
+并且后面还有 waist、left shoulder、right shoulder 共 29 个范围。
+
+而 `base.py` 里有这段逻辑：
+
+```text id="pp0uam"
+if self._config.restricted_joint_range:
+    self._mj_model.jnt_range[1:] = consts.RESTRICTED_JOINT_RANGE
+    self._mj_model.actuator_ctrlrange[:] = consts.RESTRICTED_JOINT_RANGE
+```
+
+也就是说，当前工程其实提供了两种“限制关节范围”的路径：
+
+```text id="h4lar2"
+路径 A：XML 静态限制
+→ 使用 g1_mjx_feetonly_restricted.xml
+→ XML 里直接写窄 range
+
+路径 B：Python 动态限制
+→ 仍然加载普通 XML
+→ config.restricted_joint_range=True
+→ base.py 用 consts.RESTRICTED_JOINT_RANGE 覆盖 mj_model.jnt_range 和 actuator_ctrlrange
+```
+
+当前默认配置中：
+
+```text id="6n0g24"
+restricted_joint_range=False
+```
+
+所以默认不会走路径 B。这个默认值在 `joystick.py::default_config()` 中。
+
+---
+
+【5. 差异二：shin collision capsule 尺寸变了】
+
+普通版：
+
+```text id="crhw0m"
+left_shin collision capsule size = 0.08
+right_shin collision capsule size = 0.08
+```
+
+restricted 版本：
+
+```text id="ip3s2t"
+left_shin collision capsule size = 0.07
+right_shin collision capsule size = 0.07
+```
+
+也就是说，restricted 版本把左右小腿的 collision capsule 半径稍微缩小了一点。普通版和 restricted 版的 diff 能看到这一点；restricted 片段也显示了相关 collision 结构。
+
+对 pipeline 的影响：
+
+```text id="6copn8"
+小腿 collision 稍微变细
+→ 脚-小腿 / 小腿-小腿接触判定可能略有变化
+→ termination / collision sensor 如果依赖这些 pair，会受影响
+```
+
+这不是观测维度变化，也不是 action 维度变化，而是接触几何体改变。
+
+---
+
+【6. 差异三：contact pair 发生变化】
+
+普通版 contact 中启用了：
+
+```text id="uwigxc"
+left_foot_floor
+right_foot_floor
+left_hand_thigh
+right_hand_thigh
+left_foot_right_foot
+```
+
+并且下面几个 pair 是注释掉的：
+
+```text id="9dz2eb"
+left_foot_right_shin
+right_foot_left_shin
+left_shin_right_shin
+```
+
+普通版片段里能看到 `left_foot_right_foot` 是启用的，而 foot-shin / shin-shin pair 是注释的。
+
+restricted 版本中则变成：
+
+```text id="jsgu9r"
+保留：
+  left_foot_floor
+  right_foot_floor
+  left_hand_thigh
+  right_hand_thigh
+
+启用：
+  left_foot_right_shin
+  right_foot_left_shin
+  left_shin_right_shin
+
+取消：
+  left_foot_right_foot
+```
+
+也就是说，restricted 版本更关注：
+
+```text id="0eoo0o"
+脚碰对侧小腿
+左右小腿互碰
+```
+
+而普通版更关注：
+
+```text id="kesqo2"
+左右脚互碰
+```
+
+这和 `Joystick._get_termination()` 很相关。`joystick.py` 中 termination 会检查：
+
+```text id="4mw6e1"
+right_foot_left_foot_found
+left_foot_right_shin_found
+right_foot_left_shin_found
+```
+
+也就是说，Python 任务逻辑同时期待“脚-脚”和“脚-对侧小腿”相关的 contact found sensor。
+
+这里要注意一个潜在接口问题：
+
+```text id="ufadqu"
+如果 restricted XML 取消了 foot-foot contact pair，
+但 joystick.py 仍然查 right_foot_left_foot_found sensor，
+那么必须有其他 XML / sensor.xml 补充这个 sensor 和对应 pair。
+否则会初始化失败或运行失败。
+```
+
+目前仅看 restricted XML，不能确认这个补充是否存在。
+
+---
+
+【7. 差异四：restricted 版本少了 foot force sensors】
+
+普通版 `<sensor>` 末尾有：
+
+```text id="0f8ozy"
+left_foot_force
+right_foot_force
+```
+
+普通版片段里能看到这两个 force sensor。
+
+restricted 版本的 `<sensor>` 末尾没有这两个 force sensor。restricted 片段显示 sensor 段以左右脚 upvector 结束，没有 `left_foot_force` / `right_foot_force`。
+
+这对当前 `Joystick` 是一个很重要的差异，因为 `joystick.py::_cost_contact_force()` 直接读取：
+
+```text id="ghuvzw"
+left_foot_force
+right_foot_force
+```
+
+并用它们计算超过 `max_contact_force` 的惩罚。
+
+所以如果真的加载 restricted XML，且没有其他 include 文件补充这两个 force sensor，那么：
+
+```text id="a81la8"
+Joystick._cost_contact_force()
+→ mjx_env.get_sensor_data(self.mj_model, data, "left_foot_force")
+→ model.sensor("left_foot_force")
+→ 找不到 sensor
+→ 环境运行失败
+```
+
+这是 restricted 版本相对普通版最明显的工程风险。
+
+---
+
+【8. 哪些东西基本没变】
+
+从文件结构和 diff 看，以下核心部分基本一致：
+
+```text id="npyatk"
+1. 模型名仍是 g1_29dof_rev_1_0
+2. timestep / integrator 设置基本一致
+3. floating base 结构一致
+4. 29 个普通关节结构一致
+5. 29 个 position actuator 仍然存在
+6. actuator 顺序基本一致
+7. visual mesh / body tree 基本一致
+8. IMU / velocity 类 sensor 大体一致
+```
+
+所以 restricted 版本不是一个新机器人，也不是新任务环境。
+
+它仍然是：
+
+```text id="q706u1"
+G1 29 DoF floating-base humanoid
++ 29 个 position actuator
++ feet-only collision 风格
+```
+
+核心训练接口仍然会是：
+
+```text id="cmttrd"
+action shape = 29
+qpos[7:] = 29 维关节角
+qvel[6:] = 29 维关节速度
+data.ctrl = 29 维 position target
+```
+
+---
+
+【9. 对 action / reward / termination 的实际影响】
+
+### 9.1 对 action 的影响
+
+普通版和 restricted 版都是 29 个 position actuator。
+
+因此 action 语义不变：
+
+```text id="r9t9ks"
+policy action
+→ default_pose + action * action_scale
+→ 29 维 motor_targets
+→ data.ctrl
+→ position actuator target
+```
+
+但 restricted 版本的关节 range 更窄，所以如果 MuJoCo actuator ctrlrange 继承 joint range，那么有效控制范围也会更窄。
+
+这会影响：
+
+```text id="x1gwv7"
+1. action target 更容易碰到 ctrlrange / joint limit
+2. 大幅度动作会被模型限制
+3. 策略可探索动作空间变小
+4. dof_pos_limits reward 的 soft limits 也会变窄
+```
+
+`Joystick._post_init()` 会读取 `self.mj_model.jnt_range[1:]` 并计算 soft joint limits，所以无论是 XML 静态限制，还是 `base.py` 动态覆盖，都会影响 `_cost_joint_pos_limits()`。
+
+---
+
+### 9.2 对 reward 的影响
+
+主要影响这些 reward/cost：
+
+```text id="4erxnh"
+dof_pos_limits
+pose
+joint_deviation_hip
+joint_deviation_knee
+contact_force
+collision / termination 相关 contact
+```
+
+其中：
+
+```text id="tf5lz8"
+dof_pos_limits:
+  直接受 joint range / soft_lowers / soft_uppers 影响
+
+pose / joint_deviation:
+  default_pose 不一定变，但可允许动作范围变小
+
+contact_force:
+  如果 restricted 缺 left_foot_force / right_foot_force sensor，会直接出问题
+
+collision / termination:
+  contact pair 改了，脚-小腿、小腿-小腿接触检测可能更敏感
+```
+
+---
+
+### 9.3 对 termination 的影响
+
+普通版启用脚-脚 pair，restricted 版启用脚-小腿和小腿-小腿 pair。
+
+而 `Joystick._get_termination()` 检查：
+
+```text id="xst745"
+fall_termination
+right_foot_left_foot_found
+left_foot_right_shin_found
+right_foot_left_shin_found
+NaN qpos/qvel
+```
+
+所以从意图上看，restricted 版本似乎更配合脚-小腿 termination，但它取消脚-脚 pair 又可能和 `right_foot_left_foot_found` 的检查不完全一致。这个必须继续看 scene XML / sensor XML 才能确认。
+
+---
+
+【10. 当前 pipeline 默认用哪个？】
+
+从目前 Python 代码看，默认任务路径是：
+
+```text id="gynm8s"
+G1JoystickFlatTerrain
+→ Joystick(task="flat_terrain")
+→ consts.task_to_xml("flat_terrain")
+→ scene_mjx_feetonly_flat_terrain.xml
+```
+
+```text id="6n19o6"
+G1JoystickRoughTerrain
+→ Joystick(task="rough_terrain")
+→ consts.task_to_xml("rough_terrain")
+→ scene_mjx_feetonly_rough_terrain.xml
+```
+
+`g1_constants.py` 没有把任何 task 映射到 `g1_mjx_feetonly_restricted.xml`。
+
+所以：
+
+```text id="0hh1tl"
+如果 scene XML include 的是 g1_mjx_feetonly.xml：
+  默认使用普通版
+
+如果 scene XML include 的是 g1_mjx_feetonly_restricted.xml：
+  才会使用 restricted 版
+```
+
+filemap 明确说 flat terrain scene 包含 `g1_mjx_feetonly.xml`，不是 restricted 版本。
+
+因此当前结论是：
+
+```text id="wz8ql1"
+restricted XML 存在，但当前 registry/task_to_xml 路径下不一定会用到。
+```
+
+---
+
+【11. 和 `config.restricted_joint_range` 的区别】
+
+这是最容易混淆的地方。
+
+你现在看到两个“restricted”机制：
+
+```text id="tlrxr9"
+A. g1_mjx_feetonly_restricted.xml
+B. config.restricted_joint_range=True
+```
+
+它们不是同一个入口。
+
+---
+
+### A. `g1_mjx_feetonly_restricted.xml`
+
+这是 **XML 静态版本**。
+
+特点：
+
+```text id="xplr0d"
+1. 文件里直接写窄 joint range
+2. 同时改了 shin collision size
+3. 同时改了 contact pair
+4. 同时删掉了 foot force sensors
+5. 只有被 scene XML include 或 task_to_xml 指向时才生效
+```
+
+---
+
+### B. `config.restricted_joint_range=True`
+
+这是 **Python 动态覆盖版本**。
+
+`base.py` 中逻辑是：
+
+```text id="jhvbxo"
+如果 restricted_joint_range=True：
+  mj_model.jnt_range[1:] = consts.RESTRICTED_JOINT_RANGE
+  mj_model.actuator_ctrlrange[:] = consts.RESTRICTED_JOINT_RANGE
+```
+
+它只覆盖：
+
+```text id="q1z5jm"
+joint range
+actuator ctrlrange
+```
+
+不会自动改变：
+
+```text id="v465mz"
+shin collision size
+contact pair
+sensor 列表
+XML include 结构
+```
+
+所以二者不是完全等价。
+
+更准确地说：
+
+```text id="c0jf8r"
+config.restricted_joint_range=True
+≈ 只把普通 XML 的关节范围改成 restricted 范围
+
+g1_mjx_feetonly_restricted.xml
+= 关节范围变窄 + collision/contact/sensor 也有改动
+```
+
+---
+
+【12. 对后续读代码的具体建议】
+
+下一步不要只盯着这两个主模型 XML，还要看 scene XML。
+
+你需要确认：
+
+```text id="w8a1lf"
+1. scene_mjx_feetonly_flat_terrain.xml include 哪个主模型？
+   → g1_mjx_feetonly.xml
+   → 还是 g1_mjx_feetonly_restricted.xml
+
+2. scene_mjx_feetonly_rough_terrain.xml include 哪个主模型？
+
+3. sensor.xml 是否补充 left_foot_force / right_foot_force？
+
+4. sensor.xml 是否补充 right_foot_left_foot_found / left_foot_right_shin_found / right_foot_left_shin_found？
+
+5. 当前训练脚本有没有通过 config_overrides 设置 restricted_joint_range=True？
+```
+
+只有确认这几点，才能最终判断：
+
+```text id="9vmosa"
+当前实际训练跑的是普通 range
+还是 restricted range
+还是普通 XML + Python 动态 restricted range
+```
+
+---
+
+【13. 最简记忆版】
+
+普通版：
+
+```text id="ew2mhy"
+g1_mjx_feetonly.xml
+→ 原始较宽关节范围
+→ 有 left_foot_force / right_foot_force
+→ 启用 left_foot_right_foot contact pair
+→ foot-shin / shin-shin pair 注释掉
+```
+
+restricted 版：
+
+```text id="7g8nyw"
+g1_mjx_feetonly_restricted.xml
+→ 腿部关节范围明显收窄
+→ shin collision capsule 变细
+→ 启用 foot-shin / shin-shin contact pair
+→ 不再启用 left_foot_right_foot pair
+→ 少了 left_foot_force / right_foot_force sensor
+```
+
+对 pipeline 的判断：
+
+```text id="4wy1yl"
+当前默认 Python 注册路径没有直接指向 restricted XML。
+如果没有 scene XML include 它，它只是一个备用模型文件。
+如果真的使用它，需要特别检查 foot force sensor 和 *_found contact sensor 是否完整，否则 Joystick 可能运行失败。
+```

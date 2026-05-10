@@ -1,0 +1,1870 @@
+【1. 这段代码在 pipeline 中的位置】
+
+`g1_mjx_feetonly.xml` 属于 **G1 机器人 XML / MJCF 模型层**。
+
+它是 Python 环境代码背后的机器人本体模型文件之一。它不负责训练、不负责 reward、不负责 observation 拼接，也不负责 PPO。它提供的是 MuJoCo/MJX 能够仿真的 G1 机器人结构：
+
+```text
+机器人刚体树
+→ 关节
+→ 惯量
+→ visual mesh
+→ collision geom
+→ actuator
+→ contact pair
+→ sensor
+→ MuJoCo/MJX model
+```
+
+它在 pipeline 中的位置是：
+
+```text
+env_name
+→ registry.load(...)
+→ locomotion.load(...)
+→ Joystick(task="flat_terrain" / "rough_terrain")
+→ consts.task_to_xml(task)
+→ scene XML
+→ include / 引用 g1_mjx_feetonly.xml
+→ G1Env.__init__
+→ mujoco.MjModel.from_xml_string(...)
+→ mjx.put_model(...)
+→ mjx.Model
+→ Joystick.reset / step
+```
+
+前面 `g1_constants.py` 中已经定义了 flat / rough terrain 对应的 scene XML 路径，而不是直接指向 `g1_mjx_feetonly.xml`。也就是说，`g1_mjx_feetonly.xml` 更像是 **G1 主机器人模型文件**，通常由场景 XML 包含；flat / rough terrain 的差异大概率由 scene XML 负责。`task_to_xml()` 的 flat / rough 映射来自 `g1_constants.py`，`Joystick.__init__()` 会调用这个映射来拿 XML 路径。 
+
+---
+
+【2. 核心作用】
+
+这个 XML 的核心作用是：**定义 Unitree G1 29 DoF 人形机器人在 MuJoCo/MJX 中的模型结构**。
+
+它提供：
+
+```text
+1. MuJoCo 编译器和仿真 option
+2. 关节默认参数
+3. position actuator 默认参数
+4. mesh asset 引用
+5. G1 刚体树结构
+6. freejoint floating base
+7. 29 个普通关节
+8. 29 个 position actuator
+9. feet-only collision 简化几何体
+10. contact pair
+11. IMU / velocity / force sensors
+```
+
+它被谁调用：
+
+```text
+G1Env.__init__
+→ 读取 XML 文本
+→ mujoco.MjModel.from_xml_string(...)
+→ mjx.put_model(...)
+```
+
+`base.py` 中可以确认，G1Env 会读取传入的 `xml_path`，用 `mujoco.MjModel.from_xml_string(..., assets=...)` 创建 MuJoCo 模型，然后再用 `mjx.put_model(...)` 转为 MJX 模型。
+
+它对训练/仿真的实际影响：
+
+```text
+1. 决定 action 维度：29 个 actuator → policy action 最终映射到 29 个 ctrl
+2. 决定 qpos/qvel 结构：floating base + 29 个关节
+3. 决定 actuator 类型：position actuator
+4. 决定关节 range / damping / frictionloss / armature
+5. 决定可碰撞部位：主要是 feet、shin、thigh、hand collision
+6. 决定哪些 sensor 可以被 observation / reward / termination 使用
+7. 决定脚-地、手-大腿、脚-脚等 contact pair
+```
+
+---
+
+【3. 关键结构总览】
+
+这个 XML 顶层结构大致是：
+
+```xml
+<mujoco model="g1_29dof_rev_1_0">
+  <compiler .../>
+  <option .../>
+  <default>...</default>
+  <asset>...</asset>
+  <worldbody>...</worldbody>
+  <contact>...</contact>
+  <actuator>...</actuator>
+  <sensor>...</sensor>
+</mujoco>
+```
+
+对应 pipeline 含义：
+
+```text
+compiler / option
+→ MuJoCo 编译和仿真设置
+
+default
+→ joint / geom / actuator 默认参数
+
+asset
+→ STL mesh 资源
+
+worldbody
+→ G1 机器人刚体树
+
+contact
+→ 显式接触 pair
+
+actuator
+→ 29 个 position actuator
+
+sensor
+→ observation / reward / termination 可读取的底层传感器
+```
+
+---
+
+【4. `compiler` / `option`：仿真基础设置】
+
+文件开头：
+
+```xml
+<compiler angle="radian"/>
+
+<option iterations="3" ls_iterations="5" timestep=".002" integrator="Euler">
+  <flag eulerdamp="disable"/>
+</option>
+```
+
+源码直接能确认：
+
+```text
+角度单位：radian
+XML 中 timestep = 0.002
+积分器：Euler
+iterations = 3
+ls_iterations = 5
+eulerdamp disabled
+```
+
+但需要注意：`base.py` 里会执行：
+
+```python
+self._mj_model.opt.timestep = self.sim_dt
+```
+
+所以最终 timestep 不一定以 XML 为准，而是会被 config 中的 `sim_dt` 覆盖。`joystick.py::default_config()` 里 `sim_dt=0.002`，刚好和 XML 一致。 
+
+数据流：
+
+```text
+XML option timestep=".002"
+→ mujoco.MjModel 编译
+→ G1Env.__init__
+→ mj_model.opt.timestep = self.sim_dt
+→ 最终 MJX model timestep
+```
+
+对当前默认配置来说：
+
+```text
+sim_dt = 0.002 s
+ctrl_dt = 0.02 s
+n_substeps = round(0.02 / 0.002) = 10
+```
+
+其中 `n_substeps` 的计算来自 `mjx_env.MjxEnv.n_substeps`。
+
+---
+
+【5. `default`：关节、actuator、geom 的默认参数】
+
+XML 中定义了一个主 default class：
+
+```xml
+<default class="g1">
+  <geom condim="1" contype="0" conaffinity="0"/>
+  <joint frictionloss="0.1" damping="2"/>
+  <position inheritrange="1" kp="75"/>
+  ...
+</default>
+```
+
+这几个默认项很关键。
+
+---
+
+### 5.1 默认 geom 不参与普通自动碰撞
+
+```xml
+<geom condim="1" contype="0" conaffinity="0"/>
+```
+
+含义：
+
+```text
+默认 geom:
+  contype=0
+  conaffinity=0
+```
+
+这意味着默认情况下，很多 geom 不通过 MuJoCo 的自动碰撞机制参与任意碰撞；后面通过 `<contact><pair .../></contact>` 显式指定允许检测的接触 pair。
+
+对 pipeline 的影响：
+
+```text
+不是所有身体部位都会发生碰撞
+→ 当前模型是裁剪过的 collision 设计
+→ reward / termination 依赖的接触必须看 contact pair 和 sensor
+```
+
+这也解释了文件名中的 `feetonly`：模型显然不是全身精细碰撞，而是保留了少量关键 collision geom。
+
+---
+
+### 5.2 默认 joint 参数
+
+```xml
+<joint frictionloss="0.1" damping="2"/>
+```
+
+含义：
+
+```text
+默认关节 frictionloss = 0.1
+默认 damping = 2
+```
+
+但很多具体关节 class 会覆盖：
+
+```text
+ankle_pitch:
+  damping=1
+
+ankle_roll:
+  damping=0.2
+
+wrist:
+  damping=0.2
+```
+
+这些参数会影响：
+
+```text
+关节阻尼
+能量损耗
+动作响应
+训练稳定性
+sim-to-real 参数随机化空间
+```
+
+后面 `randomize.py` 如果随机化 `dof_frictionloss`、`armature` 等，就会基于这些模型字段进一步变化。
+
+---
+
+### 5.3 默认 actuator 是 position actuator
+
+```xml
+<position inheritrange="1" kp="75"/>
+```
+
+这非常关键。
+
+它说明 actuator 类型是 MuJoCo 的 `<position>` actuator，而不是 `<motor>` torque actuator。
+
+在 `joystick.py::step()` 里：
+
+```python
+motor_targets = self._default_pose + action * self._config.action_scale
+data = mjx_env.step(self.mjx_model, state.data, motor_targets, self.n_substeps)
+```
+
+而 `mjx_env.step()` 里直接：
+
+```python
+data = data.replace(ctrl=action)
+data = mjx.step(model, data)
+```
+
+因此完整 action 语义是：
+
+```text
+policy action
+→ action * action_scale
+→ default_pose + scaled action
+→ motor_targets
+→ data.ctrl
+→ XML position actuator
+→ 关节位置目标
+```
+
+这说明 policy 输出不是 torque，而是 **关节位置目标偏移量**。`mjx_env.step()` 本身只把传入值写到 `ctrl`，并不知道这是 position target；真正把 `ctrl` 解释成位置目标的是 XML actuator 类型。 
+
+---
+
+【6. 关节默认 class：每类关节的 range / 力矩范围 / armature】
+
+XML 中对不同关节组设置了默认参数：
+
+```text
+hip_pitch
+hip_roll
+hip_yaw
+knee
+ankle_pitch
+ankle_roll
+waist_yaw
+waist_pitch
+waist_roll
+shoulder_pitch
+shoulder_roll
+shoulder_yaw
+elbow
+wrist_roll
+wrist_pitch
+wrist_yaw
+```
+
+典型内容：
+
+```xml
+<joint axis="..." range="..." actuatorfrcrange="..." armature="..."/>
+```
+
+这些字段影响：
+
+```text
+joint axis
+joint range
+actuator force range
+armature
+damping
+frictionloss
+```
+
+对训练的影响：
+
+```text
+1. joint range 会被 joystick.py 读取，用于 soft joint limit reward
+2. actuatorfrcrange 限制 actuator 输出力
+3. armature 影响关节等效惯量
+4. damping/frictionloss 影响动作响应和能耗
+5. position actuator kp 影响 target tracking 强度
+```
+
+`joystick.py::_post_init()` 会读取：
+
+```python
+self._lowers, self._uppers = self.mj_model.jnt_range[1:].T
+```
+
+然后计算 soft limits。也就是说 XML 的 joint range 会直接进入 reward 中的：
+
+```text
+_cost_joint_pos_limits(data.qpos[7:])
+```
+
+除非 `restricted_joint_range=True`，此时 `base.py` 会用 `g1_constants.RESTRICTED_JOINT_RANGE` 覆盖 XML 中的 `jnt_range[1:]` 和 `actuator_ctrlrange[:]`。 
+
+---
+
+【7. `asset`：mesh 资源引用】
+
+`asset` 中大量引用：
+
+```text
+../../../../../mujoco_menagerie/unitree_g1/assets/*.STL
+```
+
+例如：
+
+```xml
+<mesh name="pelvis" file="../../../../../mujoco_menagerie/unitree_g1/assets/pelvis.STL"/>
+<mesh name="torso_link" file="../../../../../mujoco_menagerie/unitree_g1/assets/torso_link_rev_1_0.STL"/>
+...
+```
+
+这说明：
+
+```text
+G1 visual mesh 资源主要来自 mujoco_menagerie/unitree_g1/assets
+```
+
+这和 `mjx_env.ensure_menagerie_exists()`、`base.py::get_assets()` 对应：
+
+```text
+locomotion.load(...)
+→ ensure_menagerie_exists()
+→ 下载 / 检查 mujoco_menagerie
+
+G1Env.__init__
+→ get_assets()
+→ 加载项目 xmls 和 Menagerie unitree_g1 assets
+→ MjModel.from_xml_string(..., assets=...)
+```
+
+`locomotion.load()` 确实会先调用 `mjx_env.ensure_menagerie_exists()`，保证 Menagerie 存在。
+
+工程风险：
+
+```text
+如果 Menagerie 没有下载，XML 中的 mesh 引用无法解析。
+如果 assets key 或相对路径解析不符合预期，MjModel 编译会失败。
+如果只拷贝这个 XML，不拷贝 Menagerie assets，也无法完整加载模型。
+```
+
+---
+
+【8. `worldbody`：G1 刚体树结构】
+
+`worldbody` 是机器人本体结构的核心。
+
+顶层是：
+
+```xml
+<body name="pelvis" pos="0 0 0.793" childclass="g1">
+  <freejoint name="floating_base_joint"/>
+  ...
+</body>
+```
+
+这说明：
+
+```text
+根 body = pelvis
+初始高度 pos z = 0.793
+第一个 joint = floating_base_joint
+机器人是 floating-base humanoid
+```
+
+这和 Python 代码中的 qpos/qvel 切片完全对应：
+
+```text
+qpos[0:3]   base position
+qpos[3:7]   base quaternion
+qpos[7:]    29 个普通关节角
+
+qvel[0:6]   base velocity
+qvel[6:]    29 个普通关节速度
+```
+
+`mjx_env.qpos_width()` / `dof_width()` 也定义了 freejoint 的 qpos 宽度为 7、qvel 宽度为 6。
+
+`joystick.py` 中也大量使用：
+
+```python
+qpos[7:]
+qvel[6:]
+```
+
+这不是随意写死，而是由 XML 中 `freejoint + 29 hinge joints` 结构决定。
+
+---
+
+【9. 关节链：29 个 actuated joints】
+
+这个 XML 中普通关节结构可以分成五组：
+
+```text
+左腿 6：
+  left_hip_pitch_joint
+  left_hip_roll_joint
+  left_hip_yaw_joint
+  left_knee_joint
+  left_ankle_pitch_joint
+  left_ankle_roll_joint
+
+右腿 6：
+  right_hip_pitch_joint
+  right_hip_roll_joint
+  right_hip_yaw_joint
+  right_knee_joint
+  right_ankle_pitch_joint
+  right_ankle_roll_joint
+
+腰部 3：
+  waist_yaw_joint
+  waist_roll_joint
+  waist_pitch_joint
+
+左臂 7：
+  left_shoulder_pitch_joint
+  left_shoulder_roll_joint
+  left_shoulder_yaw_joint
+  left_elbow_joint
+  left_wrist_roll_joint
+  left_wrist_pitch_joint
+  left_wrist_yaw_joint
+
+右臂 7：
+  right_shoulder_pitch_joint
+  right_shoulder_roll_joint
+  right_shoulder_yaw_joint
+  right_elbow_joint
+  right_wrist_roll_joint
+  right_wrist_pitch_joint
+  right_wrist_yaw_joint
+```
+
+总数：
+
+```text
+6 + 6 + 3 + 7 + 7 = 29
+```
+
+这和以下代码完全接上：
+
+```text
+joystick.py:
+  qpos[7:] 随机化 shape=(29,)
+  last_act = zeros(self.mjx_model.nu)
+  motor_targets = zeros(self.mjx_model.nu)
+  obs 中 joint_angles 29 维
+  obs 中 joint_vel 29 维
+  obs 中 last_act 29 维
+
+g1_constants.py:
+  RESTRICTED_JOINT_RANGE 共 29 项
+
+base.py:
+  action_size = mjx_model.nu
+```
+
+所以当前环境的 action 维度来自 XML actuator 数量，而不是 Python 手写常量。Python 里出现的 29 是和 XML 对齐的。  
+
+---
+
+【10. actuator：29 个 position actuator】
+
+`<actuator>` 中定义了 29 个 `<position>` actuator，顺序与上面的 29 个关节一致。
+
+结构是：
+
+```xml
+<position class="hip_pitch" name="left_hip_pitch_joint" joint="left_hip_pitch_joint"/>
+...
+```
+
+这意味着：
+
+```text
+每个普通关节都有一个 position actuator
+actuator name 与 joint name 基本一致
+actuator ctrl 是目标关节位置
+actuator range 继承 joint range，因为 default 中 position inheritrange="1"
+```
+
+对 `Joystick.step()` 的直接含义：
+
+```text
+policy action, shape=(29,)
+→ motor_targets, shape=(29,)
+→ data.ctrl, shape=(29,)
+→ 29 个 position actuator 的目标位置
+```
+
+因此：
+
+```text
+action 不是 torque
+action 不是 velocity
+action 是相对 default_pose 的关节位置 target 偏移
+```
+
+默认动作缩放来自 `joystick.py`：
+
+```text
+action_scale = 0.5
+motor_targets = default_pose + action * 0.5
+```
+
+所以如果 policy 输出范围大致在 `[-1, 1]`，则每个关节目标是在默认姿态附近 ±0.5 rad 的偏移。但最终是否被 ctrlrange 限制，要看 MuJoCo actuator range。
+
+---
+
+【11. collision 设计：为什么叫 feetonly】
+
+这个 XML 中大量 visual mesh 用于显示，但真正 collision geom 很少，且很多 collision geom 被注释掉。
+
+能看到的关键 collision geom 包括：
+
+```text
+left_thigh
+right_thigh
+left_shin
+right_shin
+left_foot
+right_foot
+left_hand_collision
+right_hand_collision
+```
+
+脚部 collision：
+
+```xml
+<geom name="left_foot" class="foot" ... type="box"/>
+<geom name="right_foot" class="foot" ... type="box"/>
+```
+
+手部 collision：
+
+```xml
+<geom name="left_hand_collision" class="collision" type="capsule" .../>
+<geom name="right_hand_collision" class="collision" type="capsule" .../>
+```
+
+腿部 collision：
+
+```xml
+<geom name="left_thigh" class="collision" type="capsule" .../>
+<geom name="right_thigh" class="collision" type="capsule" .../>
+<geom name="left_shin" class="collision" type="capsule" .../>
+<geom name="right_shin" class="collision" type="capsule" .../>
+```
+
+大量其他 collision capsule 被注释掉。这说明模型不是全身精细碰撞，而是只保留任务需要的少数碰撞部位。
+
+对训练的影响：
+
+```text
+1. 脚-地接触用于站立/行走
+2. 手-大腿碰撞用于 collision penalty
+3. 脚-脚碰撞用于 termination
+4. shin/thigh collision 名称被 joystick.py 硬编码依赖
+5. 被注释掉的碰撞不会参与训练
+```
+
+这就是 “feetonly” 的重要工程含义：它不是完整实机碰撞模型，而是为了 locomotion 训练做过简化。
+
+---
+
+【12. contact：显式接触 pair】
+
+`<contact>` 中定义了：
+
+```xml
+<pair name="left_foot_floor" geom1="left_foot" geom2="floor" condim="3" friction="0.6 0.6"/>
+<pair name="right_foot_floor" geom1="right_foot" geom2="floor" condim="3" friction="0.6 0.6"/>
+<pair name="left_hand_thigh" geom1="left_hand_collision" geom2="left_thigh" condim="1"/>
+<pair name="right_hand_thigh" geom1="right_hand_collision" geom2="right_thigh" condim="1"/>
+<pair name="left_foot_right_foot" geom1="left_foot" geom2="right_foot" condim="1"/>
+```
+
+这几个 pair 对应 `joystick.py` 的 reward/termination 设计：
+
+```text
+left_foot_floor / right_foot_floor
+→ 脚-地接触
+→ contact
+→ feet_air_time / first_contact / swing_peak
+
+left_hand_thigh / right_hand_thigh
+→ 手碰大腿
+→ collision cost
+
+left_foot_right_foot
+→ 脚碰脚
+→ contact termination
+```
+
+但是需要注意：`joystick.py` 中还期望一些 sensor：
+
+```text
+left_foot_floor_found
+right_foot_floor_found
+right_foot_left_foot_found
+left_foot_right_shin_found
+right_foot_left_shin_found
+left_hand_left_thigh_found
+right_hand_right_thigh_found
+```
+
+而当前这个 XML 文件中，只看到 contact pair 和部分 force/IMU/velocity sensors，没有看到这些 `*_found` sensor。并且文件中：
+
+```xml
+<pair name="left_foot_right_shin" .../>
+<pair name="right_foot_left_shin" .../>
+```
+
+是注释掉的。
+
+因此基于当前这个单独 XML 文件可以确认一个重要风险：
+
+```text
+如果只加载 g1_mjx_feetonly.xml，Joystick._post_init() 期望的若干 *_found sensors 可能不存在。
+```
+
+但正常 pipeline 不是直接加载这个文件，而是通过 scene XML 加载 flat/rough 场景。`g1_constants.task_to_xml()` 指向的是 scene XML，不是这个主模型 XML。
+
+所以需要继续检查：
+
+```text
+scene_mjx_feetonly_flat_terrain.xml
+scene_mjx_feetonly_rough_terrain.xml
+sensor.xml
+```
+
+看这些文件是否额外定义了 `*_found` sensor 或 include 了补充 sensor 文件。
+
+---
+
+【13. sensor：当前 XML 中能直接看到的传感器】
+
+当前 XML 的 `<sensor>` 里定义了这些类型：
+
+```text
+framezaxis
+velocimeter
+accelerometer
+gyro
+framexaxis
+framequat
+framelinvel
+frameangvel
+force
+```
+
+具体名称包括：
+
+```text
+upvector_torso
+upvector_pelvis
+
+local_linvel_torso
+local_linvel_pelvis
+
+accelerometer_torso
+accelerometer_pelvis
+
+gyro_torso
+gyro_pelvis
+
+forwardvector_torso
+forwardvector_pelvis
+
+orientation_torso
+orientation_pelvis
+
+global_linvel_torso
+global_linvel_pelvis
+
+global_angvel_torso
+global_angvel_pelvis
+
+left_foot_global_linvel
+right_foot_global_linvel
+
+left_foot_upvector
+right_foot_upvector
+
+left_foot_force
+right_foot_force
+```
+
+这些和 `base.py` / `g1_constants.py` 的接口高度对应。
+
+例如：
+
+```text
+g1_constants.GYRO_SENSOR = "gyro"
+→ base.py.get_gyro(data, "pelvis")
+→ sensor name = "gyro_pelvis"
+→ XML 中存在 gyro_pelvis
+```
+
+```text
+g1_constants.GRAVITY_SENSOR = "upvector"
+→ base.py.get_gravity(data, "torso")
+→ sensor name = "upvector_torso"
+→ XML 中存在 upvector_torso
+```
+
+```text
+g1_constants.LOCAL_LINVEL_SENSOR = "local_linvel"
+→ base.py.get_local_linvel(data, "pelvis")
+→ sensor name = "local_linvel_pelvis"
+→ XML 中存在 local_linvel_pelvis
+```
+
+`base.py` 中这些 sensor wrapper 最终都通过 `mjx_env.get_sensor_data()` 按 sensor 名称从 `data.sensordata` 中切片。 
+
+---
+
+【14. sensor 对 observation 的影响】
+
+`joystick.py::_get_obs()` 依赖以下 sensor 或 site：
+
+```text
+gyro_pelvis
+local_linvel_pelvis
+accelerometer_pelvis
+global_angvel_pelvis
+left_foot_global_linvel
+right_foot_global_linvel
+imu_in_pelvis site
+left_foot / right_foot site
+```
+
+当前 XML 中直接存在：
+
+```text
+imu_in_pelvis
+left_foot
+right_foot
+gyro_pelvis
+local_linvel_pelvis
+accelerometer_pelvis
+global_angvel_pelvis
+left_foot_global_linvel
+right_foot_global_linvel
+```
+
+所以 observation 主体所需的传感器在这个 XML 中基本能对上。
+
+数据流：
+
+```text
+XML sensor / site
+→ mujoco.MjModel sensor table / site table
+→ mjx.Data.sensordata / site_xpos / site_xmat
+→ Joystick._get_obs
+→ obs["state"] / obs["privileged_state"]
+```
+
+对应 observation 组成：
+
+```text
+state:
+  noisy_linvel
+  noisy_gyro
+  noisy_gravity
+  command
+  joint_angles - default_pose
+  joint_vel
+  last_act
+  phase
+
+privileged_state:
+  state
+  gyro
+  accelerometer
+  gravity
+  linvel
+  global_angvel
+  joint_angles - default_pose
+  joint_vel
+  root_height
+  actuator_force
+  contact
+  feet_vel
+  feet_air_time
+```
+
+其中 `feet_vel` 来自：
+
+```text
+left_foot_global_linvel
+right_foot_global_linvel
+```
+
+这和当前 XML 传感器能接上。
+
+---
+
+【15. sensor 对 reward / termination 的影响】
+
+### 15.1 速度跟踪 reward
+
+`_reward_tracking_lin_vel` 使用：
+
+```text
+local_linvel_pelvis
+```
+
+当前 XML 有：
+
+```xml
+<velocimeter site="imu_in_pelvis" name="local_linvel_pelvis"/>
+```
+
+所以线速度跟踪的底层 sensor 存在。
+
+数据流：
+
+```text
+local_linvel_pelvis
+→ base.py.get_local_linvel(data, "pelvis")
+→ joystick.py._reward_tracking_lin_vel(command, local_vel)
+→ tracking_lin_vel reward
+```
+
+---
+
+### 15.2 yaw 角速度跟踪 reward
+
+`_reward_tracking_ang_vel` 使用：
+
+```text
+gyro_pelvis
+```
+
+当前 XML 有：
+
+```xml
+<gyro site="imu_in_pelvis" name="gyro_pelvis"/>
+```
+
+数据流：
+
+```text
+gyro_pelvis
+→ base.py.get_gyro(data, "pelvis")
+→ joystick.py._reward_tracking_ang_vel(command, gyro)
+→ tracking_ang_vel reward
+```
+
+---
+
+### 15.3 姿态 termination / orientation cost
+
+`_get_termination()` 使用：
+
+```text
+upvector_torso
+```
+
+当前 XML 有：
+
+```xml
+<framezaxis objtype="site" objname="imu_in_torso" name="upvector_torso"/>
+```
+
+数据流：
+
+```text
+upvector_torso
+→ base.py.get_gravity(data, "torso")
+→ fall_termination = upvector_torso[-1] < 0
+```
+
+`_cost_orientation()` 也使用 `upvector_torso`。
+
+---
+
+### 15.4 contact force cost
+
+`_cost_contact_force()` 使用：
+
+```text
+left_foot_force
+right_foot_force
+```
+
+当前 XML 有：
+
+```xml
+<force name="left_foot_force" site="left_foot"/>
+<force name="right_foot_force" site="right_foot"/>
+```
+
+数据流：
+
+```text
+left/right foot force
+→ _cost_contact_force
+→ 超过 max_contact_force=500 的部分被惩罚
+```
+
+---
+
+### 15.5 接触 found sensor 存疑
+
+`joystick.py` 中接触布尔值不是直接从 contact pair 读，而是从 sensor id 读：
+
+```text
+left_foot_floor_found
+right_foot_floor_found
+right_foot_left_foot_found
+left_foot_right_shin_found
+right_foot_left_shin_found
+left_hand_left_thigh_found
+right_hand_right_thigh_found
+```
+
+当前 XML 的 `<sensor>` 段没有这些名字。
+
+因此：
+
+```text
+当前 XML 单文件
+→ 不能单独满足 Joystick._post_init() 对所有 contact-found sensors 的需求
+```
+
+需要继续看 scene XML 或 sensor.xml 是否补充了这些传感器。
+
+这是当前文件最重要的工程风险点之一。
+
+---
+
+【16. site / body / geom 命名与 Python 常量的对应】
+
+`g1_constants.py` 定义：
+
+```text
+FEET_SITES = ["left_foot", "right_foot"]
+HAND_SITES = ["left_palm", "right_palm"]
+FEET_GEOMS = ["left_foot", "right_foot"]
+ROOT_BODY = "torso_link"
+```
+
+当前 XML 中可以直接看到对应对象：
+
+```text
+site:
+  left_foot
+  right_foot
+  left_palm
+  right_palm
+  imu_in_pelvis
+  imu_in_torso
+
+geom:
+  left_foot
+  right_foot
+  left_thigh
+  right_thigh
+  left_shin
+  right_shin
+  left_hand_collision
+  right_hand_collision
+
+body:
+  pelvis
+  torso_link
+```
+
+这说明 `g1_constants.py` 与当前 XML 的主要命名是对齐的。
+
+数据流：
+
+```text
+g1_constants.FEET_SITES
+→ Joystick._post_init()
+→ mj_model.site("left_foot").id / site("right_foot").id
+→ data.site_xpos
+→ foot height / feet phase reward
+```
+
+```text
+g1_constants.ROOT_BODY = "torso_link"
+→ Joystick._post_init()
+→ mj_model.body("torso_link").id
+→ torso body id / torso mass
+```
+
+---
+
+【17. 当前 XML 中没有 `knees_bent` keyframe】
+
+`joystick.py::_post_init()` 明确要求：
+
+```python
+self._init_q = jp.array(self._mj_model.keyframe("knees_bent").qpos)
+self._default_pose = jp.array(self._mj_model.keyframe("knees_bent").qpos[7:])
+```
+
+但当前 `g1_mjx_feetonly.xml` 文件中没有看到 `<keyframe>` 或 `<key name="knees_bent">`。
+
+因此可以直接指出：
+
+```text
+如果只用当前 g1_mjx_feetonly.xml 创建 MjModel，
+Joystick._post_init() 会因为找不到 keyframe("knees_bent") 而失败。
+```
+
+不过正常 pipeline 中 `task_to_xml()` 加载的是 scene XML，不是这个主模型 XML。
+
+所以需要继续确认：
+
+```text
+scene_mjx_feetonly_flat_terrain.xml
+scene_mjx_feetonly_rough_terrain.xml
+```
+
+是否定义了：
+
+```xml
+<keyframe>
+  <key name="knees_bent" .../>
+</keyframe>
+```
+
+这是必须检查的文件连接点。
+
+---
+
+【18. 当前 XML 和 `restricted_joint_range` 的关系】
+
+当前 XML 自己定义了原始 joint range，例如：
+
+```text
+hip_pitch range="-2.5307 2.8798"
+hip_roll range="-0.5236 2.9671"
+hip_yaw range="-2.7576 2.7576"
+knee range="-0.087267 2.8798"
+ankle_pitch range="-0.87267 0.5236"
+ankle_roll range="-0.2618 0.2618"
+...
+```
+
+但 `base.py` 里如果配置：
+
+```text
+restricted_joint_range=True
+```
+
+会覆盖：
+
+```python
+mj_model.jnt_range[1:] = consts.RESTRICTED_JOINT_RANGE
+mj_model.actuator_ctrlrange[:] = consts.RESTRICTED_JOINT_RANGE
+```
+
+当前 `joystick.py::default_config()` 中：
+
+```text
+restricted_joint_range=False
+```
+
+所以默认使用 XML 原始 joint range。
+
+区别是：
+
+```text
+默认：
+  XML joint range 生效
+
+restricted_joint_range=True：
+  g1_constants.RESTRICTED_JOINT_RANGE 覆盖 XML joint range / actuator ctrlrange
+```
+
+这会影响：
+
+```text
+1. actuator 控制目标范围
+2. MuJoCo joint limit
+3. joystick.py 中 soft joint limit 的 lowers/uppers
+4. dof_pos_limits reward
+```
+
+---
+
+【19. 数据流：policy action 如何落到 XML actuator】
+
+完整 action 数据流如下：
+
+```text
+policy 输出 action, shape=(29,)
+→ Joystick.step(...)
+→ motor_targets = default_pose + action * action_scale
+→ mjx_env.step(mjx_model, data, motor_targets, n_substeps)
+→ data.ctrl = motor_targets
+→ XML 中 29 个 <position> actuators
+→ 每个 actuator 追踪对应 joint 的目标位置
+→ mjx.step 推进动力学
+→ 新 mjx.Data
+```
+
+关键结论：
+
+```text
+当前 G1 训练不是 torque-control，而是 position-control。
+```
+
+这对理解论文或工程复现很重要。很多 locomotion RL 论文写 action 是 joint target / residual joint target，这里正是这种结构：
+
+```text
+action = 相对 default_pose 的 29 维关节目标偏移
+```
+
+而不是：
+
+```text
+action = 29 维关节力矩
+```
+
+---
+
+【20. 数据流：XML sensor 如何进入 observation】
+
+以 pelvis gyro 为例：
+
+```text
+XML:
+  <gyro site="imu_in_pelvis" name="gyro_pelvis"/>
+
+→ mujoco.MjModel sensor table:
+  sensor("gyro_pelvis")
+
+→ MJX step:
+  data.sensordata 更新 gyro_pelvis 对应片段
+
+→ base.py:
+  get_gyro(data, "pelvis")
+  = get_sensor_data(mj_model, data, "gyro_pelvis")
+
+→ joystick.py:
+  noisy_gyro = gyro + noise
+
+→ obs["state"]:
+  noisy_gyro 进入 policy observation
+```
+
+以脚速度为例：
+
+```text
+XML:
+  <framelinvel objtype="site" objname="left_foot" name="left_foot_global_linvel"/>
+  <framelinvel objtype="site" objname="right_foot" name="right_foot_global_linvel"/>
+
+→ Joystick._post_init:
+  查 sensor adr / dim
+  保存 self._foot_linvel_sensor_adr
+
+→ Joystick._get_obs:
+  feet_vel = data.sensordata[self._foot_linvel_sensor_adr].ravel()
+
+→ privileged_state:
+  feet_vel 进入特权观测
+```
+
+---
+
+【21. 数据流：XML contact pair 如何支持 reward / termination】
+
+理论上：
+
+```text
+XML contact pair
+→ MuJoCo contact solver
+→ contact force / contact existence
+→ sensor 或 data.contact
+→ Joystick reward / termination
+```
+
+但当前 `joystick.py` 不是直接遍历 `data.contact`，而是依赖 sensor：
+
+```text
+*_found sensor
+foot force sensor
+```
+
+当前 XML 只直接提供：
+
+```text
+left_foot_force
+right_foot_force
+```
+
+没有直接提供：
+
+```text
+left_foot_floor_found
+right_foot_left_foot_found
+...
+```
+
+所以对于 contact-based done / first_contact 来说，必须继续查 scene/sensor 文件，否则这个链条是不完整的。
+
+---
+
+【22. shape / 维度 / 数值信息】
+
+当前 XML 能直接确认：
+
+```text
+模型名：g1_29dof_rev_1_0
+积分器：Euler
+XML timestep：0.002
+根 body：pelvis
+根 joint：floating_base_joint
+普通 actuated joints：29
+position actuators：29
+脚 site：2 个，left_foot / right_foot
+手 site：2 个，left_palm / right_palm
+脚 force sensor：2 个，left_foot_force / right_foot_force
+脚 global linvel sensor：2 个，left_foot_global_linvel / right_foot_global_linvel
+```
+
+与 Python 代码结合可确认：
+
+```text
+qpos 结构：
+  7 + 29
+
+qvel 结构：
+  6 + 29
+
+action_size：
+  mjx_model.nu = 29
+
+policy action 语义：
+  29 维 joint position target offset
+
+默认 sim_dt：
+  XML 0.002，config 也为 0.002
+
+默认 control dt：
+  0.02，需要看 joystick.py
+
+默认 n_substeps：
+  round(0.02 / 0.002) = 10
+```
+
+当前 XML 本身没有给出：
+
+```text
+reward scale
+episode length
+command range
+observation noise
+PPO 参数
+domain randomization range
+```
+
+这些在：
+
+```text
+joystick.py
+randomize.py
+locomotion_params.py
+```
+
+---
+
+【23. 与其他文件的连接】
+
+### 23.1 与 `g1_constants.py`
+
+连接点：
+
+```text
+FEET_SITES = ["left_foot", "right_foot"]
+→ XML site left_foot / right_foot
+
+HAND_SITES = ["left_palm", "right_palm"]
+→ XML site left_palm / right_palm
+
+FEET_GEOMS = ["left_foot", "right_foot"]
+→ XML geom left_foot / right_foot
+
+ROOT_BODY = "torso_link"
+→ XML body torso_link
+
+sensor prefix:
+  gyro / upvector / local_linvel / global_linvel / global_angvel / accelerometer
+→ XML sensor gyro_pelvis / upvector_torso / local_linvel_pelvis / ...
+```
+
+`g1_constants.py` 是 Python 命名常量，当前 XML 是这些名字的实际落点。
+
+---
+
+### 23.2 与 `base.py`
+
+连接点：
+
+```text
+base.py::G1Env.__init__
+→ MjModel.from_xml_string(...)
+→ 编译当前 XML / scene XML
+
+base.py::get_gravity / get_gyro / get_local_linvel
+→ 通过当前 XML sensor 名称读取 sensordata
+
+base.py::action_size
+→ mjx_model.nu
+→ 当前 XML actuator 数量
+```
+
+所以 `base.py` 是当前 XML 进入 Python/MJX 的桥。
+
+---
+
+### 23.3 与 `joystick.py`
+
+连接点最多：
+
+```text
+keyframe knees_bent
+→ 当前 XML 未看到，需要 scene XML 确认
+
+qpos[7:] / qvel[6:]
+→ 当前 XML freejoint + 29 joints 支持
+
+self._mj_model.joint(...)
+→ 当前 XML 29 个 joint 名称支持
+
+self._mj_model.site("imu_in_torso")
+self._mj_model.site("imu_in_pelvis")
+→ 当前 XML 支持
+
+self._mj_model.site("left_foot" / "right_foot")
+→ 当前 XML 支持
+
+self._mj_model.geom("floor")
+→ 当前 XML 不定义 floor，需要 scene XML 定义
+
+self._mj_model.sensor("..._found")
+→ 当前 XML 未看到，需要 sensor/scene XML 确认
+
+data.actuator_force
+→ 当前 XML 29 个 actuator 支持
+
+motor_targets = default_pose + action * action_scale
+→ 当前 XML position actuator 解释 ctrl
+```
+
+因此当前 XML 是 `Joystick` 能否运行的核心模型基础，但不是完整场景。
+
+---
+
+### 23.4 与 scene XML
+
+当前文件本身没有 `floor` geom，也没有看到 `knees_bent` keyframe 和 `*_found` sensor。
+
+因此它大概率需要由 scene XML 补全：
+
+```text
+scene_mjx_feetonly_flat_terrain.xml
+scene_mjx_feetonly_rough_terrain.xml
+```
+
+这些 scene XML 应该提供：
+
+```text
+floor geom
+terrain / hfield
+可能的 keyframe
+可能的 contact found sensor
+include 当前 g1_mjx_feetonly.xml
+```
+
+当前不能假装已经确认 scene XML 内容，必须继续查看。
+
+---
+
+【24. 对训练/仿真/推理的影响】
+
+### 24.1 对 action 的影响
+
+当前 XML 决定了 action 是 29 维 position control。
+
+如果你将来想改成 torque control，不能只改 `joystick.py`，还要改 XML：
+
+```text
+<position ...>
+→ <motor ...> 或其他 actuator
+```
+
+否则 `data.ctrl` 仍会被 MuJoCo 解释成 position target。
+
+---
+
+### 24.2 对 observation 的影响
+
+当前 XML 提供了 IMU 和速度传感器：
+
+```text
+gyro_pelvis
+accelerometer_pelvis
+upvector_pelvis
+local_linvel_pelvis
+global_angvel_pelvis
+```
+
+所以 `obs["state"]` 和 `obs["privileged_state"]` 的 proprioceptive 部分依赖这个 XML sensor section。
+
+如果删掉 sensor，Python 代码不是降级运行，而是会直接查找 sensor 失败。
+
+---
+
+### 24.3 对 reward 的影响
+
+reward 的很多输入来自当前 XML：
+
+```text
+tracking_lin_vel
+→ local_linvel_pelvis
+
+tracking_ang_vel
+→ gyro_pelvis
+
+orientation / termination
+→ upvector_torso
+
+contact_force
+→ left_foot_force / right_foot_force
+
+feet_phase / feet_clearance
+→ left_foot / right_foot site_xpos
+→ left/right foot global linvel sensors
+```
+
+因此 XML 的 sensor/site 定义会直接改变 reward 计算。
+
+---
+
+### 24.4 对 termination 的影响
+
+`Joystick._get_termination()` 依赖：
+
+```text
+upvector_torso
+right_foot_left_foot_found
+left_foot_right_shin_found
+right_foot_left_shin_found
+```
+
+当前 XML 支持 `upvector_torso`，但没有看到后面三个 found sensor。需要 scene/sensor XML 补全。
+
+---
+
+### 24.5 对 sim-to-real / domain randomization 的影响
+
+当前 XML 里有大量可随机化物理参数：
+
+```text
+geom friction
+joint damping
+joint frictionloss
+armature
+body mass
+inertia
+actuator kp
+actuator force range
+```
+
+`randomize.py` 可能会随机化其中一部分。filemap 也提示 domain randomization 涉及摩擦、关节摩擦损失、电枢、质量、初始位置。
+
+所以 `randomize.py` 必须和 XML 对照读：
+
+```text
+randomize.py 改哪个 field
+→ XML 中这个 field 初始值是什么
+→ 是否按 body / dof / geom 顺序对应
+```
+
+---
+
+【25. 容易误解或需要注意的点】
+
+### 25.1 这个 XML 不是完整训练入口 XML
+
+`g1_constants.task_to_xml()` 指向的是 scene XML，而不是 `g1_mjx_feetonly.xml`。当前文件是主机器人模型，不一定包含完整地形、floor、keyframe、contact found sensor。
+
+如果你直接加载它，可能缺：
+
+```text
+floor geom
+knees_bent keyframe
+Joystick 需要的 *_found sensors
+```
+
+---
+
+### 25.2 `feetonly` 不表示只有脚有关节
+
+它仍然是完整 29 DoF G1：
+
+```text
+腿 12
+腰 3
+双臂 14
+总计 29
+```
+
+`feetonly` 更像是 collision 设计上的简化：主要保留脚部碰撞和少量手/腿碰撞，而不是完整全身 collision。
+
+---
+
+### 25.3 policy action 不是 torque
+
+XML 中 actuator 是 `<position>`。所以 `Joystick.step()` 传入 `mjx_env.step()` 的 `motor_targets` 会成为 position actuator 的目标位置。
+
+这会影响你后续理解控制策略：
+
+```text
+policy 输出的是 residual joint position target
+不是 joint torque
+```
+
+---
+
+### 25.4 contact pair 不等于 joystick 中的 contact sensor
+
+XML 中有：
+
+```text
+<pair name="left_foot_floor" .../>
+```
+
+但 `Joystick` 查的是：
+
+```text
+left_foot_floor_found sensor
+```
+
+这两者不是同一个东西。contact pair 定义允许/指定接触；sensor 才是 Python 代码读取的观测量。
+
+当前 XML 中没有看到 `*_found` sensor，所以必须继续查 scene/sensor XML。
+
+---
+
+### 25.5 `floor` 不在当前 XML 中
+
+`Joystick._post_init()` 会查：
+
+```python
+self._floor_geom_id = self._mj_model.geom("floor").id
+```
+
+当前主模型 XML 中没有定义 `floor` geom。floor 应该在 scene XML 中。
+
+所以当前文件不能单独支撑 `Joystick` 环境运行。
+
+---
+
+### 25.6 `knees_bent` keyframe 不在当前 XML 中
+
+`Joystick` 依赖：
+
+```text
+keyframe("knees_bent")
+```
+
+当前 XML 没看到 keyframe。它必须由其他 XML 补充。
+
+这是非常关键的连接点，因为：
+
+```text
+reset 初始 qpos
+default_pose
+action 中心
+stand_still reward
+pose reward
+joint deviation reward
+```
+
+都依赖 `knees_bent`。
+
+---
+
+### 25.7 XML 中 actuator 顺序必须和 Python 29 维默认姿态一致
+
+`data.ctrl` 是 29 维数组，顺序由 XML actuator 顺序决定。
+
+`qpos[7:]` 的顺序由 XML joint tree 编译顺序决定。
+
+当前 actuator 顺序看起来和 joint 顺序一致，但如果以后修改 XML，必须保证：
+
+```text
+default_pose = qpos[7:]
+motor_targets = default_pose + action * scale
+data.ctrl = motor_targets
+```
+
+中的 29 维顺序和 actuator joint 顺序一致。否则会出现“动作维度没报错，但控制错关节”的隐蔽 bug。
+
+---
+
+【26. 需要继续查看的文件】
+
+### 26.1 `scene_mjx_feetonly_flat_terrain.xml`
+
+必须看。
+
+原因：
+
+当前 `g1_mjx_feetonly.xml` 没有看到：
+
+```text
+floor geom
+knees_bent keyframe
+可能的 *_found sensors
+```
+
+而 `Joystick` 会依赖这些对象。
+
+重点确认：
+
+```text
+1. 是否 include g1_mjx_feetonly.xml
+2. 是否定义 geom name="floor"
+3. 是否定义 keyframe name="knees_bent"
+4. 是否 include sensor.xml
+5. 是否额外定义 contact found sensors
+6. flat terrain 的 floor friction / size / type
+```
+
+---
+
+### 26.2 `scene_mjx_feetonly_rough_terrain.xml`
+
+必须看。
+
+原因：
+
+rough terrain 环境也使用同一个 `Joystick` 类，区别主要来自 scene XML。
+
+重点确认：
+
+```text
+1. 是否 include 同一个 g1_mjx_feetonly.xml
+2. rough terrain 是否用 hfield
+3. hfield geom 名称是否仍然是 floor
+4. 是否定义 / include knees_bent keyframe
+5. 是否有相同 sensor / contact found sensor
+6. rough terrain 的 friction / hfield size / texture
+```
+
+---
+
+### 26.3 `sensor.xml`
+
+如果项目中确实存在这个文件，需要优先看。
+
+原因：
+
+filemap 中列出了 `sensor.xml`，并说明它定义 IMU、接触力传感器、线速度传感器。
+
+当前 `g1_mjx_feetonly.xml` 已经有一段 `<sensor>`，但缺少 `Joystick` 期望的一批 `*_found` sensors。
+
+重点确认：
+
+```text
+1. 是否定义 left_foot_floor_found
+2. 是否定义 right_foot_floor_found
+3. 是否定义 right_foot_left_foot_found
+4. 是否定义 left_foot_right_shin_found
+5. 是否定义 right_foot_left_shin_found
+6. 是否定义 left_hand_left_thigh_found
+7. 是否定义 right_hand_right_thigh_found
+```
+
+如果 `sensor.xml` 也没有这些 sensor，说明当前 XML 与 `joystick.py` 存在接口不匹配。
+
+---
+
+### 26.4 `g1_mjx_feetonly_restricted.xml`
+
+建议看。
+
+原因：
+
+项目里还有 restricted 版本。它可能把 `RESTRICTED_JOINT_RANGE` 直接写进 XML，或者是原始 Playground 中另一种模型分支。
+
+重点确认：
+
+```text
+1. 它和 g1_mjx_feetonly.xml 的差异
+2. 是否包含 knees_bent keyframe
+3. 是否包含更完整 sensor
+4. 是否和 base.py 的 restricted_joint_range 机制重复
+5. 是否实际被 task_to_xml 使用
+```
+
+当前 `g1_constants.task_to_xml()` 没有指向 restricted XML，所以默认 pipeline 不会加载它。
+
+---
+
+### 26.5 `joystick.py`
+
+需要和 XML 交叉复核。
+
+重点查：
+
+```text
+1. 所有 self._mj_model.joint(...)
+2. 所有 self._mj_model.site(...)
+3. 所有 self._mj_model.geom(...)
+4. 所有 self._mj_model.sensor(...)
+5. keyframe("knees_bent")
+6. qpos[7:] / qvel[6:]
+7. action_size / self.mjx_model.nu
+```
+
+目的：
+
+```text
+把 Python 硬编码名称逐一映射到 XML 对象。
+```
+
+---
+
+### 26.6 `randomize.py`
+
+需要和 XML 物理参数交叉读。
+
+重点查：
+
+```text
+1. 是否随机化 geom friction
+2. 是否随机化 dof_frictionloss
+3. 是否随机化 dof_armature
+4. 是否随机化 body_mass
+5. 是否随机化 qpos0 / body_pos
+6. 是否依赖 actuator / dof / body 的顺序
+```
+
+这些字段的初始值来自 XML；随机化是否合理必须对照 XML。
+
+---
+
+【27. 当前文件在整个 pipeline 中的定位总结】
+
+`g1_mjx_feetonly.xml` 是 **G1 主机器人模型文件**。它决定了：
+
+```text
+机器人有多少自由度
+qpos/qvel 怎么排列
+policy action 有多少维
+actuator 如何解释 ctrl
+哪些 body/site/geom/sensor 名称可被 Python 查询
+哪些碰撞 pair 存在
+哪些物理参数会进入 MJX 仿真
+```
+
+它和 Python 代码的核心连接是：
+
+```text
+g1_mjx_feetonly.xml
+→ scene XML include
+→ G1Env 加载 MjModel
+→ mjx.put_model
+→ Joystick.reset / step
+→ policy action 写入 29 个 position actuator
+→ sensor data 进入 observation / reward / termination
+```
+
+最重要的结论是：
+
+```text
+1. 这是 29 DoF floating-base G1 模型。
+2. actuator 是 position actuator，所以 policy action 最终是 joint position target。
+3. qpos[7:] / qvel[6:] 的写法来自 XML 中的 freejoint。
+4. 当前文件支持很多 IMU/速度/力传感器，但没有看到 Joystick 需要的所有 *_found sensors。
+5. 当前文件没有看到 knees_bent keyframe 和 floor geom，因此它应当不是单独可运行的完整任务 XML，而是需要 scene XML 补全。
+```
+
+后续阅读应立即接：
+
+```text
+scene_mjx_feetonly_flat_terrain.xml
+scene_mjx_feetonly_rough_terrain.xml
+sensor.xml
+```
+
+这三个文件会决定当前主模型是否能完整满足 `Joystick` 的初始化、接触检测和 reset 默认姿态需求。
