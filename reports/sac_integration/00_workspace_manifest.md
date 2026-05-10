@@ -1,44 +1,104 @@
-# Workspace Manifest
+# SAC Integration Status Report
 
-## Paths
+## Snapshot
+- Project path: `D:\mujoco_playground\g1_sac_dev`
+- Source template path: `D:\mujoco_playground\template`
+- LIFT reference path: `D:\mujoco_playground\LIFT-humanoid`
+- LIFT report copy path: `external_references/LIFT-humanoid-reports/`
+- Git branch: `codex/phase1-env-audit`
+- Git commit: `2fce0c50de0bfc13028ed3127aecd7294adcd012`
+- Working tree status at phase start: clean
+- OS: Windows native, `Microsoft Windows NT 10.0.26200.0`
+- Shell: PowerShell
+- System Python: `Python 3.12.11`, `C:\msys64\ucrt64\bin\python.exe`
+- `.venv` Python: `Python 3.14.3`, `.\.venv\Scripts\python.exe`
+- System Python JAX: not importable, `find_spec("jax") == None`
+- `.venv` JAX: `0.10.0`, backend `cpu`, devices `["cpu:0"]`
+- `.venv` MuJoCo: `3.8.0`
+- `.venv` Brax: `0.14.2`
+- `.venv` Torch: not importable, `find_spec("torch") == None`
+- CUDA / nvidia-smi / nvcc: `nvidia-smi` not found; `nvcc` not found
+- WSL2 status: `wsl.exe` present; `wsl -l -v` failed with localized output, no WSL2 distro/CUDA runtime validated
+- Date: 2026-05-11
 
-| Field | Value |
-|---|---|
-| Project path | `D:\mujoco_playground\g1_sac_dev` |
-| Source template | `D:\mujoco_playground\template` |
-| LIFT repo reference | `D:\mujoco_playground\LIFT-humanoid` |
-| LIFT report copy | `external_references/LIFT-humanoid-reports/` |
+## Phase Checklist
+- [x] Record project/template/LIFT paths.
+- [x] Record OS, shell, Python, dependency import specs.
+- [x] Record CUDA/WSL2 status.
+- [x] Record git branch, commit, working tree status.
+- [x] Mark training as not actually run on this laptop.
+- [x] Update after discovering usable `.venv` runtime.
 
-## Git
+## Current Route
+- Route A: not started
+- Route B: not started
+- Route C: not started
 
-| Field | Value |
-|---|---|
-| Initial baseline commit | `f4d23d5` |
-| Baseline commit message | `baseline g1 template before sac integration` |
-| Working branch | `sac-integration` |
-| Repo origin | None yet |
+## Files Changed
+- `reports/sac_integration/00_workspace_manifest.md`
 
-## Observed Preparation Environment
+## Commands Run
 
-| Field | Value |
-|---|---|
-| OS | Windows 11 / `Microsoft Windows NT 10.0.26200.0` observed from preparation host |
-| Shell | PowerShell 5.1 |
-| Python | `C:\msys64\ucrt64\bin\python.exe`, Python `3.12.11` observed from preparation host |
-| JAX | Not importable in preparation environment |
-| Torch | Not importable in preparation environment |
-| MuJoCo | Not importable in preparation environment |
-| CUDA | `nvidia-smi` and `nvcc` not found in preparation environment |
-| Runtime validation | Not run yet in this new project |
+| Command | Status | Notes |
+|---|---:|---|
+| `git -C D:\mujoco_playground\g1_sac_dev branch --show-current` | PASS | Startup branch was `sac-integration`; Phase 0/1 branch is `codex/phase1-env-audit`. |
+| `git -C D:\mujoco_playground\g1_sac_dev rev-parse HEAD` | PASS | `2fce0c50de0bfc13028ed3127aecd7294adcd012`. |
+| `git -C D:\mujoco_playground\g1_sac_dev status --short` | PASS | Clean at startup. |
+| `python --version` | PASS | `Python 3.12.11`. |
+| `python -c "import importlib.util as u; print(u.find_spec('jax'))"` | PASS | Returned `None`. |
+| `python -c "import importlib.util as u; print(u.find_spec('mujoco'))"` | PASS | Returned `None`. |
+| `python -c "import importlib.util as u; print(u.find_spec('brax'))"` | PASS | Returned `None`. |
+| `python -c "import importlib.util as u; print(u.find_spec('torch'))"` | PASS | Returned `None`. |
+| `.\.venv\Scripts\python.exe -c "import jax, mujoco, brax, sys; ..."` | PASS | `.venv` has Python 3.14.3, JAX 0.10.0 CPU, MuJoCo 3.8.0, Brax 0.14.2. |
+| `.\.venv\Scripts\python.exe -c "import importlib.util as u; print('torch', u.find_spec('torch'))"` | PASS | Returned `torch None`. |
+| `Get-Command nvidia-smi -ErrorAction SilentlyContinue` | FAIL | Command not found. |
+| `Get-Command nvcc -ErrorAction SilentlyContinue` | FAIL | Command not found. |
+| `wsl --status` | PASS | Output was localized/garbled; WSL executable exists. |
+| `wsl -l -v` | FAIL | No usable distro listing captured; no WSL2 runtime validated. |
+| `uv sync` | FAIL | Authorized by user, but timed out after about 124 seconds during startup alignment. Full dependency install not validated. |
 
-## Initial Source Facts
+## Results
 
-- Package name is `g1-training-env` (`pyproject.toml:6`).
-- Existing scripts are `train-g1-jax` and `train-g1-rsl` (`pyproject.toml:81`, `pyproject.toml:83`).
-- The template was not a git repo before this project was created.
-- This workspace was copied from template and initialized as a new git repository.
+| Test | Status | Notes |
+|---|---:|---|
+| Existing PPO entry point | PASS | `train-g1-jax = learning.train_jax_ppo:run`. |
+| Existing RSL entry point | PASS | `train-g1-rsl = learning.train_rsl_rl:run`. |
+| Base dependencies importable | PARTIAL | System Python cannot import JAX/MuJoCo/Brax, but `.venv` can import JAX/MuJoCo/Brax on CPU. Torch is absent. |
+| Training actually run | NOT VALIDATED | User clarified this laptop is for coding, not simulation/training. |
+| GPU smoke | NOT VALIDATED | Requires WSL2/Linux CUDA or an actually available CUDA JAX runtime. |
 
-## Next Agent Update Requirements
+## Shapes
+- action_size: NOT VALIDATED in runtime manifest.
+- obs type: NOT VALIDATED in runtime manifest.
+- obs keys: NOT VALIDATED in runtime manifest.
+- state shape: NOT VALIDATED in runtime manifest.
+- privileged_state shape: NOT VALIDATED in runtime manifest.
+- replay transition shape: NOT VALIDATED in runtime manifest.
 
-The next agent should update this manifest after installing/importing runtime dependencies or after moving to WSL2/Linux CUDA.
+## Runtime Metrics
+- steps: NOT VALIDATED
+- wall time: NOT VALIDATED
+- SPS: NOT VALIDATED
+- eval reward: NOT VALIDATED
+- actor loss: NOT VALIDATED
+- critic loss: NOT VALIDATED
+- alpha: NOT VALIDATED
+- NaN: NOT VALIDATED
 
+## Errors / Blockers
+- JAX/MuJoCo/Brax/Torch are not installed or not visible to `C:\msys64\ucrt64\bin\python.exe`.
+- `.venv` provides JAX/MuJoCo/Brax, but only CPU JAX was detected.
+- `uv sync` was authorized but timed out before completing.
+- `uv.lock` was generated by the authorized `uv sync` attempt and is now part of the working tree.
+- `mujoco_menagerie` assets are not present at `g1_env\external_deps\mujoco_menagerie`; env load may attempt a network clone unless guarded.
+- Laptop is not intended for meaningful simulation or training.
+
+## Diagnosis
+- Static implementation can proceed.
+- Runtime env checks can use `.venv` for imports, but env load/reset/step remain blocked until `mujoco_menagerie` assets are available or explicitly authorized for download.
+- SAC dry run and CPU tiny smoke should remain `NOT VALIDATED` on this laptop unless the user explicitly allows local simulation.
+
+## Next Proposed Fix
+- Complete static env readiness audit.
+- Implement SAC code so `compileall` can validate syntax without runtime dependencies.
+- Keep runtime smoke commands documented for a suitable validation environment.
