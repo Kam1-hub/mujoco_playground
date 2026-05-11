@@ -43,10 +43,9 @@ def brax_sac_config(
 
 
 def lift_sac_config(
-    env_name: str, unused_impl: Optional[str] = None
+    env_name: str, impl: Optional[str] = None
 ) -> config_dict.ConfigDict:
   """Returns the main asymmetric SAC config for G1."""
-  del unused_impl
   env_config = locomotion.get_default_config(env_name)
   if env_name not in ("G1JoystickFlatTerrain", "G1JoystickRoughTerrain"):
     raise ValueError(
@@ -55,6 +54,7 @@ def lift_sac_config(
 
   return config_dict.create(
       env_name=env_name,
+      impl=impl or "jax",
       seed=1,
       num_timesteps=10_000,
       num_evals=2,

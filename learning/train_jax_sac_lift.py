@@ -28,6 +28,15 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
       )
   )
   parser.add_argument("--env_name", default="G1JoystickFlatTerrain")
+  parser.add_argument(
+      "--impl",
+      choices=("jax", "warp"),
+      default=None,
+      help=(
+          "MJX implementation override for the G1 env. Defaults to the SAC "
+          "config value, currently jax for CPU smoke compatibility."
+      ),
+  )
   parser.add_argument("--seed", type=int, default=None)
   parser.add_argument("--num_timesteps", type=int, default=None)
   parser.add_argument("--num_evals", type=int, default=None)
@@ -71,6 +80,7 @@ def _build_config(args: argparse.Namespace):
   config = sac_params.lift_sac_config(args.env_name)
   for name in (
       "seed",
+      "impl",
       "num_timesteps",
       "num_evals",
       "num_envs",

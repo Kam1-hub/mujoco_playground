@@ -102,3 +102,22 @@
 - Complete static env readiness audit.
 - Implement SAC code so `compileall` can validate syntax without runtime dependencies.
 - Keep runtime smoke commands documented for a suitable validation environment.
+
+## 2026-05-11 Current Runtime Update
+
+This section records the current state after menagerie resolution and Route B CPU smoke.
+
+- Branch: `sac-integration`
+- Validation runtime: `.\.venv\Scripts\python.exe`
+- JAX: `0.10.0`, backend `cpu`, devices `['cpu:0']`
+- MuJoCo: `3.8.0`
+- Brax: `0.14.2`
+- Torch: not importable in `.venv`
+- CUDA: `nvidia-smi` and `nvcc` not found
+- WSL2/Linux CUDA: not validated
+- Menagerie path: `D:\mujoco_playground\g1_sac_dev\g1_env\external_deps\mujoco_menagerie`
+- Menagerie source commit: `1b86ece576591213e2b666ebf59508454200ca97`
+- Menagerie git tracking: ignored by `.gitignore`
+- Training actually run: yes, Route B CPU tiny smoke completed 256 env steps
+- CPU tiny checkpoint: `./logs/sac_lift_cpu_tiny\sac_lift_step_256.pkl`
+- GPU smoke: `NOT VALIDATED`

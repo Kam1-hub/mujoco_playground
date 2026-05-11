@@ -91,6 +91,15 @@ def _parse_args() -> argparse.Namespace:
           "Default is false to avoid hidden network/file writes."
       ),
   )
+  parser.add_argument(
+      "--impl",
+      choices=("jax", "warp"),
+      default="jax",
+      help=(
+          "MJX implementation override passed to registry.load. Defaults to "
+          "jax so CPU-only validation does not require CUDA-backed Warp."
+      ),
+  )
   return parser.parse_args()
 
 
@@ -158,6 +167,7 @@ def main() -> int:
           "action_repeat": getattr(config, "action_repeat", None),
           "action_scale": getattr(config, "action_scale", None),
           "impl": getattr(config, "impl", None),
+          "requested_impl": args.impl,
       }
 
     randomizer = _run_stage(
@@ -173,7 +183,11 @@ def main() -> int:
     env = _run_stage(
         result,
         "registry.load",
-        lambda: registry.load(args.env_name, config=config),
+        lambda: registry.load(
+            args.env_name,
+            config=config,
+            config_overrides={"impl": args.impl},
+        ),
     )
     if env is None:
       if result["status"] == "FAIL":

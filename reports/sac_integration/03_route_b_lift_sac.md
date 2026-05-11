@@ -116,3 +116,18 @@ RuntimeError: mujoco_menagerie is missing at D:\mujoco_playground\g1_sac_dev\g1_
 ## Next Proposed Fix
 - Continue validation ladder report updates.
 - Resolve menagerie assets before env load/reset/step or CPU tiny smoke can be counted.
+
+## 2026-05-11 Runtime Update
+
+This section supersedes the earlier runtime blocker notes above.
+
+- Menagerie assets are now present at `g1_env\external_deps\mujoco_menagerie`.
+- Menagerie source commit: `1b86ece576591213e2b666ebf59508454200ca97`.
+- Route B now defaults to `impl="jax"` and exposes `--impl` so CPU-only validation does not trigger the default Warp/CUDA backend probe.
+- `scripts/check_g1_env_api.py` also defaults to `--impl jax`.
+- Flat and rough env load/reset/step now pass under `.venv`.
+- Runtime obs is dict with `state` shape `(103,)` and `privileged_state` shape `(216,)`.
+- Runtime action size is 29.
+- Runtime `state.info["truncation"]` is absent; SAC synthesizes zero truncation and reports `truncation_fraction`.
+- Exact CPU tiny smoke passed with 256 env steps, 121 gradient steps, finite losses/alpha, and checkpoint `./logs/sac_lift_cpu_tiny\sac_lift_step_256.pkl`.
+- GPU smoke remains `NOT VALIDATED` because this host exposes only CPU JAX and lacks `nvidia-smi`/`nvcc`.

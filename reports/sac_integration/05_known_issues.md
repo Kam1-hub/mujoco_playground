@@ -1,45 +1,32 @@
 # Known Issues
 
-Status: updated on 2026-05-11 after Route B static implementation.
+Status: updated on 2026-05-11 after CPU tiny SAC smoke.
 
-## Current Blockers
+## Open
 
-| Issue | Status | Evidence | Impact | Next Action |
-|---|---:|---|---|---|
-| Missing `mujoco_menagerie` assets | BLOCKED_BY_DEPENDENCY | `Test-Path g1_env\external_deps\mujoco_menagerie` returned `False`; Phase 1 and Route A tracebacks both stop at `registry.load`/`ensure_menagerie_exists()`. | Env load/reset/step, Route A smoke, Route B CPU smoke, and GPU smoke cannot be validated. | Provide assets locally or authorize the guarded download path, then rerun Level 1 before training smoke. |
-| Route B env runtime smoke | BLOCKED_BY_DEPENDENCY | `learning.train_jax_sac_lift` non-dry-run probe stops before env load because `mujoco_menagerie` is absent. | Env load/reset/step and CPU tiny smoke cannot be validated. | Provide assets locally or authorize guarded download, then rerun env API before training smoke. |
-| System Python lacks runtime deps | BLOCKED_BY_DEPENDENCY | Phase 1 reports `ModuleNotFoundError: No module named 'jax'` for system Python. | Commands using bare `python` may fail depending on PATH. | Prefer `.\.venv\Scripts\python.exe` for validation unless the runtime is intentionally changed. |
-| Windows native GPU JAX unsupported as success target | NOT VALIDATED | Workspace reports detected CPU JAX in `.venv`; GPU/WSL2 CUDA was not validated. | Level 4 GPU smoke should not be expected to pass on native Windows. | Run Level 4 only in WSL2/Linux CUDA JAX or another proven CUDA JAX environment. |
-| Raw G1 env does not set `state.info["truncation"]` in static audit | MITIGATED | Phase 1 static audit marks native truncation source as FAIL; Route B synthesizes zeros when missing and warns. | Timeout handling still needs runtime validation once assets exist. | Rerun env/API and smoke tests with assets to confirm wrapper-generated truncation appears under training wrappers. |
-| G1 action scaling is internal to env step | MITIGATED | Phase 1 static audit: env computes `default_pose + action * action_scale`; Route B does not externally rescale actions. | Runtime action path still needs smoke validation once assets exist. | Keep external action scale as identity unless a future change explicitly changes env/Q action units and log-prob correction together. |
+| Issue | Category | Status | Evidence | Next action |
+|---|---|---:|---|---|
+| GPU smoke not validated | dependency/platform | OPEN | JAX sees only `cpu:0`; `nvidia-smi` and `nvcc` are not found; WSL command returned exit 1. | Run the 10k smoke only in WSL2/Linux CUDA or another CUDA JAX runtime. |
+| Default G1 config reports `impl="warp"` | runtime backend | MITIGATED | CPU-only JAX cannot satisfy Warp's CUDA backend probe. | Route B and env checker now default to `impl="jax"` and expose `--impl`. Use `--impl warp` only where CUDA JAX/Warp is validated. |
+| `state.info["truncation"]` absent | truncation | MITIGATED | Flat/rough env API both omit `truncation` in reset/step info keys. | SAC synthesizes zero truncation and reports `truncation_fraction`; revisit if env adds timeout metadata. |
+| Route A runtime smoke not rerun | route coverage | OPEN | Route A help passes; this round focused on Route B and latest allowed write set did not include Route A file. | If Route A is needed on CPU, add the same explicit `--impl` override path and run a tiny Brax SAC smoke. |
+| `compileall g1_env ...` traverses ignored menagerie assets | validation noise | OPEN | Menagerie is under `g1_env\external_deps`, so compileall lists that tree. | Accept as noisy but passing, or narrow future compile command if report policy allows. |
+| Git global ignore permission warning | tooling | OPEN_NON_BLOCKING | `git status` and `git check-ignore` warn about `C:\Users\Kam1/.config/git/ignore` permission denied. | Optional local machine permission fix; project status checks still work. |
+| PowerShell `Start-Process` wrapper failed | validation harness | CLOSED_NON_BLOCKING | Environment block had both `Path` and `PATH`; direct foreground run passed. | Use direct foreground command or a cleaner wrapper if long monitoring is needed. |
 
-## Known Non-Blockers
+## Closed This Round
 
-- Route A upstream Brax SAC availability is already established in `02_route_a_brax_sac.md`.
-- Route B entry point now exists and `python -m learning.train_jax_sac_lift --help` passes.
-- Route B dry-run now passes, initializes network/replay shapes, and writes a checkpoint under `logs/`.
-- Upstream Brax SAC dict observation limitation is known and Route A uses a selected `state` observation fallback.
-- Static registry/config checks found both target env names: `G1JoystickFlatTerrain` and `G1JoystickRoughTerrain`.
-- `.venv` has JAX/MuJoCo/Brax on CPU per prior reports, so dependency work should focus first on assets and Route B implementation.
+| Issue | Category | Resolution |
+|---|---|---|
+| Missing `g1_env\external_deps\mujoco_menagerie` | asset | User authorized download; cloned DeepMind menagerie and checked out `1b86ece576591213e2b666ebf59508454200ca97`; directory is ignored by project git. |
+| Env load failed on CPU due default `impl="warp"` | runtime backend | Added `--impl` support and Route B/checker default `impl="jax"`; flat/rough env API now pass. |
+| CPU tiny smoke not validated | validation | Exact CPU tiny command now passes with 256 env steps, 121 gradient steps, finite losses, and checkpoint. |
 
-## Pending Tracebacks
+## Current Acceptance Position
 
-- Route B help/dry-run tracebacks: none; both pass.
-- CPU tiny smoke traceback: NOT VALIDATED, pending menagerie assets and explicit permission to simulate on a suitable host.
-- GPU smoke traceback: NOT VALIDATED, pending CUDA-capable JAX runtime.
-
-## LIFT Traps To Avoid
-
-See copied report:
-
-```text
-external_references/LIFT-humanoid-reports/bug_traps.md
-```
-
-Do not inherit these issues in Route B:
-
-- Ambiguous `--learning_rate` that does not clearly map to actor, critic, and alpha rates.
-- `--value_hidden_layer_sizes` accidentally writing SAC critic hidden sizes; use `--q_hidden_layer_sizes`.
-- CLI defaults that override asymmetric critic config by setting `value_obs_key=state`.
-- Loss code dereferencing missing robot/action scale config.
-- Importing or shadowing whole LIFT forks at runtime.
+- Minimum success is met: menagerie is present and flat/rough env API load/reset/step pass.
+- Ideal local success is met: CPU tiny smoke passes and writes a checkpoint with finite actor/critic/alpha metrics.
+- GPU training is not validated on this Windows host.
+- No LIFT fork wholesale copy was made.
+- No PPO/RSL behavior changes were made.
+- No world model, fine-tuning, vision, domain randomization, or deployment work was added.

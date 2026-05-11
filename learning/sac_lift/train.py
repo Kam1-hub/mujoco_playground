@@ -115,13 +115,44 @@ def train(config: Any) -> dict[str, Any]:
     )
 
   env_cfg = registry.get_default_config(config.env_name)
-  env = registry.load(config.env_name, config=env_cfg)
+  env_overrides = {}
+  if config.get("impl", None):
+    env_overrides["impl"] = config.impl
+  env = registry.load(
+      config.env_name,
+      config=env_cfg,
+      config_overrides=env_overrides or None,
+  )
   env = wrapper.wrap_for_brax_training(
       env,
       episode_length=config.episode_length,
       action_repeat=config.action_repeat,
       randomization_fn=None,
   )
+  env_reset = jax.jit(env.reset)
+
+  def env_step_once(env_state: Any, training_state: SACTrainingState, key: jax.Array):
+    return _env_step(
+        env.step,
+        env_state,
+        training_state,
+        sac_networks,
+        key,
+        config.policy_obs_key,
+        config.value_obs_key,
+        config.normalize_observations,
+    )
+
+  env_step_once = jax.jit(env_step_once)
+
+  def update_once(
+      training_state: SACTrainingState,
+      batch: Transition,
+      key: jax.Array,
+  ):
+    return _update(training_state, batch, key, sac_networks, config)
+
+  update_once = jax.jit(update_once)
 
   obs_size = env.observation_size
   policy_obs_size = _obs_size(obs_size, config.policy_obs_key)
@@ -146,23 +177,14 @@ def train(config: Any) -> dict[str, Any]:
   rb_state = replay_buffer.init(
       config.max_replay_size, policy_obs_size, value_obs_size, action_size
   )
-  env_state = env.reset(jax.random.split(env_key, config.num_envs))
+  env_state = env_reset(jax.random.split(env_key, config.num_envs))
 
   start = time.monotonic()
   last_metrics: dict[str, Any] = {}
   actor_steps = max(1, config.num_timesteps // max(config.num_envs, 1))
   for _ in range(actor_steps):
     key, action_key, sample_key = jax.random.split(key, 3)
-    transition, env_state = _env_step(
-        env,
-        env_state,
-        training_state,
-        sac_networks,
-        action_key,
-        config.policy_obs_key,
-        config.value_obs_key,
-        config.normalize_observations,
-    )
+    transition, env_state = env_step_once(env_state, training_state, action_key)
     training_state = training_state.replace(
         policy_normalizer=normalizer.update(
             training_state.policy_normalizer, transition.policy_obs
@@ -175,11 +197,9 @@ def train(config: Any) -> dict[str, Any]:
     rb_state = replay_buffer.insert(rb_state, transition)
     if int(rb_state.size) >= config.min_replay_size:
       for _ in range(config.grad_updates_per_step):
-        key, update_key = jax.random.split(key)
+        key, sample_key, update_key = jax.random.split(key, 3)
         batch = replay_buffer.sample(rb_state, sample_key, config.batch_size)
-        training_state, last_metrics = _update(
-            training_state, batch, update_key, sac_networks, config
-        )
+        training_state, last_metrics = update_once(training_state, batch, update_key)
 
   wall_time = time.monotonic() - start
   metrics = {
@@ -245,7 +265,7 @@ def _init_training_state(
 
 
 def _env_step(
-    env: Any,
+    env_step: Any,
     env_state: Any,
     training_state: SACTrainingState,
     sac_networks: networks.SACNetworks,
@@ -262,7 +282,7 @@ def _env_step(
   action, _ = networks.sample_action(
       sac_networks, training_state.policy_params, norm_policy_obs, key
   )
-  next_state = env.step(env_state, action)
+  next_state = env_step(env_state, action)
   next_policy_obs = _select_obs(next_state.obs, policy_obs_key)
   next_value_obs = _select_obs(next_state.obs, value_obs_key, fallback_key=policy_obs_key)
   truncation = _truncation(next_state.info, next_state.done)
