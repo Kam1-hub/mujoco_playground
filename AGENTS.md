@@ -48,8 +48,8 @@ Primary target:
 
 Read these before coding:
 
+- `WSL2_CODEX_HANDOFF.md`
 - `AGENT_MEMORY.md`
 - `SAC_INTEGRATION_MASTER_PLAN.md`
 - `AGENT_EXECUTION_PROMPT.md`
 - `external_references/LIFT-humanoid-reports/`
-
