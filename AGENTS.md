@@ -49,7 +49,12 @@ Primary target:
 Read these before coding:
 
 - `WSL2_CODEX_HANDOFF.md`
+- `WSL2_GPU_EXPERIENCE.md`
 - `AGENT_MEMORY.md`
 - `SAC_INTEGRATION_MASTER_PLAN.md`
 - `AGENT_EXECUTION_PROMPT.md`
 - `external_references/LIFT-humanoid-reports/`
+
+`WSL2_GPU_EXPERIENCE.md` is an operating reference for WSL2 GPU/JAX/MJX
+pitfalls. It does not override the Route B SAC design, action handling, or
+smoke ladder recorded in the phase reports.

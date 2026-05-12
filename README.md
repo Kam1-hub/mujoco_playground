@@ -1,132 +1,118 @@
-# G1 人形机器人训练环境
+# G1 SAC Integration Workspace
 
-从 MuJoCo Playground 提取的宇树 G1 人形机器人完整训练 pipeline。
+This repo is an isolated G1 locomotion workspace with existing PPO/RSL-RL
+entry points plus a SAC integration track. The active SAC path is Route B: a
+local asymmetric SAC baseline for `G1JoystickFlatTerrain` and
+`G1JoystickRoughTerrain`.
 
-## 特性
+Current status:
 
-- 完整的 G1 环境定义（平坦地形、粗糙地形）
-- MJX 加速仿真
-- 域随机化支持
-- JAX PPO 训练（Brax）
-- RSL-RL 训练（PyTorch）
+- Branch: `sac-integration`
+- Route B CPU tiny smoke: passed on the Windows CPU dev host
+- WSL2/GPU status in this workspace: Python env, menagerie, and CUDA JAX still
+  need to be prepared and checked
+- Next gate: `gpu_preflight.py --impl jax --require_gpu`
+- 10k GPU smoke and all training require explicit user confirmation after
+  preflight passes
 
-## 安装
+## Entry Points
 
-```bash
-cd template
-pip install -e .
-```
+- PPO baseline: `train-g1-jax`
+- RSL-RL baseline: `train-g1-rsl`
+- SAC fallback: `train-g1-sac-brax`
+- SAC main route: `train-g1-sac`
 
-如果需要 CUDA 支持：
-```bash
-pip install -e ".[cuda]"
-```
+Route B defaults:
 
-如果需要 RSL-RL 训练支持：
-```bash
-pip install -e ".[learning]"
-```
+- actor obs: `obs["state"]`, shape `(103,)`
+- critic obs: `obs["privileged_state"]`, shape `(216,)`
+- action size: `29`
+- actor action range: tanh-normalized `[-1, 1]`
+- env action handling: G1 applies `action_scale` internally
+- default env implementation for SAC: `impl="jax"`
 
-## 快速开始
+Do not add external action scaling or tune reward, `action_scale`, or Kp during
+GPU migration smoke.
 
-### JAX PPO 训练
+## Setup
 
-```bash
-# 平坦地形训练
-train-g1-jax --env_name G1JoystickFlatTerrain --num_timesteps 200000000
-
-# 粗糙地形训练
-train-g1-jax --env_name G1JoystickRoughTerrain --num_timesteps 200000000
-
-# 使用域随机化
-train-g1-jax --env_name G1JoystickFlatTerrain --domain_randomization
-```
-
-### RSL-RL 训练
+Use a Linux/WSL2 filesystem checkout for GPU validation:
 
 ```bash
-# 平坦地形训练
-train-g1-rsl --env_name G1JoystickFlatTerrain --num_envs 4096
-
-# 粗糙地形训练
-train-g1-rsl --env_name G1JoystickRoughTerrain --num_envs 4096
+cd /home/admin/projects/mujoco_playground/g1_sac_dev
+uv sync
 ```
 
-## 环境说明
+For GPU JAX, the project declares a CUDA extra:
 
-- **G1JoystickFlatTerrain**: 平坦地形上的手柄控制任务
-  - 观测维度: 101 (state) / 150+ (privileged_state)
-  - 动作维度: 29 (关节位置命令)
-  - 控制频率: 50Hz
-  - Episode 长度: 1000 步 (20 秒)
-
-- **G1JoystickRoughTerrain**: 粗糙地形上的手柄控制任务
-  - 与平坦地形相同的配置
-  - 增加了地形高度场和纹理
-
-## 项目结构
-
-```
-template/
-├── g1_env/                     # 核心环境包
-│   ├── __init__.py
-│   ├── _src/                   # 环境实现
-│   │   ├── mjx_env.py          # MJX 环境基类
-│   │   ├── gait.py             # 步态生成工具
-│   │   ├── reward.py           # 奖励函数工具
-│   │   ├── registry.py         # 环境注册表
-│   │   ├── wrapper.py          # Brax 包装器
-│   │   ├── wrapper_torch.py    # Torch 包装器
-│   │   └── locomotion/
-│   │       └── g1/             # G1 环境定义
-│   │           ├── base.py
-│   │           ├── g1_constants.py
-│   │           ├── joystick.py
-│   │           ├── randomize.py
-│   │           └── xmls/       # MuJoCo 模型文件
-│   └── config/                 # RL 训练配置
-│       └── locomotion_params.py
-├── learning/                   # 训练脚本
-│   ├── train_jax_ppo.py        # JAX PPO 训练
-│   └── train_rsl_rl.py         # RSL-RL 训练
-├── pyproject.toml              # 项目配置
-├── .gitignore
-└── README.md
+```bash
+uv sync --frozen --extra cuda
 ```
 
-## 训练配置
+If JAX still reports CPU after that, stop and report the CUDA/JAX blocker
+before changing `pyproject.toml` or `uv.lock`.
 
-### Brax PPO 默认配置
+Menagerie assets are required but must stay untracked:
 
-- 总时间步: 200M
-- 评估次数: 20
-- 并行环境数: 8192
-- 网络架构: Policy (512, 256, 128), Value (512, 256, 128)
-- 学习率: 3e-4
-- 熵成本: 0.005
-- 裁剪参数: 0.2
+```bash
+mkdir -p g1_env/external_deps
+git clone https://github.com/deepmind/mujoco_menagerie.git g1_env/external_deps/mujoco_menagerie
+git -C g1_env/external_deps/mujoco_menagerie checkout 1b86ece576591213e2b666ebf59508454200ca97
+```
 
-### RSL-RL 默认配置
+## GPU Preflight
 
-- 最大迭代次数: 1000
-- 每环境步数: 24
-- 网络架构: Actor/Critic (512, 256, 128)
-- 学习率: 3e-4
-- 裁剪参数: 0.2
+Set WSL2 GPU variables before Python commands:
 
-## 依赖
+```bash
+export XLA_PYTHON_CLIENT_PREALLOCATE=false
+export MUJOCO_GL=egl
+export JAX_COMPILATION_CACHE_DIR="$HOME/.cache/jax"
+```
 
-- Python >= 3.11
-- JAX
-- MuJoCo >= 3.6.0
-- MuJoCo MJX >= 3.6.0
-- Brax >= 0.14.2
-- RSL-RL >= 3.0.0（可选，用于 RSL-RL 训练）
+Check JAX GPU visibility:
 
-## 许可证
+```bash
+uv run --no-sync python -c "import jax; print(jax.default_backend()); print(jax.devices())"
+```
 
-Apache 2.0（继承自 MuJoCo Playground）
+Then run the non-training preflight:
 
-## 致谢
+```bash
+uv run --no-sync python scripts/gpu_preflight.py --impl jax --require_gpu
+```
 
-本项目提取自 [MuJoCo Playground](https://github.com/google-deepmind/mujoco_playground)，感谢 Google DeepMind 团队的开源贡献。
+Only if preflight passes may the user authorize:
+
+```bash
+uv run bash scripts/gpu_smoke_route_b.sh
+```
+
+Do not run 1M training, domain randomization, fine-tuning, or PPO comparison
+before the Route B 10k GPU smoke has a clean report.
+
+## Environment Schema
+
+Both G1 tasks expose dict observations:
+
+- `state`: `(103,)`, actor observation
+- `privileged_state`: `(216,)`, critic observation
+- action: `(29,)`
+- control frequency: 50 Hz
+- episode length: 1000 steps
+
+Runtime G1 envs do not currently expose `state.info["truncation"]`; Route B
+synthesizes zero truncation and reports `truncation_fraction`.
+
+## Project Notes
+
+Primary operating documents:
+
+- `AGENTS.md`
+- `WSL2_CODEX_HANDOFF.md`
+- `WSL2_GPU_EXPERIENCE.md`
+- `SAC_INTEGRATION_MASTER_PLAN.md`
+- `reports/sac_integration/08_project_status_roadmap.md`
+
+PPO/RSL-RL examples in older docs are preserved as baseline context, not as the
+current SAC migration procedure.

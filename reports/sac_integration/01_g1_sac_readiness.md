@@ -1,5 +1,24 @@
 # SAC Integration Status Report
 
+## Current Status Update
+
+Status: superseded on 2026-05-12 by later validation reports.
+
+This file preserves the original Phase 1 audit and tracebacks. The current
+validated state is:
+
+- Flat and rough env load/reset/step pass with `--impl jax` after menagerie is
+  present.
+- Runtime obs is dict with `state` shape `(103,)` and `privileged_state` shape
+  `(216,)`.
+- Runtime action size is `29`.
+- Native `state.info["truncation"]` remains absent; Route B synthesizes zero
+  truncation.
+- Route B CPU tiny smoke passed; GPU smoke remains `NOT VALIDATED`.
+
+For the active ladder, use `08_project_status_roadmap.md`,
+`07_gpu_migration_prep.md`, and `06_next_actions.md`.
+
 ## Snapshot
 - Project path: `D:\mujoco_playground\g1_sac_dev`
 - Git branch: `codex/phase1-env-audit`

@@ -298,13 +298,30 @@ python -m learning.train_jax_sac_lift `
   --logdir ./logs/sac_lift_cpu_tiny
 ```
 
-### Level 4: GPU Smoke
+### Level 4a: GPU Preflight
 
 Requires WSL2/Linux CUDA JAX environment unless the current environment proves otherwise.
+This is a non-training gate and must pass before GPU smoke.
 
 ```bash
-python -m learning.train_jax_sac_lift \
+export XLA_PYTHON_CLIENT_PREALLOCATE=false
+export MUJOCO_GL=egl
+export JAX_COMPILATION_CACHE_DIR="$HOME/.cache/jax"
+uv run --no-sync python -c "import jax; print(jax.default_backend()); print(jax.devices())"
+uv run --no-sync python scripts/gpu_preflight.py --impl jax --require_gpu
+```
+
+Do not treat `gpu_preflight.py --impl jax` without `--require_gpu` as GPU
+validation. It only proves CPU/JAX/env API readiness.
+
+### Level 4b: GPU 10k Smoke
+
+Requires Level 4a to pass and explicit user confirmation.
+
+```bash
+uv run python -m learning.train_jax_sac_lift \
   --env_name G1JoystickFlatTerrain \
+  --impl jax \
   --num_timesteps 10000 \
   --num_envs 128 \
   --num_eval_envs 32 \
@@ -314,16 +331,23 @@ python -m learning.train_jax_sac_lift \
   --grad_updates_per_step 2 \
   --render False \
   --use_wandb False \
-  --logdir ./logs/sac_lift_smoke
+  --logdir ./logs/sac_lift_gpu_10k
 ```
+
+Record actual `env_steps`; Route B advances by `num_envs * (num_timesteps // num_envs)`.
+For `10000` and `128`, the expected actual env steps are `9984`.
 
 ### Level 5: 1M Sanity
 
-Only after Level 4 passes.
+Only after Level 4b passes, the report is clean, and the user explicitly
+authorizes a longer run. Do not enable domain randomization, fine-tuning, PPO
+comparison, reward tuning, `action_scale` changes, or Kp changes as a migration
+smoke fix.
 
 ```bash
-python -m learning.train_jax_sac_lift \
+uv run python -m learning.train_jax_sac_lift \
   --env_name G1JoystickFlatTerrain \
+  --impl jax \
   --num_timesteps 1000000 \
   --num_envs 1024 \
   --num_eval_envs 128 \
@@ -372,4 +396,3 @@ Minimum acceptable implementation:
 - SAC code supports dict obs and asymmetric critic by design.
 - No LIFT forks are imported as runtime dependencies.
 - Existing `train-g1-jax` and `train-g1-rsl` entry points remain usable.
-

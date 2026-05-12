@@ -12,6 +12,7 @@ Required reports:
 - `04_smoke_results.md`
 - `05_known_issues.md`
 - `06_next_actions.md`
+- `07_gpu_migration_prep.md`
+- `08_project_status_roadmap.md`
 
 Each report should cite concrete files and line numbers when making code claims.
-

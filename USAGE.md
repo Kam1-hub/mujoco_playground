@@ -1,199 +1,133 @@
-# G1 训练环境使用指南
+# G1 SAC Usage
 
-## 快速开始
-
-### 1. 安装依赖
+Current workspace:
 
 ```bash
-cd D:/mujoco_playground/template
-
-# 基础安装
-pip install -e .
-
-# 如果需要 CUDA 支持
-pip install -e ".[cuda]"
-
-# 如果需要 RSL-RL 训练
-pip install -e ".[learning]"
-
-# 完整安装（包含所有可选依赖）
-pip install -e ".[all]"
+cd /home/admin/projects/mujoco_playground/g1_sac_dev
 ```
 
-### 2. 验证安装
+This guide is scoped to the SAC migration state. PPO and RSL-RL entry points
+still exist, but they are not the current GPU validation target.
+
+## Install
+
+CPU/dev dependency sync:
 
 ```bash
-# 测试导入
-python -c "import g1_env; print('可用环境:', g1_env.registry.ALL_ENVS)"
-
-# 应该输出: 可用环境: ('G1JoystickFlatTerrain', 'G1JoystickRoughTerrain')
+uv sync
 ```
 
-### 3. 开始训练
-
-#### JAX PPO 训练（推荐）
+CUDA JAX sync using the repo-declared extra:
 
 ```bash
-# 平坦地形，快速测试（100万步）
-train-g1-jax --env_name G1JoystickFlatTerrain --num_timesteps 1000000
-
-# 平坦地形，完整训练（2亿步）
-train-g1-jax --env_name G1JoystickFlatTerrain --num_timesteps 200000000
-
-# 粗糙地形 + 域随机化
-train-g1-jax --env_name G1JoystickRoughTerrain --domain_randomization --num_timesteps 200000000
-
-# 使用 WandB 记录
-train-g1-jax --env_name G1JoystickFlatTerrain --use_wandb
-
-# 自定义日志目录
-train-g1-jax --env_name G1JoystickFlatTerrain --logdir ./my_logs
+uv sync --frozen --extra cuda
 ```
 
-#### RSL-RL 训练（PyTorch）
+Do not edit `pyproject.toml` or `uv.lock` just because JAX reports CPU. First
+record the exact JAX output and decide whether the locked CUDA extra or a
+separate CUDA variant is required.
+
+## Required Assets
+
+The G1 XMLs depend on DeepMind menagerie assets:
 
 ```bash
-# 平坦地形训练
-train-g1-rsl --env_name G1JoystickFlatTerrain --num_envs 4096
-
-# 粗糙地形训练
-train-g1-rsl --env_name G1JoystickRoughTerrain --num_envs 4096
-
-# 多 GPU 训练
-train-g1-rsl --env_name G1JoystickFlatTerrain --multi_gpu
-
-# 从检查点恢复
-train-g1-rsl --env_name G1JoystickFlatTerrain --load_run_name my_run --checkpoint_num 100
+mkdir -p g1_env/external_deps
+git clone https://github.com/deepmind/mujoco_menagerie.git g1_env/external_deps/mujoco_menagerie
+git -C g1_env/external_deps/mujoco_menagerie checkout 1b86ece576591213e2b666ebf59508454200ca97
 ```
 
-### 4. 训练参数说明
+Do not commit `g1_env/external_deps/mujoco_menagerie`.
 
-#### 常用参数
+## Non-Training Checks
 
-- `--env_name`: 环境名称（G1JoystickFlatTerrain 或 G1JoystickRoughTerrain）
-- `--num_timesteps`: 总训练步数（JAX PPO）
-- `--num_envs`: 并行环境数量
-- `--domain_randomization`: 启用域随机化
-- `--use_wandb`: 使用 WandB 记录
-- `--logdir`: 日志保存目录
-- `--seed`: 随机种子
-
-#### 高级参数
-
-- `--learning_rate`: 学习率（默认 3e-4）
-- `--entropy_cost`: 熵成本（默认 0.005）
-- `--num_evals`: 评估次数（默认 20）
-- `--policy_hidden_layer_sizes`: 策略网络层大小
-- `--value_hidden_layer_sizes`: 价值网络层大小
-
-## 环境说明
-
-### G1JoystickFlatTerrain
-
-- **任务**: 在平坦地形上跟随手柄命令移动
-- **观测维度**: 101 (state) / 150+ (privileged_state)
-- **动作维度**: 29 (关节位置命令)
-- **控制频率**: 50Hz
-- **Episode 长度**: 1000 步 (20 秒)
-
-### G1JoystickRoughTerrain
-
-- **任务**: 在粗糙地形上跟随手柄命令移动
-- **配置**: 与平坦地形相同
-- **额外挑战**: 地形高度场和纹理变化
-
-## 训练配置
-
-### Brax PPO 默认配置
-
-```python
-num_timesteps = 200_000_000
-num_evals = 20
-num_envs = 8192
-learning_rate = 3e-4
-entropy_cost = 0.005
-clipping_epsilon = 0.2
-network = {
-    "policy": (512, 256, 128),
-    "value": (512, 256, 128)
-}
+```bash
+uv run --no-sync python -c "import g1_env; from g1_env import registry; print(registry.ALL_ENVS)"
+uv run --no-sync python scripts/gpu_preflight.py --impl jax --require_gpu
 ```
 
-### RSL-RL 默认配置
+The preflight checks imports, JAX GPU visibility, menagerie commit, registry,
+Route B import, and flat/rough env reset/step. It does not train.
 
-```python
-max_iterations = 1000
-num_steps_per_env = 24
-learning_rate = 3e-4
-clip_param = 0.2
-network = {
-    "actor": [512, 256, 128],
-    "critic": [512, 256, 128]
-}
+## WSL2 GPU Environment
+
+Set these before Python commands:
+
+```bash
+export XLA_PYTHON_CLIENT_PREALLOCATE=false
+export MUJOCO_GL=egl
+export JAX_COMPILATION_CACHE_DIR="$HOME/.cache/jax"
 ```
 
-## 常见问题
+`nvcc` is not required in WSL2. A passing GPU setup requires `nvidia-smi` and
+JAX devices to show GPU/CUDA/ROCm:
 
-### 1. 导入错误
-
-```
-ModuleNotFoundError: No module named 'jax'
-```
-
-**解决**: 确保已安装依赖 `pip install -e .`
-
-### 2. CUDA 内存不足
-
-```
-RuntimeError: CUDA out of memory
+```bash
+nvidia-smi
+uv run --no-sync python -c "import jax; print(jax.default_backend()); print(jax.devices())"
 ```
 
-**解决**: 减少并行环境数量 `--num_envs 2048`
+If JAX still reports CPU, do not run smoke or training.
 
-### 3. 训练速度慢
+## Route B SAC Smoke Ladder
 
-**优化建议**:
-- 使用 CUDA 版本的 JAX: `pip install -e ".[cuda]"`
-- 增加并行环境数: `--num_envs 16384`
-- 使用 Warp 后端: `--impl warp`
+The first allowed GPU gate is:
 
-## 项目结构
-
-```
-template/
-├── g1_env/                     # 核心环境包
-│   ├── __init__.py
-│   ├── _src/                   # 环境实现
-│   │   ├── mjx_env.py          # MJX 环境基类
-│   │   ├── gait.py             # 步态生成工具
-│   │   ├── reward.py           # 奖励函数工具
-│   │   ├── registry.py         # 环境注册表
-│   │   ├── wrapper.py          # Brax 包装器
-│   │   ├── wrapper_torch.py    # Torch 包装器
-│   │   └── locomotion/
-│   │       └── g1/             # G1 环境定义
-│   │           ├── base.py
-│   │           ├── g1_constants.py
-│   │           ├── joystick.py
-│   │           ├── randomize.py
-│   │           └── xmls/       # MuJoCo 模型文件
-│   └── config/                 # RL 训练配置
-│       └── locomotion_params.py
-├── learning/                   # 训练脚本
-│   ├── train_jax_ppo.py        # JAX PPO 训练
-│   └── train_rsl_rl.py         # RSL-RL 训练
-├── pyproject.toml              # 项目配置
-├── README.md                   # 项目说明
-└── USAGE.md                    # 本文件
+```bash
+uv run --no-sync python scripts/gpu_preflight.py --impl jax --require_gpu
 ```
 
-## 进一步学习
+Only after that passes may the user authorize:
 
-1. **修改奖励函数**: 编辑 `g1_env/_src/locomotion/g1/joystick.py` 中的 `_get_reward()` 方法
-2. **调整观测空间**: 修改 `_get_obs()` 方法
-3. **添加新任务**: 参考 `joystick.py` 创建新的任务类
-4. **自定义域随机化**: 编辑 `g1_env/_src/locomotion/g1/randomize.py`
+```bash
+uv run bash scripts/gpu_smoke_route_b.sh
+```
 
-## 许可证
+That wrapper uses the fixed 10k smoke parameters:
 
-Apache 2.0（继承自 MuJoCo Playground）
+- `G1JoystickFlatTerrain`
+- `num_timesteps=10000`
+- `num_envs=128`
+- `num_eval_envs=32`
+- `batch_size=256`
+- `min_replay_size=1024`
+- `max_replay_size=8192`
+- `grad_updates_per_step=2`
+- `logdir=./logs/sac_lift_gpu_10k`
+
+Do not run 1M training, domain randomization, fine-tuning, reward tuning,
+`action_scale` changes, Kp changes, or PPO comparison before the 10k SAC smoke
+has a clean report.
+
+## Route B Parameters
+
+Important CLI flags:
+
+- `--env_name`: `G1JoystickFlatTerrain` or `G1JoystickRoughTerrain`
+- `--impl`: default `jax` for SAC validation
+- `--policy_obs_key`: default `state`
+- `--value_obs_key`: default `privileged_state`
+- `--num_envs`: first smoke keeps `128`
+- `--max_replay_size`: first smoke keeps `8192`
+- `--grad_updates_per_step`: update count per vectorized env step
+
+Route B actual env steps are `num_envs * (num_timesteps // num_envs)`. A 10k
+target with 128 envs records 9984 actual env steps.
+
+## Environment Schema
+
+Both G1 tasks expose:
+
+- actor obs `state`: `(103,)`
+- critic obs `privileged_state`: `(216,)`
+- action: `(29,)`
+- `state.info["truncation"]`: absent in raw runtime checks
+
+Route B synthesizes zero truncation when missing and reports
+`truncation_fraction`.
+
+## Historical Baselines
+
+`train-g1-jax` and `train-g1-rsl` are kept as PPO/RSL baselines. Their large
+parallel-env examples are not SAC smoke parameters and should not be copied into
+the current GPU migration step.

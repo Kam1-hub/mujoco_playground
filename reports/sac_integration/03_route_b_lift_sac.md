@@ -1,5 +1,29 @@
 # SAC Integration Status Report
 
+## Current Status Update
+
+Status: updated on 2026-05-12 from WSL2/GPU operating notes.
+
+The Route B implementation remains the main SAC path. The historical blocked
+probe below is preserved, but later validation supersedes it:
+
+- Menagerie was resolved on the Windows CPU dev host and env API checks passed.
+- Route B CPU tiny smoke passed with finite actor/critic/alpha metrics.
+- GPU smoke is still `NOT VALIDATED`.
+- Route B keeps actor obs `state`, critic obs `privileged_state`, tanh actions
+  passed directly to the env, and zero truncation fallback when native
+  truncation is absent.
+
+Training note applicability:
+
+- SAC replay capacity is the main SAC-specific VRAM risk. Route B stores about
+  671 float32 values per transition, about 2.6 to 2.7 KB raw.
+- Route B actual env steps are `num_envs * (num_timesteps // num_envs)`, so
+  `10000` with `128` envs records `9984` actual env steps.
+- PPO/Barkour `2048` env assumptions, reward tuning, external action scaling,
+  Kp changes, domain randomization, and fine-tuning do not apply to the current
+  migration smoke.
+
 ## Snapshot
 - Project path: `D:\mujoco_playground\g1_sac_dev`
 - Git branch: `codex/route-b-lift-sac`

@@ -2,6 +2,25 @@
 
 Status: prepared on 2026-05-11 for moving Route B SAC validation from CPU dev to WSL2/Linux CUDA.
 
+## 2026-05-12 WSL2 Documentation Update
+
+Target WSL2 documentation workspace:
+
+```text
+/home/admin/projects/mujoco_playground/g1_sac_dev
+```
+
+The local helper paths from earlier prompts that pointed at a Windows-share
+scratch location are stale for this session. Use the project-local references
+instead:
+
+- `WSL2_GPU_EXPERIENCE.md`
+- `/home/admin/projects/mujoco_playground/TRAINING_NOTES.md`
+- `/home/admin/projects/mujoco_playground/.md_edit/`
+
+These files are operating references only. They do not override Route B SAC
+design, action handling, or the preflight-first validation ladder.
+
 ## Repository State
 
 - Project path: `D:\mujoco_playground\g1_sac_dev`
@@ -106,11 +125,50 @@ Preflight result:
 
 - Linux or WSL2 with CUDA.
 - JAX must report GPU/CUDA/ROCm backend or devices.
+- `nvcc` is not required in WSL2; `nvidia-smi` and JAX GPU devices are the gate.
 - MuJoCo, Brax, and JAX versions should be recorded in the migration report.
 - `g1_env/external_deps/mujoco_menagerie` must exist.
 - Menagerie must be checked out to `1b86ece576591213e2b666ebf59508454200ca97`.
 - Project `.venv` from this Windows CPU machine should not be copied.
 - Assets, logs, checkpoints, and `.venv` must remain untracked.
+
+## WSL2 GPU Operational Lessons
+
+Set before Python imports:
+
+```bash
+export XLA_PYTHON_CLIENT_PREALLOCATE=false
+export MUJOCO_GL=egl
+export JAX_COMPILATION_CACHE_DIR="$HOME/.cache/jax"
+```
+
+Use the repo CUDA extra first:
+
+```bash
+uv sync --frozen --extra cuda
+```
+
+If JAX still reports CPU, do not train and do not change `pyproject.toml` or
+`uv.lock` without a separate decision.
+
+Route B replay budget:
+
+- transition payload: about 671 float32 values
+- raw size: about 2.6 to 2.7 KB per transition
+- `max_replay_size=8192`: about 22 MB raw
+- `max_replay_size=1000000`: about 2.5 to 2.7 GB raw before JAX/XLA overhead
+
+OOM categories to record:
+
+- XLA preallocation
+- CPU-only JAX or missing CUDA plugin
+- residual GPU processes
+- replay capacity
+- env batch size
+- terrain/domain randomization overhead
+
+Do not use destructive cleanup such as killing GPU processes or restarting WSL
+without explicit user approval.
 
 ## Migration Procedure
 
@@ -121,13 +179,13 @@ Preflight result:
 5. Run:
 
 ```bash
-python scripts/gpu_preflight.py --impl jax --require_gpu
+uv run --no-sync python scripts/gpu_preflight.py --impl jax --require_gpu
 ```
 
-6. Run:
+6. Stop for user confirmation. Only then run:
 
 ```bash
-bash scripts/gpu_smoke_route_b.sh
+uv run bash scripts/gpu_smoke_route_b.sh
 ```
 
 ## GPU 10k Smoke Acceptance
@@ -141,6 +199,8 @@ bash scripts/gpu_smoke_route_b.sh
 - Actor loss, critic loss, and alpha are finite.
 - No NaN is reported in metrics.
 - SPS is recorded.
+- idle and final or peak GPU VRAM are recorded when available.
+- actual `env_steps` are recorded; do not assume they equal requested `num_timesteps`.
 
 ## Failure Classification
 

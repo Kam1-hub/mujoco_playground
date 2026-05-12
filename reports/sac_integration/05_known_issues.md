@@ -1,12 +1,18 @@
 # Known Issues
 
-Status: updated on 2026-05-11 after CPU tiny SAC smoke.
+Status: updated on 2026-05-12 after WSL2 GPU operating notes review.
 
 ## Open
 
 | Issue | Category | Status | Evidence | Next action |
 |---|---|---:|---|---|
-| GPU smoke not validated | dependency/platform | OPEN | JAX sees only `cpu:0`; `nvidia-smi` and `nvcc` are not found; WSL command returned exit 1. | Run the 10k smoke only in WSL2/Linux CUDA or another CUDA JAX runtime. |
+| GPU preflight not validated in target WSL2 workspace | CUDA/JAX backend | OPEN | `/home/admin/projects/mujoco_playground/g1_sac_dev` still needs `.venv`, pinned menagerie, and CUDA JAX verification. A plain `uv sync` installs CPU JAX only. | Prepare env with `uv sync --frozen --extra cuda`, verify `nvidia-smi` and JAX GPU devices, then run `gpu_preflight.py --impl jax --require_gpu`. |
+| CPU-only JAX after base sync | dependency | OPEN | Base dependency is `jax`; CUDA plugin packages are only under the `cuda` extra. | Do not train. Install the locked CUDA extra or report if CUDA 13 strategy is required. |
+| WSL2 GPU env vars not enforced by wrappers | runtime configuration | OPEN | `XLA_PYTHON_CLIENT_PREALLOCATE=false` and `MUJOCO_GL=egl` are operational requirements but not enforced in all entry points. | Export them before GPU checks; consider wrapper hardening after preflight is stable. |
+| First JIT latency can look like a hang | validation noise | OPEN_NON_BLOCKING | WSL2/JAX first compile may take minutes. | Record wall time and wait through first compile before classifying a failure. |
+| Route B actual env steps may be lower than requested | reporting | OPEN_NON_BLOCKING | Training loop uses `num_timesteps // num_envs`; `10000` with `128` envs yields `9984`. | Record actual `env_steps` and checkpoint filename; do not assume target equals actual. |
+| Replay buffer scale can become the SAC VRAM bottleneck | memory | OPEN | Route B stores about 671 float32 values per transition; 1M raw replay is about 2.5-2.7 GB before JAX/XLA overhead. | Keep first smoke at `max_replay_size=8192`; increase only after measured GPU smoke. |
+| PPO default env count is not a SAC smoke setting | scope | OPEN_NON_BLOCKING | Older PPO docs mention large env counts; Route B smoke is `num_envs=128`. | Do not import PPO/Barkour `2048` or `8192` env assumptions into SAC migration smoke. |
 | Default G1 config reports `impl="warp"` | runtime backend | MITIGATED | CPU-only JAX cannot satisfy Warp's CUDA backend probe. | Route B and env checker now default to `impl="jax"` and expose `--impl`. Use `--impl warp` only where CUDA JAX/Warp is validated. |
 | `state.info["truncation"]` absent | truncation | MITIGATED | Flat/rough env API both omit `truncation` in reset/step info keys. | SAC synthesizes zero truncation and reports `truncation_fraction`; revisit if env adds timeout metadata. |
 | Route A runtime smoke not rerun | route coverage | OPEN | Route A help passes; this round focused on Route B and latest allowed write set did not include Route A file. | If Route A is needed on CPU, add the same explicit `--impl` override path and run a tiny Brax SAC smoke. |
@@ -26,7 +32,8 @@ Status: updated on 2026-05-11 after CPU tiny SAC smoke.
 
 - Minimum success is met: menagerie is present and flat/rough env API load/reset/step pass.
 - Ideal local success is met: CPU tiny smoke passes and writes a checkpoint with finite actor/critic/alpha metrics.
-- GPU training is not validated on this Windows host.
+- GPU training is not validated. The next gate is WSL2/Linux CUDA preflight with
+  `--require_gpu`.
 - No LIFT fork wholesale copy was made.
 - No PPO/RSL behavior changes were made.
 - No world model, fine-tuning, vision, domain randomization, or deployment work was added.

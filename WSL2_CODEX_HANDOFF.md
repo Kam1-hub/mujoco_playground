@@ -6,8 +6,10 @@ This is the continuation document for starting a new Codex CLI session inside WS
 
 - Windows source workspace: `D:\mujoco_playground\g1_sac_dev`
 - Expected WSL2 target workspace: a Linux filesystem path such as `~/mujoco_playground/g1_sac_dev`
+- Current WSL2 documentation workspace used in this handoff:
+  `/home/admin/projects/mujoco_playground/g1_sac_dev`
 - Main branch: `sac-integration`
-- Latest completed work before this handoff: `d73d45c Prepare GPU migration validation scripts`
+- Latest completed work before this handoff: `0ffcb91 Add WSL2 Codex handoff guide`
 - Current mission: validate the Route B asymmetric SAC baseline on a GPU-capable WSL2/Linux machine.
 - Do not continue large training on the Windows CPU dev machine.
 
@@ -16,12 +18,14 @@ This is the continuation document for starting a new Codex CLI session inside WS
 Codex CLI should read `AGENTS.md` automatically. After that, read these files in order:
 
 1. `WSL2_CODEX_HANDOFF.md`
-2. `reports/sac_integration/07_gpu_migration_prep.md`
-3. `reports/sac_integration/06_next_actions.md`
-4. `reports/sac_integration/04_smoke_results.md`
-5. `reports/sac_integration/03_route_b_lift_sac.md`
-6. `AGENT_MEMORY.md`
-7. `SAC_INTEGRATION_MASTER_PLAN.md`
+2. `WSL2_GPU_EXPERIENCE.md`
+3. `reports/sac_integration/08_project_status_roadmap.md`
+4. `reports/sac_integration/07_gpu_migration_prep.md`
+5. `reports/sac_integration/06_next_actions.md`
+6. `reports/sac_integration/04_smoke_results.md`
+7. `reports/sac_integration/03_route_b_lift_sac.md`
+8. `AGENT_MEMORY.md`
+9. `SAC_INTEGRATION_MASTER_PLAN.md`
 
 Use local command output and repo files as the source of truth. Do not rely on memory.
 
@@ -163,6 +167,16 @@ Create a fresh Linux Python environment. If this repo's `uv` setup is available:
 uv sync
 ```
 
+For CUDA JAX validation, prefer the repo-declared CUDA extra without editing
+project metadata:
+
+```bash
+uv sync --frozen --extra cuda
+```
+
+If JAX still reports CPU-only after the CUDA extra, stop and report the exact
+JAX/JAXLIB/plugin state before changing `pyproject.toml` or `uv.lock`.
+
 Otherwise create a venv and install the repo requirements according to the project environment files available on the target machine.
 
 Clone menagerie inside the WSL2 repo:
@@ -180,25 +194,47 @@ git check-ignore -v g1_env/external_deps/mujoco_menagerie logs .venv
 git status --short
 ```
 
+## WSL2 GPU Startup Environment
+
+Set these before importing JAX or MuJoCo:
+
+```bash
+export XLA_PYTHON_CLIENT_PREALLOCATE=false
+export MUJOCO_GL=egl
+export JAX_COMPILATION_CACHE_DIR="$HOME/.cache/jax"
+```
+
+`nvcc` is not required in WSL2. `nvidia-smi` and JAX GPU devices are the gate.
+
+Route B first smoke must keep the planned SAC scale:
+
+- `num_envs=128`
+- `max_replay_size=8192`
+- `batch_size=256`
+- `grad_updates_per_step=2`
+
+Do not import PPO/Barkour `2048` or `8192` env assumptions into this SAC smoke.
+
 ## WSL2 GPU Validation Ladder
 
 First verify CUDA/JAX visibility:
 
 ```bash
-python -c "import jax; print(jax.default_backend()); print(jax.devices())"
+uv run --no-sync python -c "import jax; print(jax.default_backend()); print(jax.devices())"
 nvidia-smi
 ```
 
 Then run preflight:
 
 ```bash
-python scripts/gpu_preflight.py --impl jax --require_gpu
+uv run --no-sync python scripts/gpu_preflight.py --impl jax --require_gpu
 ```
 
-Only if preflight passes, run the 10k Route B smoke:
+Only if preflight passes, stop and wait for explicit user confirmation before
+running the 10k Route B smoke:
 
 ```bash
-bash scripts/gpu_smoke_route_b.sh
+uv run bash scripts/gpu_smoke_route_b.sh
 ```
 
 The wrapper runs:
@@ -222,13 +258,15 @@ python -m learning.train_jax_sac_lift \
 ## GPU Smoke Acceptance Criteria
 
 - JAX backend/devices show GPU/CUDA/ROCm.
-- `python scripts/gpu_preflight.py --impl jax --require_gpu` exits 0.
+- `uv run --no-sync python scripts/gpu_preflight.py --impl jax --require_gpu` exits 0.
 - Flat env load/reset/step passes.
 - Rough env load/reset/step passes.
 - Route B 10k smoke reports `TRAIN_OK`.
 - Checkpoint is saved under `./logs/sac_lift_gpu_10k`.
 - Actor loss, critic loss, alpha, and SPS are recorded.
 - No NaN in reported scalar metrics.
+- Idle and final or peak GPU VRAM are recorded when `nvidia-smi` is available.
+- JIT compile latency is recorded or explicitly noted as not measured.
 
 ## Recommended Prompt For WSL2 Codex CLI
 
@@ -236,8 +274,8 @@ Paste this into the new WSL2 Codex CLI session after opening the repo:
 
 ```text
 You are continuing the G1 SAC integration in this WSL2/Linux CUDA workspace.
-First read AGENTS.md and WSL2_CODEX_HANDOFF.md, then reports/sac_integration/07_gpu_migration_prep.md and 06_next_actions.md.
+First read AGENTS.md, WSL2_CODEX_HANDOFF.md, WSL2_GPU_EXPERIENCE.md, reports/sac_integration/08_project_status_roadmap.md, reports/sac_integration/07_gpu_migration_prep.md, and 06_next_actions.md.
 Do not run 1M training. Do not modify template or LIFT-humanoid. Do not commit menagerie/logs/.venv/checkpoints.
-Goal: run GPU preflight, then if and only if it passes, run Route B 10k GPU smoke via scripts/gpu_smoke_route_b.sh.
+Goal: prepare WSL2 env and menagerie, run GPU preflight, then wait for explicit user confirmation before Route B 10k GPU smoke via scripts/gpu_smoke_route_b.sh.
 Record all commands, pass/fail, metrics, checkpoint path, and full tracebacks in reports/sac_integration/.
 ```
