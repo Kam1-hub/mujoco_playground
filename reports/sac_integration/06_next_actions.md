@@ -1,7 +1,6 @@
 # Next Actions
 
-Status: updated on 2026-05-12 after WSL2 path correction and GPU operating
-notes review.
+Status: updated on 2026-05-12 after WSL2 GPU preflight and Route B GPU 10k smoke.
 
 ## Immediate State
 
@@ -15,9 +14,34 @@ notes review.
   `gpu_preflight.py --impl jax` without `--require_gpu`.
 - Target WSL2 documentation workspace:
   `/home/admin/projects/mujoco_playground/g1_sac_dev`.
-- Current target WSL2 workspace still needs local `.venv`, pinned menagerie,
-  and CUDA JAX verification.
-- GPU smoke is still `NOT VALIDATED`.
+- Target WSL2 workspace now has CUDA JAX via `uv sync --frozen --extra cuda`.
+- JAX reports backend `gpu` and device `cuda:0`.
+- Menagerie is present at commit
+  `1b86ece576591213e2b666ebf59508454200ca97`.
+- GPU preflight with `--require_gpu` passed.
+- Route B GPU 10k smoke passed with `TRAIN_OK`.
+
+## Completed WSL2 GPU Validation
+
+- GPU preflight: `PASS`
+- Route B GPU 10k smoke: `PASS`
+- Checkpoint: `./logs/sac_lift_gpu_10k/sac_lift_step_9984.pkl`
+- Requested timesteps: `10000`
+- Actual env steps: `9984`
+- Gradient steps: `142`
+- Wall time: `56.50599093900382`
+- SPS: `176.68922947970893`
+- Actor loss: `-1.9058758020401`
+- Critic loss: `0.08382290601730347`
+- Alpha: `0.04770537465810776`
+- Truncation fraction: `0.0`
+- NaN: no NaN observed in reported scalar metrics
+
+Actual step note:
+
+- Route B currently uses `num_envs * (num_timesteps // num_envs)`.
+- With `num_timesteps=10000` and `num_envs=128`, this yields `9984` actual
+  env steps.
 
 ## Preflight Checklist
 
@@ -52,20 +76,13 @@ uv run --no-sync python -c "import mujoco, brax; print('mujoco', mujoco.__versio
 `nvcc` is not required in WSL2. JAX must report GPU/CUDA/ROCm. If JAX reports
 CPU, stop and report the CUDA/JAX blocker.
 
-## Recommended Next Command On GPU Machine
+## Recommended Next Step
 
-Run this first. It does not train:
+Do not immediately run 1M. The next useful steps are report review plus one of
+the following only after explicit user confirmation:
 
-```bash
-uv run --no-sync python scripts/gpu_preflight.py --impl jax --require_gpu
-```
-
-If preflight passes, stop and wait for user confirmation before the Route B 10k
-smoke wrapper:
-
-```bash
-uv run bash scripts/gpu_smoke_route_b.sh
-```
+1. deterministic eval rollout metrics for the GPU-smoke checkpoint.
+2. a slightly longer sanity run at a controlled scale.
 
 ## Migration Reminders
 
@@ -79,16 +96,15 @@ uv run bash scripts/gpu_smoke_route_b.sh
 
 ## Recommended Follow-Ups After GPU 10k Smoke
 
-1. Update `04_smoke_results.md`, `05_known_issues.md`, and this file.
-2. Add deterministic eval rollout metrics.
-3. Run a longer sanity run only after GPU smoke is stable and explicitly
+1. Add deterministic eval rollout metrics after user confirmation.
+2. Run a longer sanity run only after GPU smoke is reviewed and explicitly
    authorized.
-4. Compare against PPO baseline only after SAC 10k smoke has a clean report.
+3. Compare against PPO baseline only after SAC smoke plus eval have clean reports.
 
 ## Do Not Start Yet
 
-- 10k smoke without user confirmation
 - 1M training
+- longer training without user confirmation
 - PPO-scale `num_envs=2048` or `8192` experiments as SAC smoke substitutes
 - domain randomization
 - reward, `action_scale`, or Kp tuning

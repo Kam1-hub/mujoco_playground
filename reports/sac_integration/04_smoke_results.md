@@ -1,6 +1,88 @@
 # Smoke Results
 
-Status: updated on 2026-05-11 after menagerie install, env API validation, and CPU tiny SAC smoke.
+Status: updated on 2026-05-12 after WSL2 CUDA preflight and Route B GPU 10k smoke.
+
+## 2026-05-12 WSL2 GPU Result
+
+Workspace:
+
+- Path: `/home/admin/projects/mujoco_playground/g1_sac_dev`
+- Branch: `sac-integration`
+- Commit: `6fa5160 Sync WSL2 GPU preflight documentation`
+
+Runtime:
+
+- Python: `3.12.3`
+- JAX: `0.10.0`
+- JAX backend/devices: `gpu`, `cuda:0`
+- MuJoCo: `3.8.0`
+- Brax: `0.14.2`
+- GPU: NVIDIA GeForce RTX 4070 SUPER, 12 GB class
+- Driver: `591.74`
+- CUDA reported by `nvidia-smi`: `13.1`
+- `nvcc`: not installed; not a blocker for WSL2 JAX CUDA plugin runtime
+
+Asset state:
+
+- Menagerie path: `g1_env/external_deps/mujoco_menagerie`
+- Menagerie commit: `1b86ece576591213e2b666ebf59508454200ca97`
+- Menagerie, `.venv`, `logs`, and checkpoints remain ignored runtime artifacts.
+
+GPU preflight:
+
+- Command class: `uv run --no-sync python scripts/gpu_preflight.py --impl jax --require_gpu`
+- Status: `PASS`
+- Stages: imports PASS, flat env PASS, rough env PASS
+- Runtime summary: `has_gpu=true`, `jax_backend=gpu`, `jax_devices=["cuda:0"]`
+- Flat/Rough env schema: action size `29`, `state (103,)`, `privileged_state (216,)`, no native truncation key
+
+Route B GPU 10k smoke:
+
+- Command wrapper: `bash scripts/gpu_smoke_route_b.sh`
+- Status: `TRAIN_OK`
+- Checkpoint: `./logs/sac_lift_gpu_10k/sac_lift_step_9984.pkl`
+- Env steps: `9984`
+- Gradient steps: `142`
+- Wall time: `56.50599093900382`
+- SPS: `176.68922947970893`
+- Actor loss: `-1.9058758020401`
+- Critic loss: `0.08382290601730347`
+- Alpha loss: `1.585930585861206`
+- Alpha: `0.04770537465810776`
+- Policy log prob: `-18.79882049560547`
+- Policy Q: `1.0090709924697876`
+- Q: `1.0673823356628418`
+- Target Q: `1.0646085739135742`
+- Truncation fraction: `0.0`
+- NaN: no NaN observed in reported scalar metrics
+
+Step count note:
+
+- The command requested `num_timesteps=10000` with `num_envs=128`.
+- Route B currently computes actual env steps as `num_envs * (num_timesteps // num_envs)`.
+- Therefore this smoke records `128 * (10000 // 128) = 9984` actual env steps.
+
+Warnings observed:
+
+- WSL2 CUDA driver passthrough warning: `Could not get kernel mode driver version`.
+- JAX cast warning: `RuntimeWarning: overflow encountered in cast`.
+- CUDA timer warmup warning: `Delay kernel timed out: measured time has sub-optimal accuracy`.
+- These warnings did not fail preflight or smoke; final status was `TRAIN_OK`.
+
+Post-smoke `nvidia-smi` summary:
+
+- Time: 2026-05-12 09:12:51
+- VRAM: `1517MiB / 12282MiB`
+- GPU util: `10%`
+- Temperature: `56C`
+- Process table only showed `/Xwayland`.
+
+Not run:
+
+- 1M or longer training: `NOT VALIDATED`
+- deterministic eval rollout: `NOT VALIDATED`
+- PPO comparison: `NOT VALIDATED`
+- domain randomization, fine-tuning, reward/action_scale/Kp tuning: not run
 
 ## Snapshot
 
@@ -54,7 +136,10 @@ Status: updated on 2026-05-11 after menagerie install, env API validation, and C
 | Phase D | Background `Start-Process` wrapper | FAIL_NON_BLOCKING | PowerShell environment conflict; direct foreground run succeeded. |
 | Phase GPU | `nvidia-smi` | NOT AVAILABLE | Command not found. |
 | Phase GPU | `nvcc --version` | NOT AVAILABLE | Command not found. |
-| Phase GPU | GPU smoke 10k command | NOT VALIDATED | Requires WSL2/Linux CUDA or available CUDA JAX runtime. |
+| Phase GPU | WSL2 `nvidia-smi` | PASS | RTX 4070 SUPER visible in WSL2; post-smoke VRAM `1517MiB / 12282MiB`. |
+| Phase GPU | `nvcc --version` | NOT AVAILABLE_NON_BLOCKING | `nvcc` not installed; WSL2 uses JAX CUDA plugin/runtime wheels. |
+| Phase GPU | `uv run --no-sync python scripts/gpu_preflight.py --impl jax --require_gpu` | PASS | JAX backend `gpu`, device `cuda:0`; flat/rough env reset/step passed. |
+| Phase GPU | Route B GPU 10k smoke wrapper | PASS | `TRAIN_OK`; 9984 actual env steps; checkpoint saved under `./logs/sac_lift_gpu_10k`. |
 
 ## Env API Schema
 
@@ -117,6 +202,27 @@ CPU tiny smoke:
 - truncation fraction: `0.0`
 - NaN: no NaN observed in reported scalar metrics
 - checkpoint: `./logs/sac_lift_cpu_tiny\sac_lift_step_256.pkl`
+
+GPU 10k smoke:
+
+- status: `TRAIN_OK`
+- requested timesteps: `10000`
+- actual env steps: `9984`
+- gradient steps: `142`
+- wall time: `56.50599093900382`
+- SPS: `176.68922947970893`
+- actor loss: `-1.9058758020401`
+- critic loss: `0.08382290601730347`
+- alpha loss: `1.585930585861206`
+- alpha: `0.04770537465810776`
+- policy log prob: `-18.79882049560547`
+- policy Q: `1.0090709924697876`
+- Q: `1.0673823356628418`
+- target Q: `1.0646085739135742`
+- truncation fraction: `0.0`
+- NaN: no NaN observed in reported scalar metrics
+- checkpoint: `./logs/sac_lift_gpu_10k/sac_lift_step_9984.pkl`
+- actual step explanation: `128 * (10000 // 128) = 9984`
 
 ## Tracebacks And Failures
 

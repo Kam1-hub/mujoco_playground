@@ -2,6 +2,80 @@
 
 Status: prepared on 2026-05-11 for moving Route B SAC validation from CPU dev to WSL2/Linux CUDA.
 
+## 2026-05-12 WSL2 GPU Validation Result
+
+Target workspace:
+
+```text
+/home/admin/projects/mujoco_playground/g1_sac_dev
+```
+
+CUDA/JAX setup:
+
+- `uv sync --frozen --extra cuda`: `PASS`
+- Python: `3.12.3`
+- JAX: `0.10.0`
+- JAX backend/devices: `gpu`, `cuda:0`
+- MuJoCo: `3.8.0`
+- Brax: `0.14.2`
+- GPU: NVIDIA GeForce RTX 4070 SUPER, 12 GB class
+- Driver: `591.74`
+- CUDA reported by `nvidia-smi`: `13.1`
+- `nvcc`: not installed; not a blocker in WSL2 plugin-based runtime
+
+Assets:
+
+- Menagerie path: `g1_env/external_deps/mujoco_menagerie`
+- Menagerie commit: `1b86ece576591213e2b666ebf59508454200ca97`
+- Menagerie, `.venv`, `logs`, and checkpoints remain ignored.
+
+Preflight:
+
+- Command: `uv run --no-sync python scripts/gpu_preflight.py --impl jax --require_gpu`
+- Status: `PASS`
+- Stages: imports PASS, flat env PASS, rough env PASS
+- Runtime summary: `has_gpu=true`, `jax_backend=gpu`, `jax_devices=["cuda:0"]`
+
+Route B GPU 10k smoke:
+
+- Command wrapper: `bash scripts/gpu_smoke_route_b.sh`
+- Status: `TRAIN_OK`
+- Checkpoint: `./logs/sac_lift_gpu_10k/sac_lift_step_9984.pkl`
+- Env steps: `9984`
+- Gradient steps: `142`
+- Wall time: `56.50599093900382`
+- SPS: `176.68922947970893`
+- Actor loss: `-1.9058758020401`
+- Critic loss: `0.08382290601730347`
+- Alpha loss: `1.585930585861206`
+- Alpha: `0.04770537465810776`
+- Policy log prob: `-18.79882049560547`
+- Policy Q: `1.0090709924697876`
+- Q: `1.0673823356628418`
+- Target Q: `1.0646085739135742`
+- Truncation fraction: `0.0`
+- NaN: no NaN observed in reported scalar metrics
+
+Step count note:
+
+- The smoke requested `num_timesteps=10000`.
+- Route B currently records actual steps as `num_envs * (num_timesteps // num_envs)`.
+- With `num_envs=128`, the actual count is `9984`.
+
+Warnings observed:
+
+- WSL2 CUDA driver passthrough warning: `Could not get kernel mode driver version`.
+- JAX cast warning: `RuntimeWarning: overflow encountered in cast`.
+- CUDA timer warmup warning: `Delay kernel timed out: measured time has sub-optimal accuracy`.
+- These were non-fatal for preflight and smoke.
+
+Remaining validation status:
+
+- 1M and longer training: `NOT VALIDATED`
+- deterministic eval rollout: `NOT VALIDATED`
+- PPO comparison: `NOT VALIDATED`
+- domain randomization and fine-tuning: not run
+
 ## 2026-05-12 WSL2 Documentation Update
 
 Target WSL2 documentation workspace:

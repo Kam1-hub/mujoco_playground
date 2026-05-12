@@ -1,6 +1,6 @@
 # G1 SAC Integration Status And Roadmap
 
-Status: updated on 2026-05-12 after WSL2 path correction and GPU operating notes review.
+Status: updated on 2026-05-12 after WSL2 GPU preflight and Route B GPU 10k smoke.
 
 ## 1. Mission
 
@@ -174,10 +174,8 @@ Validation ladder:
 
 Status:
 
-- Steps 1 through 8 are complete.
-- Step 9 is in progress on WSL2/Linux CUDA.
-- Step 10 has not started.
-- Step 11 is out of scope until 10k GPU smoke passes.
+- Steps 1 through 10 are complete.
+- Step 11 remains `NOT VALIDATED` and requires separate user confirmation.
 
 ### Phase 6: Reports, Commits, Migration Handoff
 
@@ -201,11 +199,11 @@ Current GitHub branch:
 Key commits:
 
 ```text
+6fa5160 Sync WSL2 GPU preflight documentation
 0ffcb91 Add WSL2 Codex handoff guide
 d73d45c Prepare GPU migration validation scripts
 4986032 Validate G1 SAC CPU smoke
 6027358 Add Route B asymmetric SAC baseline
-74594b3 Add Route A Brax SAC fallback
 ```
 
 GitHub remote:
@@ -226,10 +224,12 @@ WSL2 target workspace state:
 
 - Path: `/home/admin/projects/mujoco_playground/g1_sac_dev`
 - Branch: `sac-integration...origin/sac-integration`
-- Latest commit: `0ffcb91 Add WSL2 Codex handoff guide`
-- Menagerie: missing
-- Python env: missing
-- CUDA JAX: not checked in the read-only startup pass
+- Latest commit: `6fa5160 Sync WSL2 GPU preflight documentation`
+- Menagerie: present at `1b86ece576591213e2b666ebf59508454200ca97`
+- Python env: present under ignored `.venv`
+- CUDA JAX: validated, backend `gpu`, device `cuda:0`
+- GPU preflight: `PASS`
+- Route B GPU 10k smoke: `PASS`
 
 ## 5. Completed CPU Validation
 
@@ -342,27 +342,15 @@ Use these files only as environment and operating-experience references. Do not 
 
 Current objective:
 
-- Complete WSL2/Linux CUDA environment preparation and run GPU preflight.
+- Review and record the completed WSL2 GPU preflight and Route B GPU 10k smoke.
 
-Do next in WSL2:
+Completed in WSL2:
 
-1. Read project handoff and local environment notes:
-   - `AGENTS.md`
-   - `WSL2_CODEX_HANDOFF.md`
-   - `WSL2_GPU_EXPERIENCE.md`
-   - `reports/sac_integration/07_gpu_migration_prep.md`
-   - `reports/sac_integration/06_next_actions.md`
-   - `/home/admin/projects/mujoco_playground/TRAINING_NOTES.md`
-2. Rebuild Python env in WSL2.
-3. Prepare menagerie at the pinned commit.
-4. Verify CUDA/JAX visibility.
-5. Run:
-
-```bash
-uv run --no-sync python scripts/gpu_preflight.py --impl jax --require_gpu
-```
-
-Only if preflight passes, stop and wait for user confirmation before GPU 10k smoke.
+- `uv sync --frozen --extra cuda`
+- menagerie checkout at `1b86ece576591213e2b666ebf59508454200ca97`
+- JAX backend/device check: `gpu`, `cuda:0`
+- `uv run --no-sync python scripts/gpu_preflight.py --impl jax --require_gpu`: `PASS`
+- `bash scripts/gpu_smoke_route_b.sh`: `TRAIN_OK`
 
 ## 9. GPU 10k Smoke Objective
 
@@ -403,38 +391,48 @@ Acceptance criteria:
 - Actual `env_steps` are recorded; Route B may record `9984` for a `10000` target with `128` envs.
 - Idle and final or peak VRAM are recorded when available.
 
+Observed result:
+
+```text
+status: TRAIN_OK
+checkpoint: ./logs/sac_lift_gpu_10k/sac_lift_step_9984.pkl
+env_steps: 9984
+gradient_steps: 142
+wall_time: 56.50599093900382
+sps: 176.68922947970893
+actor_loss: -1.9058758020401
+critic_loss: 0.08382290601730347
+alpha: 0.04770537465810776
+alpha_loss: 1.585930585861206
+policy_log_prob: -18.79882049560547
+q: 1.0673823356628418
+target_q: 1.0646085739135742
+truncation_fraction: 0.0
+```
+
+No NaN was observed in reported scalar metrics.
+
+Actual step explanation:
+
+- Route B uses `num_envs * (num_timesteps // num_envs)`.
+- `128 * (10000 // 128) = 9984`.
+
+Warnings observed and classified as non-fatal:
+
+- WSL2 CUDA driver passthrough warning: `Could not get kernel mode driver version`.
+- JAX cast warning: `RuntimeWarning: overflow encountered in cast`.
+- CUDA timer warmup warning: `Delay kernel timed out`.
+
 ## 10. After GPU 10k Smoke
 
-If GPU 10k smoke passes:
-
-1. Update `reports/sac_integration/04_smoke_results.md`.
-2. Update `reports/sac_integration/05_known_issues.md`.
-3. Update `reports/sac_integration/06_next_actions.md`.
-4. Record:
-   - command
-   - runtime versions
-   - JAX backend/devices
-   - menagerie commit
-   - env shapes
-   - checkpoint path
-   - env steps
-   - gradient steps
-   - wall time
-   - SPS
-   - actor loss
-   - critic loss
-   - alpha
-   - NaN status
-5. Commit the report updates.
-
-Only then consider:
+After report review, only then consider with explicit user confirmation:
 
 - deterministic eval rollout metrics
 - slightly longer sanity run
 - PPO comparison
 
-Do not jump directly to 1M training.
+Do not jump directly to 1M training. 1M and longer runs remain `NOT VALIDATED`.
 
 ## 11. Current Position In One Sentence
 
-SAC Route B is implemented and CPU tiny smoke has passed; GitHub migration and WSL2 handoff are complete; the project is now waiting on WSL2 Python/CUDA/JAX setup, pinned menagerie, and `gpu_preflight.py --impl jax --require_gpu` before any 10k GPU smoke is allowed.
+SAC Route B is implemented; CPU tiny smoke, WSL2 GPU preflight, and Route B GPU 10k smoke have passed; 1M, deterministic eval, longer sanity runs, domain randomization, and fine-tuning remain `NOT VALIDATED`.
