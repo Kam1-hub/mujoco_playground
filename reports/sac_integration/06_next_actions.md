@@ -1,6 +1,6 @@
 # Next Actions
 
-Status: updated on 2026-05-12 after WSL2 GPU preflight and Route B GPU 10k smoke.
+Status: updated on 2026-05-12 after checkpoint normalizer schema patch.
 
 ## Immediate State
 
@@ -20,6 +20,14 @@ Status: updated on 2026-05-12 after WSL2 GPU preflight and Route B GPU 10k smoke
   `1b86ece576591213e2b666ebf59508454200ca97`.
 - GPU preflight with `--require_gpu` passed.
 - Route B GPU 10k smoke passed with `TRAIN_OK`.
+- The existing GPU 10k checkpoint predates normalizer persistence and is not
+  deterministic-eval ready.
+- Future Route B checkpoints now persist `policy_normalizer` and
+  `value_normalizer`; `scripts/check_sac_checkpoint.py --require_eval_ready`
+  can enforce this gate.
+- Schema dry-run checkpoint
+  `./logs/sac_lift_schema_dry_run/sac_lift_step_0.pkl` contains both
+  normalizers and passes `--require_eval_ready`.
 
 ## Completed WSL2 GPU Validation
 
@@ -78,11 +86,15 @@ CPU, stop and report the CUDA/JAX blocker.
 
 ## Recommended Next Step
 
-Do not immediately run 1M. The next useful steps are report review plus one of
-the following only after explicit user confirmation:
+Do not immediately run 1M. The next useful steps are report review plus the
+following only after explicit user confirmation:
 
-1. deterministic eval rollout metrics for the GPU-smoke checkpoint.
-2. a slightly longer sanity run at a controlled scale.
+1. rerun one controlled smoke to generate a new checkpoint with saved
+   observation normalizers.
+2. run `scripts/check_sac_checkpoint.py --require_eval_ready` on the new
+   checkpoint.
+3. only after that, collect deterministic eval rollout metrics or run a
+   slightly longer sanity check at a controlled scale.
 
 ## Migration Reminders
 
@@ -94,12 +106,15 @@ the following only after explicit user confirmation:
   `128` envs.
 - `gpu_preflight.py --impl jax` without `--require_gpu` is not GPU validation.
 
-## Recommended Follow-Ups After GPU 10k Smoke
+## Recommended Follow-Ups After Checkpoint Schema Patch
 
-1. Add deterministic eval rollout metrics after user confirmation.
-2. Run a longer sanity run only after GPU smoke is reviewed and explicitly
+1. Regenerate a short controlled checkpoint after user confirmation so the
+   checkpoint contains `policy_normalizer` and `value_normalizer`.
+2. Verify the regenerated checkpoint with `--require_eval_ready`.
+3. Add deterministic eval rollout metrics only after readiness passes.
+4. Run a longer sanity run only after GPU smoke is reviewed and explicitly
    authorized.
-3. Compare against PPO baseline only after SAC smoke plus eval have clean reports.
+5. Compare against PPO baseline only after SAC smoke plus eval have clean reports.
 
 ## Do Not Start Yet
 

@@ -1,6 +1,6 @@
 # G1 SAC Integration Status And Roadmap
 
-Status: updated on 2026-05-12 after WSL2 GPU preflight and Route B GPU 10k smoke.
+Status: updated on 2026-05-12 after checkpoint normalizer schema patch.
 
 ## 1. Mission
 
@@ -30,6 +30,8 @@ Route B defaults:
 - Entropy: trainable alpha
 - Replay: uniform replay buffer
 - Checkpoint: pickle checkpoint for smoke validation
+- Checkpoint schema: policy/Q/target/log-alpha, metrics, config, and
+  policy/value observation normalizers
 - Default env implementation: `impl="jax"`
 
 Action scaling decision:
@@ -199,11 +201,11 @@ Current GitHub branch:
 Key commits:
 
 ```text
+d5c0e8d Record Route B GPU smoke results
 6fa5160 Sync WSL2 GPU preflight documentation
 0ffcb91 Add WSL2 Codex handoff guide
 d73d45c Prepare GPU migration validation scripts
 4986032 Validate G1 SAC CPU smoke
-6027358 Add Route B asymmetric SAC baseline
 ```
 
 GitHub remote:
@@ -230,6 +232,13 @@ WSL2 target workspace state:
 - CUDA JAX: validated, backend `gpu`, device `cuda:0`
 - GPU preflight: `PASS`
 - Route B GPU 10k smoke: `PASS`
+- Existing GPU 10k checkpoint deterministic eval readiness: `FAIL`, because
+  the checkpoint predates observation normalizer persistence.
+- Future checkpoint schema: patched to save `policy_normalizer` and
+  `value_normalizer`.
+- Schema dry-run checkpoint:
+  `./logs/sac_lift_schema_dry_run/sac_lift_step_0.pkl` passed
+  `scripts/check_sac_checkpoint.py --require_eval_ready`.
 
 ## 5. Completed CPU Validation
 
@@ -311,6 +320,10 @@ Added scripts:
 
 - `scripts/check_sac_checkpoint.py`
   - Validates Route B pickle checkpoints.
+  - Reports `policy_normalizer`, `value_normalizer`, `normalize_observations`,
+    and `deterministic_eval_ready`.
+  - `--require_eval_ready` fails when a checkpoint cannot support trusted
+    deterministic actor evaluation.
 - `scripts/gpu_preflight.py`
   - Does not train.
   - Checks JAX/MuJoCo/Brax, GPU visibility when requested, menagerie commit, registry, Route B import, and flat/rough env reset/step.
@@ -425,9 +438,19 @@ Warnings observed and classified as non-fatal:
 
 ## 10. After GPU 10k Smoke
 
-After report review, only then consider with explicit user confirmation:
+The existing GPU 10k checkpoint is useful as a smoke artifact but not as a
+trusted deterministic-eval artifact:
 
-- deterministic eval rollout metrics
+- `normalize_observations=True`
+- `policy_normalizer` missing
+- `value_normalizer` missing
+
+This cannot be fixed retroactively for the old checkpoint. After report review,
+only then consider with explicit user confirmation:
+
+- rerun one controlled smoke to generate a checkpoint with saved normalizers
+- verify the new checkpoint with `--require_eval_ready`
+- deterministic eval rollout metrics after readiness passes
 - slightly longer sanity run
 - PPO comparison
 
@@ -435,4 +458,4 @@ Do not jump directly to 1M training. 1M and longer runs remain `NOT VALIDATED`.
 
 ## 11. Current Position In One Sentence
 
-SAC Route B is implemented; CPU tiny smoke, WSL2 GPU preflight, and Route B GPU 10k smoke have passed; 1M, deterministic eval, longer sanity runs, domain randomization, and fine-tuning remain `NOT VALIDATED`.
+SAC Route B is implemented; CPU tiny smoke, WSL2 GPU preflight, and Route B GPU 10k smoke have passed; future checkpoints now persist observation normalizers, but the existing GPU 10k checkpoint is not deterministic-eval ready; 1M, deterministic eval, longer sanity runs, domain randomization, and fine-tuning remain `NOT VALIDATED`.

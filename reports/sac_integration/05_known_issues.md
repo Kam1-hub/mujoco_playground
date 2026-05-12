@@ -1,6 +1,6 @@
 # Known Issues
 
-Status: updated on 2026-05-12 after WSL2 GPU preflight and Route B GPU 10k smoke.
+Status: updated on 2026-05-12 after checkpoint normalizer schema patch.
 
 ## Open
 
@@ -11,6 +11,7 @@ Status: updated on 2026-05-12 after WSL2 GPU preflight and Route B GPU 10k smoke
 | Route B actual env steps may be lower than requested | reporting | OPEN_NON_BLOCKING | Training loop uses `num_timesteps // num_envs`; `10000` with `128` envs yields `9984`. | Record actual `env_steps` and checkpoint filename; do not assume target equals actual. |
 | Replay buffer scale can become the SAC VRAM bottleneck | memory | OPEN | Route B stores about 671 float32 values per transition; 1M raw replay is about 2.5-2.7 GB before JAX/XLA overhead. | Keep first smoke at `max_replay_size=8192`; increase only after measured GPU smoke. |
 | 1M and longer runs not validated | validation scope | OPEN | GPU 10k smoke passed, but no longer sanity run has been executed. | Next step should be deterministic eval or a user-approved longer sanity run; do not jump straight to 1M. |
+| Existing GPU 10k checkpoint is not deterministic-eval ready | checkpoint/eval | OPEN | `./logs/sac_lift_gpu_10k/sac_lift_step_9984.pkl` has `normalize_observations=True` but lacks `policy_normalizer` and `value_normalizer`. | Do not use the old checkpoint for trusted deterministic eval; after user confirmation, rerun a controlled smoke with the new schema and then check eval readiness. |
 | PPO default env count is not a SAC smoke setting | scope | OPEN_NON_BLOCKING | Older PPO docs mention large env counts; Route B smoke is `num_envs=128`. | Do not import PPO/Barkour `2048` or `8192` env assumptions into SAC migration smoke. |
 | Default G1 config reports `impl="warp"` | runtime backend | MITIGATED | CPU-only JAX cannot satisfy Warp's CUDA backend probe. | Route B and env checker now default to `impl="jax"` and expose `--impl`. Use `--impl warp` only where CUDA JAX/Warp is validated. |
 | `state.info["truncation"]` absent | truncation | MITIGATED | Flat/rough env API both omit `truncation` in reset/step info keys. | SAC synthesizes zero truncation and reports `truncation_fraction`; revisit if env adds timeout metadata. |
@@ -29,6 +30,7 @@ Status: updated on 2026-05-12 after WSL2 GPU preflight and Route B GPU 10k smoke
 | GPU preflight not validated in target WSL2 workspace | CUDA/JAX backend | `uv sync --frozen --extra cuda` installed CUDA JAX plugin/runtime packages; JAX reports backend `gpu`, device `cuda:0`; `gpu_preflight.py --impl jax --require_gpu` passed. |
 | Route B GPU 10k smoke not validated | validation | User authorized one controlled 10k smoke; wrapper reported `TRAIN_OK`, checkpoint `./logs/sac_lift_gpu_10k/sac_lift_step_9984.pkl`, finite scalar metrics, and no observed NaN. |
 | CPU-only JAX after base sync | dependency | Base `uv sync` remains CPU-only, but the target WSL2 environment now uses the locked CUDA extra. Keep using `uv sync --frozen --extra cuda` for GPU validation. |
+| Future checkpoint schema did not persist observation normalizers | checkpoint schema | Route B checkpoint payloads now save `policy_normalizer` and `value_normalizer`; `scripts/check_sac_checkpoint.py` reports `deterministic_eval_ready` and can enforce it with `--require_eval_ready`; a dry-run schema checkpoint passed the readiness gate. |
 
 ## Current Acceptance Position
 
@@ -37,6 +39,10 @@ Status: updated on 2026-05-12 after WSL2 GPU preflight and Route B GPU 10k smoke
 - GPU preflight is validated in WSL2 with JAX backend `gpu` and device `cuda:0`.
 - Route B GPU 10k smoke is validated with `TRAIN_OK` and checkpoint
   `./logs/sac_lift_gpu_10k/sac_lift_step_9984.pkl`.
+- The existing GPU 10k checkpoint is not a trusted deterministic-eval artifact
+  because it predates normalizer persistence.
+- Future SAC checkpoints include policy/value observation normalizers for eval
+  readiness checks.
 - 1M, longer sanity runs, deterministic eval, and PPO comparison are still
   `NOT VALIDATED`.
 - No LIFT fork wholesale copy was made.

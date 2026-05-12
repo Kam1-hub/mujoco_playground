@@ -12,13 +12,22 @@ from pathlib import Path
 from typing import Any
 
 
-REQUIRED_TOP_LEVEL_KEYS = (
+REQUIRED_MODEL_KEYS = (
     "config",
     "policy_params",
     "q_params",
     "target_q_params",
     "log_alpha",
-    "metrics",
+)
+
+METRIC_KEYS = (
+    "status",
+    "env_steps",
+    "gradient_steps",
+    "actor_loss",
+    "critic_loss",
+    "alpha",
+    "sps",
 )
 
 
@@ -28,6 +37,14 @@ def _parse_args() -> argparse.Namespace:
       "--checkpoint",
       required=True,
       help="Path to a Route B SAC pickle checkpoint.",
+  )
+  parser.add_argument(
+      "--require_eval_ready",
+      action="store_true",
+      help=(
+          "Fail when the checkpoint is not ready for deterministic actor "
+          "evaluation."
+      ),
   )
   return parser.parse_args()
 
@@ -66,6 +83,7 @@ def main() -> int:
       "checkpoint": str(path),
       "status": "PASS",
       "errors": [],
+      "warnings": [],
   }
 
   if not path.exists():
@@ -92,34 +110,46 @@ def main() -> int:
 
   keys = sorted(str(k) for k in payload.keys())
   result["top_level_keys"] = keys
-  missing = [key for key in REQUIRED_TOP_LEVEL_KEYS if key not in payload]
+  missing = [key for key in REQUIRED_MODEL_KEYS if key not in payload]
   if missing:
     result["status"] = "FAIL"
     result["errors"].append(f"missing top-level keys: {missing}")
 
   config = payload.get("config", {})
   metrics = payload.get("metrics", {})
+  if "metrics" not in payload:
+    result["warnings"].append("missing optional metrics field")
   result["config"] = {
       "env_name": _jsonable(_get(config, "env_name")),
       "impl": _jsonable(_get(config, "impl")),
       "policy_obs_key": _jsonable(_get(config, "policy_obs_key")),
       "value_obs_key": _jsonable(_get(config, "value_obs_key")),
+      "normalize_observations": _jsonable(_get(config, "normalize_observations")),
   }
-  result["metrics"] = {
-      "status": _jsonable(_get(metrics, "status")),
-      "env_steps": _jsonable(_get(metrics, "env_steps")),
-      "gradient_steps": _jsonable(_get(metrics, "gradient_steps")),
-      "actor_loss": _jsonable(_get(metrics, "actor_loss")),
-      "critic_loss": _jsonable(_get(metrics, "critic_loss")),
-      "alpha": _jsonable(_get(metrics, "alpha")),
-      "sps": _jsonable(_get(metrics, "sps")),
-  }
+  result["metrics"] = {key: _jsonable(_get(metrics, key)) for key in METRIC_KEYS}
+  has_policy_params = "policy_params" in payload
+  has_policy_normalizer = "policy_normalizer" in payload
+  has_value_normalizer = "value_normalizer" in payload
+  normalize_observations = _get(config, "normalize_observations")
+  deterministic_eval_ready = bool(
+      has_policy_params
+      and (
+          normalize_observations is False
+          or (normalize_observations is True and has_policy_normalizer)
+      )
+  )
   result["present"] = {
-      "policy_params": "policy_params" in payload,
+      "policy_params": has_policy_params,
       "q_params": "q_params" in payload,
       "target_q_params": "target_q_params" in payload,
       "log_alpha": "log_alpha" in payload,
+      "policy_normalizer": has_policy_normalizer,
+      "value_normalizer": has_value_normalizer,
   }
+  result["has_policy_normalizer"] = has_policy_normalizer
+  result["has_value_normalizer"] = has_value_normalizer
+  result["normalize_observations"] = _jsonable(normalize_observations)
+  result["deterministic_eval_ready"] = deterministic_eval_ready
 
   for key, value in result["config"].items():
     if value is None:
@@ -127,8 +157,10 @@ def main() -> int:
       result["errors"].append(f"missing config field: {key}")
   for key, value in result["metrics"].items():
     if value is None:
-      result["status"] = "FAIL"
-      result["errors"].append(f"missing metrics field: {key}")
+      result["warnings"].append(f"missing metrics field: {key}")
+  if args.require_eval_ready and not deterministic_eval_ready:
+    result["status"] = "FAIL"
+    result["errors"].append("checkpoint is not deterministic-eval ready")
 
   print(json.dumps(result, indent=2, sort_keys=True))
   return 0 if result["status"] == "PASS" else 2

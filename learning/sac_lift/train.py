@@ -72,6 +72,18 @@ def dry_run(config: Any) -> dict[str, Any]:
       sac_networks,
       config,
   )
+  metrics = {
+      "status": "DRY_RUN_OK",
+      "env_steps": 0,
+      "policy_obs_shape": [policy_obs_size],
+      "value_obs_shape": [value_obs_size],
+      "action_shape": [action_size],
+      "replay_capacity": int(replay_state.action.shape[0]),
+      "gradient_steps": int(state.gradient_steps),
+      "actor_loss": float(update_metrics["actor_loss"]),
+      "critic_loss": float(update_metrics["critic_loss"]),
+      "alpha": float(update_metrics["alpha"]),
+  }
   os.makedirs(config.logdir, exist_ok=True)
   ckpt_path = checkpoint.save(
       config.logdir,
@@ -82,20 +94,13 @@ def dry_run(config: Any) -> dict[str, Any]:
           "q_params": state.q_params,
           "target_q_params": state.target_q_params,
           "log_alpha": state.log_alpha,
+          "policy_normalizer": state.policy_normalizer,
+          "value_normalizer": state.value_normalizer,
+          "metrics": metrics,
       },
   )
-  return {
-      "status": "DRY_RUN_OK",
-      "policy_obs_shape": [policy_obs_size],
-      "value_obs_shape": [value_obs_size],
-      "action_shape": [action_size],
-      "replay_capacity": int(replay_state.action.shape[0]),
-      "gradient_steps": int(state.gradient_steps),
-      "actor_loss": float(update_metrics["actor_loss"]),
-      "critic_loss": float(update_metrics["critic_loss"]),
-      "alpha": float(update_metrics["alpha"]),
-      "checkpoint": ckpt_path,
-  }
+  metrics["checkpoint"] = ckpt_path
+  return metrics
 
 
 def train(config: Any) -> dict[str, Any]:
@@ -219,6 +224,8 @@ def train(config: Any) -> dict[str, Any]:
           "q_params": training_state.q_params,
           "target_q_params": training_state.target_q_params,
           "log_alpha": training_state.log_alpha,
+          "policy_normalizer": training_state.policy_normalizer,
+          "value_normalizer": training_state.value_normalizer,
           "metrics": metrics,
       },
   )
