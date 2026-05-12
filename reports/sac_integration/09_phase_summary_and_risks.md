@@ -9,8 +9,8 @@ continue without relying on chat history.
 
 - Path: `/home/admin/projects/mujoco_playground/g1_sac_dev`
 - Branch: `sac-integration`
-- Current committed baseline before 500k report update:
-  `99da67d Record SAC 250k sanity results`
+- Current committed diagnostic baseline before this report update:
+  `926a14f Add SAC alpha entropy diagnostics`
 - Remote: `origin https://github.com/Kam1-hub/mujoco_playground.git`
 - External menagerie commit: `1b86ece576591213e2b666ebf59508454200ca97`
 
@@ -39,6 +39,7 @@ Runtime artifacts are local and ignored. Do not commit `logs/`, `.venv/`,
 | 500k sanity | PASS | `./logs/sac_lift_gpu_500k_sanity/sac_lift_step_499968.pkl` |
 | 500k checkpoint eval readiness | PASS | `scripts/check_sac_checkpoint.py --require_eval_ready` |
 | 500k bounded deterministic eval | PASS | `./logs/sac_eval_500k/eval_16x1000.json` |
+| Both-mode eval diagnostic | PASS | `reports/sac_integration/10_both_mode_eval_diagnostic.md` |
 | 1M training | NOT VALIDATED | Requires explicit user confirmation and resource/stop plan |
 
 ## Completed Outcomes
@@ -57,6 +58,8 @@ Runtime artifacts are local and ignored. Do not commit `logs/`, `.venv/`,
 - Verified 100k checkpoint readiness and bounded deterministic eval.
 - Verified 250k checkpoint readiness and bounded deterministic eval.
 - Verified 500k checkpoint readiness and bounded deterministic eval.
+- Synced alpha/entropy diagnostics and validated `--policy_mode both` eval-only
+  diagnostic on 100k, 250k, and 500k checkpoints.
 
 ## Key Metrics
 
@@ -283,6 +286,31 @@ The actual step count is `499968` because Route B uses
 - `truncation_present`: `true`
 - `truncation_fraction`: `0.0`
 
+### Both-Mode Eval Diagnostic
+
+- Scope: eval-only, no training.
+- Script: `scripts/eval_sac_checkpoint.py --policy_mode both`
+- Checkpoints: 100k, 250k, 500k.
+- Seeds: `0..4`.
+- Eval scale: `num_eval_envs=16`, `episode_length=1000`.
+- Checkpoint readiness: PASS for all three checkpoints.
+- Deterministic reward mean aggregate:
+  - 100k: `-4.2218`
+  - 250k: `-4.4585`
+  - 500k: `-4.8476`
+- Deterministic action abs mean:
+  `0.1823 -> 0.2148 -> 0.3029`
+- Stochastic reward mean aggregate:
+  - 100k: `-6.4616`
+  - 250k: `-6.1954`
+  - 500k: `-5.9091`
+- Stochastic log-prob mean:
+  `-17.9594 -> -17.2847 -> -13.4275`
+- No eval failure, traceback, OOM, CUDA fatal error, or action/reward/obs NaN
+  was observed.
+- Interpretation: deterministic `tanh(mean)` behavior degrades, while sampled
+  stochastic behavior does not show the same degradation.
+
 ### 250k Risk Notes
 
 - WSL2 CUDA driver version format warning and JAX cast overflow warning were
@@ -326,6 +354,9 @@ It is reasonable to claim:
   `normalize_observations=True`.
 - The 10k, 50k, 100k, 250k, and 500k GPU runs did not show NaN, Inf, OOM,
   fatal CUDA failure, env failure, checkpoint failure, or eval failure.
+- Both-mode eval shows the 500k quality concern is concentrated in the
+  deterministic `tanh(mean)` path; sampled stochastic eval does not show the
+  same degradation.
 - Runtime artifacts are ignored and have not been committed.
 
 It is not yet reasonable to claim:
@@ -345,7 +376,10 @@ It is not yet reasonable to claim:
 - Long training stability: 1M is still untested, so late NaN, replay drift,
   alpha instability, or target-Q drift remain possible.
 - 500k exposed training-dynamics risk: alpha reached about `0.0080` and
-  bounded eval reward worsened versus 250k despite no runtime failure.
+  deterministic eval reward worsened versus 250k despite no runtime failure.
+- Both-mode eval narrowed the quality issue: deterministic `tanh(mean)` reward
+  degrades while sampled stochastic reward improves slightly, so the next risk
+  area is actor mean / action distribution behavior.
 - Eval reward is still low and should be treated as a smoke signal, not a
   performance benchmark.
 - Truncation handling is currently synthesized as zero when absent. That passed
@@ -429,10 +463,11 @@ Stop immediately and report if any of these occur:
 
 ## 1M Decision And Readiness Plan
 
-Do not automatically jump to 1M from this report update. The next recommended
-step is a separate 1M decision/readiness review and user confirmation. The
-review should consider whether alpha floor, target entropy, or log-alpha
-dynamics need analysis before a longer run. Consider 1M only with:
+Do not automatically jump to 750k or 1M from this report update. The next
+recommended step is actor mean / action distribution / reward-component
+diagnostic design and user confirmation. A later 1M review should consider
+whether alpha floor, target entropy, log-alpha dynamics, or deterministic mean
+action drift need analysis before a longer run. Consider 1M only with:
 
 - explicit resource budget
 - fresh logdir and checkpoint path

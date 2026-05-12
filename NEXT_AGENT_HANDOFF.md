@@ -18,8 +18,8 @@ domain randomization, or fine-tuning as part of the current validation phase.
 
 - Path: `/home/admin/projects/mujoco_playground/g1_sac_dev`
 - Branch: `sac-integration`
-- Current committed baseline before 500k report update:
-  `99da67d Record SAC 250k sanity results`
+- Current committed diagnostic baseline before this report update:
+  `926a14f Add SAC alpha entropy diagnostics`
 - Remote: `origin https://github.com/Kam1-hub/mujoco_playground.git`
 - Last known pushed branch: `sac-integration`
 
@@ -95,7 +95,8 @@ SAC Route B code lives in local files and should not disturb PPO/RSL:
 - `scripts/gpu_preflight.py`: non-training CUDA/JAX/env/menagerie preflight.
 - `scripts/check_sac_checkpoint.py`: checkpoint schema and eval readiness
   checker.
-- `scripts/eval_sac_checkpoint.py`: bounded deterministic checkpoint eval.
+- `scripts/eval_sac_checkpoint.py`: bounded checkpoint eval with
+  `--policy_mode deterministic|stochastic|both`.
 - `g1_env/config/sac_params.py`: SAC Route B config defaults.
 
 ## Entry Points
@@ -158,9 +159,11 @@ Current validated ladder:
 - GPU 500k sanity: PASS.
 - 500k checkpoint eval readiness: PASS.
 - 500k bounded deterministic eval: PASS.
+- 100k/250k/500k both-mode deterministic/stochastic eval diagnostic: PASS.
 
 Still not validated:
 
+- 750k training.
 - 1M training.
 - Full performance benchmark.
 - PPO comparison.
@@ -200,6 +203,10 @@ All paths below are runtime artifacts and should remain ignored:
   - Checkpoint readiness PASS.
 - `./logs/sac_eval_500k/eval_16x1000.json`
   - 16 env x 1000 step bounded deterministic eval result after 500k.
+- `./logs/sac_eval_bothmode/`
+  - 100k/250k/500k eval-only diagnostic JSONs using
+    `--policy_mode both`, seeds `0..4`, `num_eval_envs=16`, and
+    `episode_length=1000`.
 - `./logs/sac_lift_schema_dry_run/sac_lift_step_0.pkl`
   - Dry-run schema validation artifact, if still present.
 
@@ -341,6 +348,23 @@ GPU 500k sanity:
 - `wall_time=68.70198891899781`, `sps=232.88990976468807`
 - No action/reward/obs NaN.
 
+Both-mode eval diagnostic:
+
+- Script: `scripts/eval_sac_checkpoint.py --policy_mode both`
+- Checkpoints: 100k, 250k, 500k.
+- Seeds: `0..4`; `num_eval_envs=16`; `episode_length=1000`.
+- Deterministic reward mean aggregate:
+  `100k=-4.2218`, `250k=-4.4585`, `500k=-4.8476`.
+- Deterministic action abs mean:
+  `0.1823 -> 0.2148 -> 0.3029`.
+- Stochastic reward mean aggregate:
+  `100k=-6.4616`, `250k=-6.1954`, `500k=-5.9091`.
+- Stochastic log-prob mean:
+  `-17.9594 -> -17.2847 -> -13.4275`.
+- Core conclusion: deterministic `tanh(mean)` behavior degrades while sampled
+  stochastic behavior does not show the same degradation. This narrows the next
+  diagnostic target to actor mean / action distribution / reward components.
+
 500k risk notes:
 
 - WSL2 CUDA driver version format warning and JAX cast overflow warning were
@@ -367,8 +391,10 @@ GPU 500k sanity:
 - Eval rewards are low and only prove bounded eval execution, not policy quality.
 - Truncation handling is still an assumption when absent from env info.
 - Replay memory and normalizer behavior need 1M-scale validation.
-- 500k exposed alpha-decline and eval-degradation risk despite a clean runtime
-  sanity PASS.
+- 500k exposed alpha-decline and deterministic eval-degradation risk despite a
+  clean runtime sanity PASS.
+- Both-mode eval suggests deterministic actor mean behavior is the immediate
+  issue; stochastic sampled behavior does not degrade in the same way.
 - 1M replay can be around 2.5-2.7 GB raw before overhead.
 - SPS can vary due JIT compile and warmup.
 - No PPO comparison has been run.
@@ -377,13 +403,12 @@ GPU 500k sanity:
 
 1. Do read-only status checks.
 2. Read this file and `reports/sac_integration/09_phase_summary_and_risks.md`.
-3. If the user approves continuing, draft a separate 1M decision/readiness
-   review with a resource budget, fresh logdir, checkpoint readiness gate,
-   bounded eval command, and stop conditions.
-4. Include alpha floor, target entropy/log-alpha dynamics, Q drift, critic
-   loss, eval reward trend, and NaN flags in that review.
+3. If the user approves continuing, draft actor mean / action distribution /
+   reward-component diagnostic design.
+4. Do not draft or execute 750k/1M until the deterministic actor degradation is
+   understood or explicitly accepted by the user.
 
-Do not start 1M automatically. Do not modify reward, action scale, Kp, domain
+Do not start 750k or 1M automatically. Do not modify reward, action scale, Kp, domain
 randomization, fine-tuning, PPO, or RSL.
 
 ## Completed 100k Sanity Command
@@ -436,13 +461,15 @@ status checks: pwd, git status --short --branch, git log --oneline -5,
 git remote -v, and git check-ignore -v logs .venv
 g1_env/external_deps/mujoco_menagerie || true.
 
-Current HEAD should be at least 99da67d Record SAC 250k sanity results unless
+Current HEAD should be at least 926a14f Add SAC alpha entropy diagnostics unless
 newer report commits exist. GPU 10k smoke, deterministic eval smoke, GPU 50k
-sanity/eval, GPU 100k sanity/eval, GPU 250k sanity/eval, and GPU 500k
-sanity/eval have passed. 1M is not validated.
+sanity/eval, GPU 100k sanity/eval, GPU 250k sanity/eval, GPU 500k sanity/eval,
+and 100k/250k/500k both-mode eval diagnostic have passed. 750k and 1M are not
+validated.
 
 Do not run training, eval, preflight, installs, downloads, or git commits unless
-explicitly asked. Do not start 1M without a separate resource/stop-condition
-plan and user confirmation. Do not change reward, action_scale, Kp, domain
-randomization, fine-tuning, PPO, or RSL.
+explicitly asked. Next recommended work is actor mean / action distribution /
+reward-component diagnostic design. Do not start 750k or 1M without a separate
+resource/stop-condition plan and user confirmation. Do not change reward,
+action_scale, Kp, domain randomization, fine-tuning, PPO, or RSL.
 ```

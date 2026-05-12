@@ -1,6 +1,6 @@
 # G1 SAC Integration Status And Roadmap
 
-Status: updated on 2026-05-12 after Route B GPU 500k sanity and bounded eval.
+Status: updated on 2026-05-12 after both-mode eval diagnostic.
 
 ## 1. Mission
 
@@ -176,12 +176,13 @@ Validation ladder:
 12. 100k or longer sanity run
 13. 250k sanity run
 14. 500k sanity run
-15. 1M training
+15. Both-mode deterministic/stochastic eval diagnostic
+16. 1M training
 
 Status:
 
-- Steps 1 through 14 are complete.
-- Step 15 remains `NOT VALIDATED` and requires separate user confirmation and
+- Steps 1 through 15 are complete.
+- Step 16 remains `NOT VALIDATED` and requires separate user confirmation and
   an explicit resource/stop-condition plan.
 
 ### Phase 6: Reports, Commits, Migration Handoff
@@ -206,6 +207,8 @@ Current GitHub branch:
 Key commits:
 
 ```text
+926a14f Add SAC alpha entropy diagnostics
+87bca63 Record SAC 500k sanity results
 99da67d Record SAC 250k sanity results
 ee3f766 Record SAC 100k sanity results
 31cc105 Add SAC phase summary and handoff
@@ -232,8 +235,8 @@ WSL2 target workspace state:
 
 - Path: `/home/admin/projects/mujoco_playground/g1_sac_dev`
 - Branch: `sac-integration...origin/sac-integration`
-- Latest committed baseline before 500k report update:
-  `99da67d Record SAC 250k sanity results`
+- Latest committed diagnostic baseline before this report update:
+  `926a14f Add SAC alpha entropy diagnostics`
 - Menagerie: present at `1b86ece576591213e2b666ebf59508454200ca97`
 - Python env: present under ignored `.venv`
 - CUDA JAX: validated, backend `gpu`, device `cuda:0`
@@ -280,6 +283,13 @@ WSL2 target workspace state:
 - 500k bounded deterministic eval:
   16 env x 1000 steps, `EVAL_OK`, JSON
   `./logs/sac_eval_500k/eval_16x1000.json`, no action/reward/obs NaN.
+- Both-mode eval diagnostic:
+  `scripts/eval_sac_checkpoint.py --policy_mode both` passed for 100k, 250k,
+  and 500k checkpoints with seeds `0..4`. Deterministic `tanh(mean)` reward
+  degraded from `-4.2218` to `-4.8476`, while sampled stochastic reward did
+  not show the same degradation and improved from `-6.4616` to `-5.9091`.
+- Latest diagnostic report:
+  `reports/sac_integration/10_both_mode_eval_diagnostic.md`.
 - Logs, checkpoints, `.venv`, and menagerie remain ignored and are not
   committed.
 
@@ -368,9 +378,10 @@ Added scripts:
   - `--require_eval_ready` fails when a checkpoint cannot support trusted
     deterministic actor evaluation.
 - `scripts/eval_sac_checkpoint.py`
-  - Runs bounded deterministic actor eval from a Route B checkpoint.
+  - Runs bounded actor eval from a Route B checkpoint.
   - Loads checkpoint config/params/normalizer, rebuilds the G1 env/network, and
     emits JSON metrics.
+  - Supports `--policy_mode deterministic|stochastic|both`.
   - Does not train, update replay, render, or touch PPO/RSL paths.
 - `scripts/gpu_preflight.py`
   - Does not train.
@@ -403,7 +414,7 @@ Use these files only as environment and operating-experience references. Do not 
 
 Current objective:
 
-- Review and record the completed Route B GPU 500k sanity and bounded eval.
+- Review and record the completed both-mode eval diagnostic.
 
 Completed in WSL2:
 
@@ -416,6 +427,7 @@ Completed in WSL2:
 - 100k sanity and bounded eval: `PASS`
 - 250k sanity and bounded eval: `PASS`
 - 500k sanity and bounded eval: `PASS`
+- both-mode deterministic/stochastic eval diagnostic: `PASS`
 
 ## 9. GPU 10k Smoke Objective
 
@@ -513,13 +525,15 @@ json: ./logs/sac_eval_smoke/eval_4x200.json
 
 After report review, only then consider with explicit user confirmation:
 
-- commit the 500k sanity report update
-- 1M decision/readiness review with resource budget and stop conditions
+- actor mean / action distribution / reward-component diagnostic design
+- 1M decision/readiness review only after the deterministic policy issue is
+  understood
 - PPO comparison
 
 Do not jump directly to 1M training. The 4x200 eval is a smoke, not a full
-benchmark. The 50k, 100k, 250k, and 500k sanity runs are now validated; 1M
-remains `NOT VALIDATED`.
+benchmark. The 50k, 100k, 250k, and 500k sanity runs are now validated. The
+both-mode diagnostic shows deterministic `tanh(mean)` degradation while
+sampled stochastic eval does not degrade. 1M remains `NOT VALIDATED`.
 
 ## 11. 50k Sanity Result
 

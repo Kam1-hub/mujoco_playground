@@ -1,6 +1,6 @@
 # Smoke Results
 
-Status: updated on 2026-05-12 after Route B GPU 500k sanity and bounded eval.
+Status: updated on 2026-05-12 after both-mode eval diagnostic.
 
 ## 2026-05-12 WSL2 GPU Result
 
@@ -8,8 +8,8 @@ Workspace:
 
 - Path: `/home/admin/projects/mujoco_playground/g1_sac_dev`
 - Branch: `sac-integration`
-- Latest committed baseline before 500k report update:
-  `99da67d Record SAC 250k sanity results`
+- Latest committed diagnostic baseline before this report update:
+  `926a14f Add SAC alpha entropy diagnostics`
 
 Runtime:
 
@@ -246,6 +246,33 @@ Route B 500k bounded deterministic eval:
 - Scope note: this is a bounded eval attached to 500k sanity, not a full
   benchmark.
 
+Both-mode eval diagnostic:
+
+- Script: `scripts/eval_sac_checkpoint.py --policy_mode both`
+- Checkpoints: 100k, 250k, and 500k sanity checkpoints
+- Eval scale: seeds `0..4`, `num_eval_envs=16`, `episode_length=1000`
+- JSON root: `./logs/sac_eval_bothmode`
+- Checkpoint readiness: PASS for all three checkpoints
+- Status: all deterministic and stochastic evals returned `EVAL_OK`
+- NaN: no action/reward/obs NaN in either mode
+- Deterministic aggregate reward mean:
+  - 100k: `-4.2218`
+  - 250k: `-4.4585`
+  - 500k: `-4.8476`
+- Deterministic action abs mean increased:
+  `0.1823 -> 0.2148 -> 0.3029`
+- Stochastic aggregate reward mean:
+  - 100k: `-6.4616`
+  - 250k: `-6.1954`
+  - 500k: `-5.9091`
+- Stochastic log-prob mean became less negative:
+  `-17.9594 -> -17.2847 -> -13.4275`
+- Interpretation: deterministic `tanh(mean)` behavior degrades, while sampled
+  stochastic behavior does not show the same degradation. This does not
+  authorize 750k or 1M.
+- Full diagnostic report:
+  `reports/sac_integration/10_both_mode_eval_diagnostic.md`
+
 Step count note:
 
 - The command requested `num_timesteps=10000` with `num_envs=128`.
@@ -320,15 +347,16 @@ Current validation state:
 - 100k sanity: `PASS`
 - 250k sanity: `PASS`
 - 500k sanity: `PASS`
+- both-mode eval diagnostic for 100k/250k/500k: `PASS`
 - 1M training: `NOT VALIDATED`
 - deterministic eval smoke, 50k bounded eval, 100k bounded eval, 250k bounded
   eval, and 500k bounded eval: `PASS`; full eval benchmark: `NOT VALIDATED`
 - Risk note: alpha continued down from about `0.0187` at 250k to about
   `0.0080` at 500k. Q and target Q decreased from about `5.2` to about `3.3`,
-  critic loss stayed finite/low, but bounded eval reward mean worsened from
-  `-4.27974` to `-4.69107` and eval max worsened from `-3.09396` to
-  `-3.71635`. This is not a runtime failure, but it blocks any automatic jump
-  to 1M and should trigger a separate 1M readiness review.
+  critic loss stayed finite/low, and bounded deterministic eval reward
+  worsened. Both-mode eval narrows this to a deterministic `tanh(mean)` issue:
+  stochastic sampled eval did not show the same reward degradation. This is not
+  a runtime failure, but it blocks any automatic jump to 750k or 1M.
 - PPO comparison: `NOT VALIDATED`
 - domain randomization, fine-tuning, reward/action_scale/Kp tuning: not run
 - No logs, checkpoints, `.venv`, or menagerie assets are committed.

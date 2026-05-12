@@ -15,6 +15,7 @@ Required reports:
 - `07_gpu_migration_prep.md`
 - `08_project_status_roadmap.md`
 - `09_phase_summary_and_risks.md`
+- `10_both_mode_eval_diagnostic.md`
 
 Repo-root continuation handoff:
 

@@ -1,6 +1,6 @@
 # Next Actions
 
-Status: updated on 2026-05-12 after Route B GPU 500k sanity and bounded eval.
+Status: updated on 2026-05-12 after both-mode eval diagnostic.
 
 ## Immediate State
 
@@ -58,6 +58,14 @@ Status: updated on 2026-05-12 after Route B GPU 500k sanity and bounded eval.
   ignored `logs` and passes `--require_eval_ready`.
 - 500k bounded deterministic eval passed with 16 env x 1000 steps, `EVAL_OK`,
   JSON `./logs/sac_eval_500k/eval_16x1000.json`, and no action/reward/obs NaN.
+- Alpha/entropy diagnostic patch is synced at
+  `926a14f Add SAC alpha entropy diagnostics`.
+- Both-mode eval-only diagnostic passed for 100k, 250k, and 500k checkpoints
+  using `--policy_mode both`, seeds `0..4`, `num_eval_envs=16`, and
+  `episode_length=1000`.
+- Both-mode diagnostic result: deterministic `tanh(mean)` reward degrades
+  across 100k/250k/500k, while sampled stochastic reward does not show the same
+  degradation.
 
 ## Completed WSL2 GPU Validation
 
@@ -220,6 +228,25 @@ Bounded deterministic eval after 500k:
 Artifacts remain ignored under `logs`; do not commit logs, checkpoints, `.venv`,
 or menagerie.
 
+## Completed Both-Mode Eval Diagnostic
+
+- Scope: eval-only; no training.
+- Checkpoints: 100k, 250k, 500k.
+- Eval command class: `scripts/eval_sac_checkpoint.py --policy_mode both`.
+- Seeds: `0`, `1`, `2`, `3`, `4`.
+- Deterministic reward mean aggregate:
+  `100k=-4.2218`, `250k=-4.4585`, `500k=-4.8476`.
+- Deterministic action abs mean:
+  `0.1823 -> 0.2148 -> 0.3029`.
+- Stochastic reward mean aggregate:
+  `100k=-6.4616`, `250k=-6.1954`, `500k=-5.9091`.
+- Stochastic log-prob mean:
+  `-17.9594 -> -17.2847 -> -13.4275`.
+- Interpretation: deterministic `tanh(mean)` behavior degrades while sampled
+  stochastic behavior does not show the same degradation. Stochastic reward is
+  still lower in absolute terms at each checkpoint.
+- Full details: `reports/sac_integration/10_both_mode_eval_diagnostic.md`.
+
 250k tooling, warning, and risk notes:
 
 - WSL2 CUDA driver version format warning and JAX cast overflow warning were
@@ -292,20 +319,20 @@ CPU, stop and report the CUDA/JAX blocker.
 
 ## Recommended Next Step
 
-Do not automatically run 1M. The next useful steps are report review plus the
-following only after explicit user confirmation:
+Do not automatically run 750k or 1M. The next useful step is an actor mean /
+action distribution / reward-component diagnostic design, only after explicit
+user confirmation.
 
-1. commit the 500k sanity report update after review.
-2. prepare a separate 1M decision/readiness review with resource budget, fresh
-   logdir, checkpoint readiness gate, bounded eval command, and stop-condition
-   plan.
-3. review alpha floor, target entropy/log-alpha dynamics, Q drift, critic loss,
-   eval reward trend, and NaN flags before any 1M command.
-4. compare against PPO baseline only after SAC smoke plus eval have clean
-   reports.
+Recommended diagnostic questions:
 
-Do not jump into 1M from this report update without separate user approval and
-a run plan.
+1. Inspect actor mean and std/log_std statistics by checkpoint.
+2. Compare deterministic action against stochastic sampled action per dimension.
+3. Inspect whether deterministic action magnitude drift explains reward loss.
+4. Add reward component eval only if env metrics expose stable reward terms.
+5. Keep all diagnostics eval-only or dry-run unless the user explicitly
+   approves a training run.
+
+Do not jump into 750k or 1M from this report update.
 
 ## Migration Reminders
 
@@ -319,16 +346,17 @@ a run plan.
 
 ## Recommended Follow-Ups After Deterministic Eval Smoke
 
-1. Commit the 500k sanity report update after review.
-2. Draft a separate 1M readiness review for user review.
-3. Keep deterministic eval scales bounded unless the user asks for a benchmark.
-4. Do not start 1M automatically from this report update.
+1. Commit the both-mode eval diagnostic report update after review.
+2. Draft actor mean / action distribution / reward-component diagnostics for
+   user review.
+3. Keep eval scales bounded unless the user asks for a benchmark.
+4. Do not start 750k or 1M automatically from this report update.
 5. Compare against PPO baseline only after SAC smoke plus eval have clean
    reports.
 
 ## Do Not Start Yet
 
-- 1M training without separate user confirmation and a
+- 750k or 1M training without separate user confirmation and a
   resource/stop-condition plan
 - PPO-scale `num_envs=2048` or `8192` experiments as SAC smoke substitutes
 - domain randomization
