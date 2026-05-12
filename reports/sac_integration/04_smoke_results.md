@@ -1,6 +1,6 @@
 # Smoke Results
 
-Status: updated on 2026-05-12 after WSL2 CUDA preflight and Route B GPU 10k smoke.
+Status: updated on 2026-05-12 after deterministic SAC checkpoint eval smoke.
 
 ## 2026-05-12 WSL2 GPU Result
 
@@ -8,7 +8,7 @@ Workspace:
 
 - Path: `/home/admin/projects/mujoco_playground/g1_sac_dev`
 - Branch: `sac-integration`
-- Commit: `6fa5160 Sync WSL2 GPU preflight documentation`
+- Latest committed baseline: `c59eda0 Save SAC normalizers in checkpoints`
 
 Runtime:
 
@@ -56,6 +56,25 @@ Route B GPU 10k smoke:
 - Truncation fraction: `0.0`
 - NaN: no NaN observed in reported scalar metrics
 
+Route B deterministic eval smoke:
+
+- Script: `scripts/eval_sac_checkpoint.py`
+- Checkpoint: `./logs/sac_lift_gpu_10k_normalizer/sac_lift_step_9984.pkl`
+- Checkpoint readiness: `--require_eval_ready` PASS
+- Eval command scale: `num_eval_envs=4`, `episode_length=200`
+- Status: `EVAL_OK`
+- Eval env steps: `800`
+- Episode reward mean/std/min/max:
+  `-3.3628087043762207` / `0.34718504548072815` /
+  `-3.778578281402588` / `-2.876215934753418`
+- Done fraction: `1.0`
+- Wall time: `62.32472045900067`
+- SPS: `12.835998205981001`
+- NaN: `action_nan=false`, `reward_nan=false`, `obs_nan=false`
+- Truncation: `truncation_present=true`, `truncation_fraction=0.0`
+- JSON: `./logs/sac_eval_smoke/eval_4x200.json`
+- Scope note: this is a small deterministic eval smoke, not a full benchmark.
+
 Step count note:
 
 - The command requested `num_timesteps=10000` with `num_envs=128`.
@@ -80,7 +99,7 @@ Post-smoke `nvidia-smi` summary:
 Not run:
 
 - 1M or longer training: `NOT VALIDATED`
-- deterministic eval rollout: `NOT VALIDATED`
+- deterministic eval smoke: `PASS`; full eval benchmark: `NOT VALIDATED`
 - PPO comparison: `NOT VALIDATED`
 - domain randomization, fine-tuning, reward/action_scale/Kp tuning: not run
 
@@ -140,6 +159,7 @@ Not run:
 | Phase GPU | `nvcc --version` | NOT AVAILABLE_NON_BLOCKING | `nvcc` not installed; WSL2 uses JAX CUDA plugin/runtime wheels. |
 | Phase GPU | `uv run --no-sync python scripts/gpu_preflight.py --impl jax --require_gpu` | PASS | JAX backend `gpu`, device `cuda:0`; flat/rough env reset/step passed. |
 | Phase GPU | Route B GPU 10k smoke wrapper | PASS | `TRAIN_OK`; 9984 actual env steps; checkpoint saved under `./logs/sac_lift_gpu_10k`. |
+| Phase Eval | `scripts/eval_sac_checkpoint.py --num_eval_envs 4 --episode_length 200` | PASS | `EVAL_OK`; 800 eval env steps; JSON saved under `./logs/sac_eval_smoke`; no action/reward/obs NaN. |
 
 ## Env API Schema
 
@@ -323,5 +343,6 @@ script file, or operable program.
 
 Resolution:
 
-- GPU smoke remains `NOT VALIDATED`.
-- Next GPU command should run only in WSL2/Linux CUDA or another environment where CUDA JAX is actually visible.
+- Windows native GPU smoke remained unavailable.
+- WSL2/Linux CUDA later superseded this blocker; GPU preflight, GPU 10k smoke,
+  and the small deterministic eval smoke now pass in the WSL2 workspace.

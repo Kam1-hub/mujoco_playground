@@ -1,6 +1,6 @@
 # G1 SAC Integration Status And Roadmap
 
-Status: updated on 2026-05-12 after checkpoint normalizer schema patch.
+Status: updated on 2026-05-12 after deterministic SAC checkpoint eval smoke.
 
 ## 1. Mission
 
@@ -201,11 +201,11 @@ Current GitHub branch:
 Key commits:
 
 ```text
+c59eda0 Save SAC normalizers in checkpoints
 d5c0e8d Record Route B GPU smoke results
 6fa5160 Sync WSL2 GPU preflight documentation
 0ffcb91 Add WSL2 Codex handoff guide
 d73d45c Prepare GPU migration validation scripts
-4986032 Validate G1 SAC CPU smoke
 ```
 
 GitHub remote:
@@ -226,7 +226,7 @@ WSL2 target workspace state:
 
 - Path: `/home/admin/projects/mujoco_playground/g1_sac_dev`
 - Branch: `sac-integration...origin/sac-integration`
-- Latest commit: `6fa5160 Sync WSL2 GPU preflight documentation`
+- Latest committed baseline: `c59eda0 Save SAC normalizers in checkpoints`
 - Menagerie: present at `1b86ece576591213e2b666ebf59508454200ca97`
 - Python env: present under ignored `.venv`
 - CUDA JAX: validated, backend `gpu`, device `cuda:0`
@@ -239,6 +239,12 @@ WSL2 target workspace state:
 - Schema dry-run checkpoint:
   `./logs/sac_lift_schema_dry_run/sac_lift_step_0.pkl` passed
   `scripts/check_sac_checkpoint.py --require_eval_ready`.
+- New GPU smoke checkpoint:
+  `./logs/sac_lift_gpu_10k_normalizer/sac_lift_step_9984.pkl` passed
+  `scripts/check_sac_checkpoint.py --require_eval_ready`.
+- Deterministic eval smoke:
+  `scripts/eval_sac_checkpoint.py` passed at 4 env x 200 steps with
+  `EVAL_OK`; JSON is under ignored `./logs/sac_eval_smoke`.
 
 ## 5. Completed CPU Validation
 
@@ -324,6 +330,11 @@ Added scripts:
     and `deterministic_eval_ready`.
   - `--require_eval_ready` fails when a checkpoint cannot support trusted
     deterministic actor evaluation.
+- `scripts/eval_sac_checkpoint.py`
+  - Runs bounded deterministic actor eval from a Route B checkpoint.
+  - Loads checkpoint config/params/normalizer, rebuilds the G1 env/network, and
+    emits JSON metrics.
+  - Does not train, update replay, render, or touch PPO/RSL paths.
 - `scripts/gpu_preflight.py`
   - Does not train.
   - Checks JAX/MuJoCo/Brax, GPU visibility when requested, menagerie commit, registry, Route B import, and flat/rough env reset/step.
@@ -445,17 +456,29 @@ trusted deterministic-eval artifact:
 - `policy_normalizer` missing
 - `value_normalizer` missing
 
-This cannot be fixed retroactively for the old checkpoint. After report review,
-only then consider with explicit user confirmation:
+This cannot be fixed retroactively for the old checkpoint. A regenerated
+normalizer-ready GPU checkpoint has now passed readiness and a small deterministic
+eval smoke:
 
-- rerun one controlled smoke to generate a checkpoint with saved normalizers
-- verify the new checkpoint with `--require_eval_ready`
-- deterministic eval rollout metrics after readiness passes
+```text
+checkpoint: ./logs/sac_lift_gpu_10k_normalizer/sac_lift_step_9984.pkl
+eval: 4 env x 200 steps
+status: EVAL_OK
+episode_reward_mean: -3.3628087043762207
+done_fraction: 1.0
+action/reward/obs NaN: false/false/false
+json: ./logs/sac_eval_smoke/eval_4x200.json
+```
+
+After report review, only then consider with explicit user confirmation:
+
+- commit the deterministic eval CLI and report update
 - slightly longer sanity run
 - PPO comparison
 
-Do not jump directly to 1M training. 1M and longer runs remain `NOT VALIDATED`.
+Do not jump directly to 1M training. The 4x200 eval is a smoke, not a full
+benchmark. 1M and longer runs remain `NOT VALIDATED`.
 
 ## 11. Current Position In One Sentence
 
-SAC Route B is implemented; CPU tiny smoke, WSL2 GPU preflight, and Route B GPU 10k smoke have passed; future checkpoints now persist observation normalizers, but the existing GPU 10k checkpoint is not deterministic-eval ready; 1M, deterministic eval, longer sanity runs, domain randomization, and fine-tuning remain `NOT VALIDATED`.
+SAC Route B is implemented; CPU tiny smoke, WSL2 GPU preflight, Route B GPU 10k smoke, normalizer-ready checkpoint validation, and a bounded deterministic eval smoke have passed; 1M, longer sanity runs, full eval benchmarking, domain randomization, and fine-tuning remain `NOT VALIDATED`.
