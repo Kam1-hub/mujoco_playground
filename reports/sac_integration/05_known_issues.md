@@ -1,6 +1,6 @@
 # Known Issues
 
-Status: updated on 2026-05-12 after Route B GPU 100k sanity and bounded eval.
+Status: updated on 2026-05-12 after Route B GPU 250k sanity and bounded eval.
 
 ## Open
 
@@ -10,7 +10,8 @@ Status: updated on 2026-05-12 after Route B GPU 100k sanity and bounded eval.
 | First JIT latency can look like a hang | validation noise | OPEN_NON_BLOCKING | WSL2/JAX first compile may take minutes. | Record wall time and wait through first compile before classifying a failure. |
 | Route B actual env steps may be lower than requested | reporting | OPEN_NON_BLOCKING | Training loop uses `num_timesteps // num_envs`; `10000` with `128` envs yields `9984`. | Record actual `env_steps` and checkpoint filename; do not assume target equals actual. |
 | Replay buffer scale can become the SAC VRAM bottleneck | memory | OPEN | Route B stores about 671 float32 values per transition; 1M raw replay is about 2.5-2.7 GB before JAX/XLA overhead. | Keep first smoke at `max_replay_size=8192`; increase only after measured GPU smoke. |
-| 1M run not validated | validation scope | OPEN | GPU 10k smoke, 4x200 deterministic eval smoke, 50k sanity/eval, and 100k sanity/eval passed; 1M has not been executed. | Consider 1M only after user confirmation and with an explicit resource budget and stop-condition plan. |
+| 500k and 1M runs not validated | validation scope | OPEN | GPU 10k smoke, 4x200 deterministic eval smoke, 50k sanity/eval, 100k sanity/eval, and 250k sanity/eval passed; 500k and 1M have not been executed. | Next step should be a separate 500k sanity plan and user confirmation; do not jump straight to 1M. |
+| 250k metrics need trend monitoring | training dynamics | OPEN_NON_BLOCKING | At 250k, alpha dropped to about `0.0187`; Q/target Q rose to about `5.2` while critic loss stayed low; bounded eval reward did not improve versus 100k. | Treat as a watch item, not a failure. In 500k planning, watch alpha collapse, Q drift, critic loss, eval NaN flags, and reward trend. |
 | Existing GPU 10k checkpoint is not deterministic-eval ready | checkpoint/eval | OPEN_NON_BLOCKING | `./logs/sac_lift_gpu_10k/sac_lift_step_9984.pkl` has `normalize_observations=True` but lacks `policy_normalizer` and `value_normalizer`. | Do not use the old checkpoint for trusted deterministic eval; use normalizer-ready 10k, 50k, or 100k checkpoints instead. |
 | Sandboxed `uv` may hit `snap-confine` capability restrictions | tooling | OPEN_NON_BLOCKING | The first sandboxed 100k `uv` attempt failed before training started with a `snap-confine` capability error; the identical command then succeeded with external permission and unchanged parameters. | Treat as tooling noise unless it prevents a command from starting; do not classify it as a training failure. |
 | PPO default env count is not a SAC smoke setting | scope | OPEN_NON_BLOCKING | Older PPO docs mention large env counts; Route B smoke is `num_envs=128`. | Do not import PPO/Barkour `2048` or `8192` env assumptions into SAC migration smoke. |
@@ -37,6 +38,8 @@ Status: updated on 2026-05-12 after Route B GPU 100k sanity and bounded eval.
 | Route B 50k bounded deterministic eval not validated | eval validation | `scripts/eval_sac_checkpoint.py` passed with 16 env x 1000 steps; JSON `./logs/sac_eval_50k/eval_16x1000.json`; no action/reward/obs NaN. |
 | Route B GPU 100k sanity not validated | validation | User authorized one controlled 100k sanity run; `TRAIN_OK`, checkpoint `./logs/sac_lift_gpu_100k_sanity/sac_lift_step_99968.pkl`, `--require_eval_ready` PASS, and no observed NaN/Inf/OOM/fatal CUDA/checkpoint/eval error. |
 | Route B 100k bounded deterministic eval not validated | eval validation | `scripts/eval_sac_checkpoint.py` passed with 16 env x 1000 steps; JSON `./logs/sac_eval_100k/eval_16x1000.json`; no action/reward/obs NaN. |
+| Route B GPU 250k sanity not validated | validation | User authorized one controlled 250k sanity run; `TRAIN_OK`, checkpoint `./logs/sac_lift_gpu_250k_sanity/sac_lift_step_249984.pkl`, `--require_eval_ready` PASS, and no observed NaN/Inf/OOM/fatal CUDA/env/checkpoint/eval error. |
+| Route B 250k bounded deterministic eval not validated | eval validation | `scripts/eval_sac_checkpoint.py` passed with 16 env x 1000 steps; JSON `./logs/sac_eval_250k/eval_16x1000.json`; no action/reward/obs NaN. |
 
 ## Current Acceptance Position
 
@@ -53,7 +56,8 @@ Status: updated on 2026-05-12 after Route B GPU 100k sanity and bounded eval.
   full benchmark.
 - 50k sanity and its 16 env x 1000 bounded deterministic eval are validated.
 - 100k sanity and its 16 env x 1000 bounded deterministic eval are validated.
-- 1M, full eval benchmark, and PPO comparison are still `NOT VALIDATED`.
+- 250k sanity and its 16 env x 1000 bounded deterministic eval are validated.
+- 500k, 1M, full eval benchmark, and PPO comparison are still `NOT VALIDATED`.
 - Logs, checkpoints, `.venv`, and menagerie assets remain ignored and are not
   committed.
 - No LIFT fork wholesale copy was made.

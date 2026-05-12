@@ -1,6 +1,6 @@
 # Next Actions
 
-Status: updated on 2026-05-12 after Route B GPU 100k sanity and bounded eval.
+Status: updated on 2026-05-12 after Route B GPU 250k sanity and bounded eval.
 
 ## Immediate State
 
@@ -46,6 +46,12 @@ Status: updated on 2026-05-12 after Route B GPU 100k sanity and bounded eval.
   ignored `logs` and passes `--require_eval_ready`.
 - 100k bounded deterministic eval passed with 16 env x 1000 steps, `EVAL_OK`,
   JSON `./logs/sac_eval_100k/eval_16x1000.json`, and no action/reward/obs NaN.
+- Route B GPU 250k sanity passed with `TRAIN_OK`.
+- 250k checkpoint
+  `./logs/sac_lift_gpu_250k_sanity/sac_lift_step_249984.pkl` exists under
+  ignored `logs` and passes `--require_eval_ready`.
+- 250k bounded deterministic eval passed with 16 env x 1000 steps, `EVAL_OK`,
+  JSON `./logs/sac_eval_250k/eval_16x1000.json`, and no action/reward/obs NaN.
 
 ## Completed WSL2 GPU Validation
 
@@ -132,17 +138,55 @@ Bounded deterministic eval after 100k:
 - NaN: `action_nan=false`, `reward_nan=false`, `obs_nan=false`
 - Truncation: `truncation_present=true`, `truncation_fraction=0.0`
 
+## Completed 250k Sanity Validation
+
+- Route B GPU 250k sanity: `PASS`
+- Checkpoint: `./logs/sac_lift_gpu_250k_sanity/sac_lift_step_249984.pkl`
+- Checkpoint eval readiness: `PASS`
+- `policy_normalizer` / `value_normalizer`: present
+- `deterministic_eval_ready`: `true`
+- Requested timesteps: `250000`
+- Actual env steps: `249984`
+- Gradient steps: `3892`
+- Wall time: `120.21957968600327`
+- SPS: `2079.3950590488107`
+- Actor loss: `-5.524118900299072`
+- Critic loss: `0.02644157037138939`
+- Alpha: `0.018743595108389854`
+- Alpha loss: `0.5869507789611816`
+- Policy log prob: `-16.657032012939453`
+- Q: `5.197851181030273`
+- Target Q: `5.205532073974609`
+- Truncation fraction: `0.0`
+- NaN/Inf/OOM/fatal CUDA/env/checkpoint/eval error: none observed
+
+Bounded deterministic eval after 250k:
+
+- Status: `EVAL_OK`
+- JSON: `./logs/sac_eval_250k/eval_16x1000.json`
+- Eval env steps: `16000`
+- Episode reward mean/std/min/max:
+  `-4.279743194580078` / `1.2322009801864624` /
+  `-8.849853515625` / `-3.093963384628296`
+- Done fraction: `1.0`
+- Wall time: `68.2435936529946`
+- SPS: `234.45424168833907`
+- NaN: `action_nan=false`, `reward_nan=false`, `obs_nan=false`
+- Truncation: `truncation_present=true`, `truncation_fraction=0.0`
+
 Artifacts remain ignored under `logs`; do not commit logs, checkpoints, `.venv`,
 or menagerie.
 
-100k tooling and warning notes:
+250k tooling, warning, and risk notes:
 
 - WSL2 CUDA driver version format warning and JAX cast overflow warning were
   observed again and remained non-fatal.
-- The first sandboxed `uv` attempt failed before training started due a
-  `snap-confine` capability issue. The identical 100k command then succeeded
-  with external permission and unchanged parameters, so this is a tooling note,
-  not a training failure.
+- No traceback, NaN, Inf, OOM, fatal CUDA, env, checkpoint, or eval failure was
+  observed.
+- Alpha dropped to about `0.0187` by 250k; Q and target Q rose to about `5.2`
+  while critic loss stayed low; bounded eval reward did not improve versus
+  100k. This is not a failure, but 500k should watch alpha collapse, Q drift,
+  critic loss, eval NaN flags, and reward trend.
 
 Actual step note:
 
@@ -150,6 +194,8 @@ Actual step note:
 - With `num_timesteps=10000` and `num_envs=128`, this yields `9984` actual
   env steps.
 - With `num_timesteps=100000` and `num_envs=128`, this yields `99968` actual
+  env steps.
+- With `num_timesteps=250000` and `num_envs=128`, this yields `249984` actual
   env steps.
 
 ## Preflight Checklist
@@ -187,16 +233,18 @@ CPU, stop and report the CUDA/JAX blocker.
 
 ## Recommended Next Step
 
-Do not automatically run 1M. The next useful steps are report review plus the
-following only after explicit user confirmation:
+Do not automatically run 500k or 1M. The next useful steps are report review
+plus the following only after explicit user confirmation:
 
-1. commit the 100k sanity report update after review.
-2. consider 1M only with an explicit resource budget, fresh logdir, checkpoint
-   readiness gate, bounded eval command, and stop-condition plan.
-3. compare against PPO baseline only after SAC smoke plus eval have clean
+1. commit the 250k sanity report update after review.
+2. prepare a separate 500k sanity plan with resource budget, fresh logdir,
+   checkpoint readiness gate, bounded eval command, and stop-condition plan.
+3. consider 1M only after 500k is validated and separately approved.
+4. compare against PPO baseline only after SAC smoke plus eval have clean
    reports.
 
-Do not jump into 1M without a separate user approval and run plan.
+Do not jump into 500k or 1M from this report update without separate user
+approval and a run plan.
 
 ## Migration Reminders
 
@@ -210,18 +258,17 @@ Do not jump into 1M without a separate user approval and run plan.
 
 ## Recommended Follow-Ups After Deterministic Eval Smoke
 
-1. Commit the 100k sanity report update after review.
-2. Consider 1M only after a separate resource/stop-condition plan is reviewed
-   and explicitly authorized.
+1. Commit the 250k sanity report update after review.
+2. Draft a separate 500k sanity plan for user review.
 3. Keep deterministic eval scales bounded unless the user asks for a benchmark.
-4. Do not start 1M automatically from this report update.
+4. Do not start 500k or 1M automatically from this report update.
 5. Compare against PPO baseline only after SAC smoke plus eval have clean
    reports.
 
 ## Do Not Start Yet
 
-- 1M training without separate user confirmation and a resource/stop-condition
-  plan
+- 500k or 1M training without separate user confirmation and a
+  resource/stop-condition plan
 - PPO-scale `num_envs=2048` or `8192` experiments as SAC smoke substitutes
 - domain randomization
 - reward, `action_scale`, or Kp tuning
