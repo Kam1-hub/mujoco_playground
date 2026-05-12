@@ -1,4 +1,4 @@
-"""Run deterministic evaluation for a Route B SAC checkpoint."""
+"""Run bounded evaluation for a Route B SAC checkpoint."""
 
 from __future__ import annotations
 
@@ -47,6 +47,15 @@ def _parse_args() -> argparse.Namespace:
   parser.add_argument("--num_eval_envs", type=int, default=16)
   parser.add_argument("--episode_length", type=int, default=None)
   parser.add_argument("--render", type=_str_to_bool, default=False)
+  parser.add_argument(
+      "--policy_mode",
+      choices=("deterministic", "stochastic", "both"),
+      default="deterministic",
+      help=(
+          "Evaluate tanh(mean), sampled stochastic actions, or both. The "
+          "default deterministic mode preserves prior behavior."
+      ),
+  )
   parser.add_argument("--output_json", default=None)
   return parser.parse_args()
 
@@ -109,8 +118,10 @@ def _run_eval(
     num_eval_envs: int,
     episode_length: int,
     normalize_observations: bool,
+    deterministic: bool,
 ) -> dict[str, Any]:
-  reset_keys = jax.random.split(rng, num_eval_envs)
+  reset_key, rollout_key = jax.random.split(rng)
+  reset_keys = jax.random.split(reset_key, num_eval_envs)
   state = env.reset(reset_keys)
   truncation_present = isinstance(state.info, Mapping) and "truncation" in state.info
 
@@ -123,15 +134,34 @@ def _run_eval(
         reward_nan,
         obs_nan,
         truncation_sum,
+        action_log_prob_sum,
+        action_log_prob_count,
+        action_abs_sum,
+        action_count,
+        action_saturation_sum,
+        current_key,
     ) = carry
     policy_obs = evaluator.select_obs(current_state.obs, policy_obs_key)
     obs_nan = jnp.logical_or(obs_nan, jnp.any(jnp.isnan(policy_obs)))
     policy_obs = normalizer.normalize(
         policy_normalizer, policy_obs, normalize_observations
     )
-    action, _ = networks.sample_action(
-        sac_networks, policy_params, policy_obs, rng, deterministic=True
+    current_key, action_key = jax.random.split(current_key)
+    action, log_prob = networks.sample_action(
+        sac_networks,
+        policy_params,
+        policy_obs,
+        action_key,
+        deterministic=deterministic,
     )
+    action_abs = jnp.abs(action)
+    action_log_prob_sum = action_log_prob_sum + jnp.sum(log_prob)
+    action_log_prob_count = action_log_prob_count + jnp.asarray(
+        log_prob.size, dtype=jnp.float32
+    )
+    action_abs_sum = action_abs_sum + jnp.sum(action_abs)
+    action_count = action_count + jnp.asarray(action.size, dtype=jnp.float32)
+    action_saturation_sum = action_saturation_sum + jnp.sum(action_abs > 0.95)
     action_nan = jnp.logical_or(action_nan, jnp.any(jnp.isnan(action)))
     next_state = env.step(current_state, action)
     reward_nan = jnp.logical_or(reward_nan, jnp.any(jnp.isnan(next_state.reward)))
@@ -149,6 +179,12 @@ def _run_eval(
         reward_nan,
         obs_nan,
         truncation_sum,
+        action_log_prob_sum,
+        action_log_prob_count,
+        action_abs_sum,
+        action_count,
+        action_saturation_sum,
+        current_key,
     ), None
 
   rewards = jnp.zeros_like(state.reward)
@@ -161,6 +197,12 @@ def _run_eval(
       jnp.asarray(False),
       jnp.asarray(False),
       jnp.asarray(0.0, dtype=jnp.float32),
+      jnp.asarray(0.0, dtype=jnp.float32),
+      jnp.asarray(0.0, dtype=jnp.float32),
+      jnp.asarray(0.0, dtype=jnp.float32),
+      jnp.asarray(0.0, dtype=jnp.float32),
+      jnp.asarray(0.0, dtype=jnp.float32),
+      rollout_key,
   )
   (
       _,
@@ -170,9 +212,17 @@ def _run_eval(
       reward_nan,
       obs_nan,
       truncation_sum,
+      action_log_prob_sum,
+      action_log_prob_count,
+      action_abs_sum,
+      action_count,
+      action_saturation_sum,
+      _,
   ), _ = jax.lax.scan(step_fn, initial, None, length=episode_length)
 
   eval_env_steps = num_eval_envs * episode_length
+  action_log_prob_count = jnp.maximum(action_log_prob_count, 1.0)
+  action_count = jnp.maximum(action_count, 1.0)
   return {
       "episode_reward_mean": jnp.mean(total_reward),
       "episode_reward_std": jnp.std(total_reward),
@@ -186,6 +236,9 @@ def _run_eval(
           truncation_sum / max(eval_env_steps, 1), dtype=jnp.float32
       ),
       "truncation_present": jnp.asarray(truncation_present),
+      "action_log_prob_mean": action_log_prob_sum / action_log_prob_count,
+      "action_abs_mean": action_abs_sum / action_count,
+      "action_saturation_fraction_095": action_saturation_sum / action_count,
   }
 
 
@@ -251,26 +304,70 @@ def evaluate_checkpoint(args: argparse.Namespace) -> dict[str, Any]:
       log_std_max=float(config.get("log_std_max", 2.0)),
   )
 
-  rollout = jax.jit(
-      lambda rng: _run_eval(
-          env,
-          sac_networks,
-          payload["policy_params"],
-          policy_normalizer,
-          rng,
-          policy_obs_key,
-          args.num_eval_envs,
-          episode_length,
-          bool(config.get("normalize_observations", True)),
-      )
-  )
+  def run_policy_mode(policy_mode: str, deterministic: bool) -> dict[str, Any]:
+    rollout = jax.jit(
+        lambda rng: _run_eval(
+            env,
+            sac_networks,
+            payload["policy_params"],
+            policy_normalizer,
+            rng,
+            policy_obs_key,
+            args.num_eval_envs,
+            episode_length,
+            bool(config.get("normalize_observations", True)),
+            deterministic,
+        )
+    )
 
-  start = time.monotonic()
-  metrics = rollout(jax.random.PRNGKey(args.seed))
-  metrics = jax.tree.map(lambda x: x.block_until_ready(), metrics)
-  wall_time = time.monotonic() - start
+    start = time.monotonic()
+    metrics = rollout(jax.random.PRNGKey(args.seed))
+    metrics = jax.tree.map(lambda x: x.block_until_ready(), metrics)
+    wall_time = time.monotonic() - start
+    return _format_eval_result(
+        metrics=metrics,
+        args=args,
+        checkpoint_metrics=payload.get("metrics", {}),
+        env_name=env_name,
+        impl=impl,
+        episode_length=episode_length,
+        wall_time=wall_time,
+        policy_mode=policy_mode,
+        deterministic=deterministic,
+    )
+
+  if args.policy_mode == "both":
+    return {
+        "status": "EVAL_OK",
+        "checkpoint": str(Path(args.checkpoint)),
+        "env_name": env_name,
+        "impl": impl,
+        "seed": int(args.seed),
+        "num_eval_envs": int(args.num_eval_envs),
+        "episode_length": int(episode_length),
+        "policy_mode": "both",
+        "results": {
+            "deterministic": run_policy_mode("deterministic", True),
+            "stochastic": run_policy_mode("stochastic", False),
+        },
+    }
+
+  return run_policy_mode(args.policy_mode, args.policy_mode == "deterministic")
+
+
+def _format_eval_result(
+    *,
+    metrics: dict[str, Any],
+    args: argparse.Namespace,
+    checkpoint_metrics: Any,
+    env_name: str,
+    impl: str,
+    episode_length: int,
+    wall_time: float,
+    policy_mode: str,
+    deterministic: bool,
+) -> dict[str, Any]:
   eval_env_steps = int(args.num_eval_envs * episode_length)
-  checkpoint_metrics = payload.get("metrics", {})
   result = {
       "status": "EVAL_OK",
       "checkpoint": str(Path(args.checkpoint)),
@@ -279,6 +376,8 @@ def evaluate_checkpoint(args: argparse.Namespace) -> dict[str, Any]:
       "seed": int(args.seed),
       "num_eval_envs": int(args.num_eval_envs),
       "episode_length": int(episode_length),
+      "policy_mode": policy_mode,
+      "deterministic": bool(deterministic),
       "eval_env_steps": eval_env_steps,
       "episode_reward_mean": _as_float(metrics["episode_reward_mean"]),
       "episode_reward_std": _as_float(metrics["episode_reward_std"]),
@@ -292,13 +391,14 @@ def evaluate_checkpoint(args: argparse.Namespace) -> dict[str, Any]:
       "obs_nan": _as_bool(metrics["obs_nan"]),
       "truncation_fraction": _as_float(metrics["truncation_fraction"]),
       "truncation_present": _as_bool(metrics["truncation_present"]),
+      "action_log_prob_mean": _as_float(metrics["action_log_prob_mean"]),
+      "action_abs_mean": _as_float(metrics["action_abs_mean"]),
+      "action_saturation_fraction_095": _as_float(
+          metrics["action_saturation_fraction_095"]
+      ),
       "checkpoint_env_steps": _get(checkpoint_metrics, "env_steps"),
       "checkpoint_gradient_steps": _get(checkpoint_metrics, "gradient_steps"),
   }
-  if args.output_json:
-    output_path = Path(args.output_json)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n")
   return result
 
 
@@ -309,6 +409,10 @@ def main() -> int:
   except Exception:  # pylint: disable=broad-except
     traceback.print_exc()
     return 2
+  if args.output_json:
+    output_path = Path(args.output_json)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n")
   print(json.dumps(result, indent=2, sort_keys=True))
   return 0
 

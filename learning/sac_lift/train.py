@@ -24,6 +24,23 @@ from learning.sac_lift.types import SACTrainingState
 from learning.sac_lift.types import Transition
 
 
+DIAGNOSTIC_METRIC_NAMES = (
+    "alpha",
+    "log_alpha",
+    "alpha_log_prob",
+    "target_entropy",
+    "alpha_error_log_prob_plus_target",
+    "alpha_error_neg_log_prob_minus_target",
+    "alpha_grad_proxy_exp",
+    "reward_mean",
+    "done_fraction",
+    "discount_mean",
+    "truncation_fraction",
+    "q",
+    "target_q",
+)
+
+
 def dry_run(config: Any) -> dict[str, Any]:
   """Initializes SAC objects without loading the MuJoCo env."""
   policy_obs_size = int(config.get("policy_obs_size", sac_config.DEFAULT_POLICY_OBS_SIZE))
@@ -72,6 +89,9 @@ def dry_run(config: Any) -> dict[str, Any]:
       sac_networks,
       config,
   )
+  metric_sums, metric_count = _accumulate_metrics(
+      _new_metric_sums(), 0, update_metrics
+  )
   metrics = {
       "status": "DRY_RUN_OK",
       "env_steps": 0,
@@ -80,9 +100,8 @@ def dry_run(config: Any) -> dict[str, Any]:
       "action_shape": [action_size],
       "replay_capacity": int(replay_state.action.shape[0]),
       "gradient_steps": int(state.gradient_steps),
-      "actor_loss": float(update_metrics["actor_loss"]),
-      "critic_loss": float(update_metrics["critic_loss"]),
-      "alpha": float(update_metrics["alpha"]),
+      **_float_metrics(update_metrics),
+      **_interval_metrics(metric_sums, metric_count),
   }
   os.makedirs(config.logdir, exist_ok=True)
   ckpt_path = checkpoint.save(
@@ -186,6 +205,8 @@ def train(config: Any) -> dict[str, Any]:
 
   start = time.monotonic()
   last_metrics: dict[str, Any] = {}
+  metric_sums = _new_metric_sums()
+  metric_count = 0
   actor_steps = max(1, config.num_timesteps // max(config.num_envs, 1))
   for _ in range(actor_steps):
     key, action_key, sample_key = jax.random.split(key, 3)
@@ -205,6 +226,9 @@ def train(config: Any) -> dict[str, Any]:
         key, sample_key, update_key = jax.random.split(key, 3)
         batch = replay_buffer.sample(rb_state, sample_key, config.batch_size)
         training_state, last_metrics = update_once(training_state, batch, update_key)
+        metric_sums, metric_count = _accumulate_metrics(
+            metric_sums, metric_count, last_metrics
+        )
 
   wall_time = time.monotonic() - start
   metrics = {
@@ -213,7 +237,8 @@ def train(config: Any) -> dict[str, Any]:
       "gradient_steps": int(training_state.gradient_steps),
       "wall_time": wall_time,
       "sps": float(training_state.env_steps) / max(wall_time, 1e-6),
-      **{k: float(v) for k, v in last_metrics.items()},
+      **_float_metrics(last_metrics),
+      **_interval_metrics(metric_sums, metric_count),
   }
   ckpt_path = checkpoint.save(
       config.logdir,
@@ -241,6 +266,36 @@ def main(config: Any) -> int:
     return 2
   print(json.dumps(result, indent=2, sort_keys=True))
   return 0
+
+
+def _float_metrics(metrics: dict[str, Any]) -> dict[str, float]:
+  host_metrics = jax.device_get(metrics)
+  return {str(k): float(v) for k, v in host_metrics.items()}
+
+
+def _new_metric_sums() -> dict[str, float]:
+  return {name: 0.0 for name in DIAGNOSTIC_METRIC_NAMES}
+
+
+def _accumulate_metrics(
+    metric_sums: dict[str, float],
+    metric_count: int,
+    metrics: dict[str, Any],
+) -> tuple[dict[str, float], int]:
+  host_metrics = jax.device_get(metrics)
+  for name in DIAGNOSTIC_METRIC_NAMES:
+    if name in host_metrics:
+      metric_sums[name] += float(host_metrics[name])
+  return metric_sums, metric_count + 1
+
+
+def _interval_metrics(metric_sums: dict[str, float], metric_count: int) -> dict[str, float]:
+  if metric_count <= 0:
+    return {}
+  return {
+      f"interval/{name}": value / metric_count
+      for name, value in metric_sums.items()
+  }
 
 
 def _init_training_state(

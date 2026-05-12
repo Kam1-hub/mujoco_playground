@@ -51,6 +51,9 @@ def critic_loss(
       "critic_loss": loss,
       "target_q": jnp.mean(target_q),
       "q": jnp.mean(q),
+      "reward_mean": jnp.mean(batch.reward),
+      "discount_mean": jnp.mean(batch.discount),
+      "done_fraction": jnp.mean(batch.done),
       "truncation_fraction": jnp.mean(batch.truncation),
   }
   return loss, metrics
@@ -101,7 +104,21 @@ def alpha_loss(
       policy_normalizer, batch.policy_obs, normalize_observations
   )
   _, log_prob = networks.sample_action(sac_networks, policy_params, policy_obs, key)
+  alpha = jnp.exp(log_alpha)
+  target_entropy_value = jnp.asarray(target_entropy, dtype=log_prob.dtype)
+  mean_log_prob = jnp.mean(log_prob)
+  alpha_error = jnp.mean(log_prob + target_entropy_value)
+  brax_error = jnp.mean(-log_prob - target_entropy_value)
   loss = jnp.mean(
-      jnp.exp(log_alpha) * jax.lax.stop_gradient(-log_prob - target_entropy)
+      alpha * jax.lax.stop_gradient(-log_prob - target_entropy_value)
   )
-  return loss, {"alpha_loss": loss, "alpha": jnp.exp(log_alpha)}
+  return loss, {
+      "alpha_loss": loss,
+      "alpha": alpha,
+      "log_alpha": log_alpha,
+      "target_entropy": target_entropy_value,
+      "alpha_log_prob": mean_log_prob,
+      "alpha_error_log_prob_plus_target": alpha_error,
+      "alpha_error_neg_log_prob_minus_target": brax_error,
+      "alpha_grad_proxy_exp": alpha * brax_error,
+  }
