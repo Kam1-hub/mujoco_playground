@@ -1,6 +1,6 @@
 # Smoke Results
 
-Status: updated on 2026-05-12 after deterministic SAC checkpoint eval smoke.
+Status: updated on 2026-05-12 after Route B GPU 50k sanity and bounded eval.
 
 ## 2026-05-12 WSL2 GPU Result
 
@@ -8,7 +8,8 @@ Workspace:
 
 - Path: `/home/admin/projects/mujoco_playground/g1_sac_dev`
 - Branch: `sac-integration`
-- Latest committed baseline: `c59eda0 Save SAC normalizers in checkpoints`
+- Latest committed baseline before 50k report update:
+  `5be043c Add SAC deterministic eval smoke`
 
 Runtime:
 
@@ -75,6 +76,48 @@ Route B deterministic eval smoke:
 - JSON: `./logs/sac_eval_smoke/eval_4x200.json`
 - Scope note: this is a small deterministic eval smoke, not a full benchmark.
 
+Route B GPU 50k sanity:
+
+- Command class: `uv run --no-sync python -m learning.train_jax_sac_lift`
+- Status: `TRAIN_OK`
+- Logdir: `./logs/sac_lift_gpu_50k_sanity`
+- Checkpoint: `./logs/sac_lift_gpu_50k_sanity/sac_lift_step_49920.pkl`
+- Checkpoint readiness: `--require_eval_ready` PASS
+- Requested timesteps: `50000`
+- Actual env steps: `49920`
+- Gradient steps: `766`
+- Wall time: `35.99766752999858`
+- SPS: `1386.756515777009`
+- Actor loss: `-3.6135072708129883`
+- Critic loss: `0.07097882032394409`
+- Alpha loss: `1.327394962310791`
+- Alpha: `0.03992176800966263`
+- Policy log prob: `-18.81831169128418`
+- Policy Q: `2.8622469902038574`
+- Q: `2.884032726287842`
+- Target Q: `2.899707317352295`
+- Truncation fraction: `0.0`
+- NaN/Inf/OOM/CUDA/checkpoint/eval error: none observed
+
+Route B 50k bounded deterministic eval:
+
+- Script: `scripts/eval_sac_checkpoint.py`
+- Checkpoint: `./logs/sac_lift_gpu_50k_sanity/sac_lift_step_49920.pkl`
+- JSON: `./logs/sac_eval_50k/eval_16x1000.json`
+- Status: `EVAL_OK`
+- Eval command scale: `num_eval_envs=16`, `episode_length=1000`
+- Eval env steps: `16000`
+- Episode reward mean/std/min/max:
+  `-3.5016322135925293` / `0.75983726978302` /
+  `-6.096090316772461` / `-2.531925916671753`
+- Done fraction: `1.0`
+- Wall time: `74.76505397899746`
+- SPS: `214.00372431342888`
+- NaN: `action_nan=false`, `reward_nan=false`, `obs_nan=false`
+- Truncation: `truncation_present=true`, `truncation_fraction=0.0`
+- Scope note: this is a bounded eval attached to 50k sanity, not a full
+  benchmark.
+
 Step count note:
 
 - The command requested `num_timesteps=10000` with `num_envs=128`.
@@ -86,7 +129,8 @@ Warnings observed:
 - WSL2 CUDA driver passthrough warning: `Could not get kernel mode driver version`.
 - JAX cast warning: `RuntimeWarning: overflow encountered in cast`.
 - CUDA timer warmup warning: `Delay kernel timed out: measured time has sub-optimal accuracy`.
-- These warnings did not fail preflight or smoke; final status was `TRAIN_OK`.
+- These warnings did not fail preflight, 10k smoke, 50k sanity, or bounded eval;
+  they remain non-fatal WSL2/JAX noise unless accompanied by a failed command.
 
 Post-smoke `nvidia-smi` summary:
 
@@ -96,12 +140,25 @@ Post-smoke `nvidia-smi` summary:
 - Temperature: `56C`
 - Process table only showed `/Xwayland`.
 
+Post-50k `nvidia-smi` summary:
+
+- Time: 2026-05-12 10:58:20
+- GPU: RTX 4070 SUPER
+- VRAM: `1602MiB / 12282MiB`
+- GPU util: `8%`
+- Temperature: `56C`
+- Power: `9W / 220W`
+- Process table only showed `/Xwayland`.
+
 Not run:
 
-- 1M or longer training: `NOT VALIDATED`
-- deterministic eval smoke: `PASS`; full eval benchmark: `NOT VALIDATED`
+- 50k sanity: `PASS`
+- 100k sanity and 1M training: `NOT VALIDATED`
+- deterministic eval smoke and 50k bounded eval: `PASS`; full eval benchmark:
+  `NOT VALIDATED`
 - PPO comparison: `NOT VALIDATED`
 - domain randomization, fine-tuning, reward/action_scale/Kp tuning: not run
+- No logs, checkpoints, `.venv`, or menagerie assets are committed.
 
 ## Snapshot
 
@@ -160,6 +217,8 @@ Not run:
 | Phase GPU | `uv run --no-sync python scripts/gpu_preflight.py --impl jax --require_gpu` | PASS | JAX backend `gpu`, device `cuda:0`; flat/rough env reset/step passed. |
 | Phase GPU | Route B GPU 10k smoke wrapper | PASS | `TRAIN_OK`; 9984 actual env steps; checkpoint saved under `./logs/sac_lift_gpu_10k`. |
 | Phase Eval | `scripts/eval_sac_checkpoint.py --num_eval_envs 4 --episode_length 200` | PASS | `EVAL_OK`; 800 eval env steps; JSON saved under `./logs/sac_eval_smoke`; no action/reward/obs NaN. |
+| Phase Sanity | Route B GPU 50k sanity command | PASS | `TRAIN_OK`; 49920 actual env steps; checkpoint saved under `./logs/sac_lift_gpu_50k_sanity`; no observed NaN/Inf/OOM/CUDA error. |
+| Phase Sanity Eval | `scripts/eval_sac_checkpoint.py --num_eval_envs 16 --episode_length 1000` | PASS | `EVAL_OK`; 16000 eval env steps; JSON saved under `./logs/sac_eval_50k`; no action/reward/obs NaN. |
 
 ## Env API Schema
 

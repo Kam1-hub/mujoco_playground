@@ -1,6 +1,6 @@
 # Known Issues
 
-Status: updated on 2026-05-12 after deterministic SAC checkpoint eval smoke.
+Status: updated on 2026-05-12 after Route B GPU 50k sanity and bounded eval.
 
 ## Open
 
@@ -10,7 +10,7 @@ Status: updated on 2026-05-12 after deterministic SAC checkpoint eval smoke.
 | First JIT latency can look like a hang | validation noise | OPEN_NON_BLOCKING | WSL2/JAX first compile may take minutes. | Record wall time and wait through first compile before classifying a failure. |
 | Route B actual env steps may be lower than requested | reporting | OPEN_NON_BLOCKING | Training loop uses `num_timesteps // num_envs`; `10000` with `128` envs yields `9984`. | Record actual `env_steps` and checkpoint filename; do not assume target equals actual. |
 | Replay buffer scale can become the SAC VRAM bottleneck | memory | OPEN | Route B stores about 671 float32 values per transition; 1M raw replay is about 2.5-2.7 GB before JAX/XLA overhead. | Keep first smoke at `max_replay_size=8192`; increase only after measured GPU smoke. |
-| 1M and longer runs not validated | validation scope | OPEN | GPU 10k smoke and a 4x200 deterministic eval smoke passed, but no longer sanity run has been executed. | Next step should be report review or a user-approved longer sanity run; do not jump straight to 1M. |
+| 100k and 1M runs not validated | validation scope | OPEN | GPU 10k smoke, 4x200 deterministic eval smoke, 50k sanity, and 16x1000 bounded eval passed; 100k and 1M have not been executed. | Consider 100k sanity only after user confirmation; do not jump straight to 1M. |
 | Existing GPU 10k checkpoint is not deterministic-eval ready | checkpoint/eval | OPEN | `./logs/sac_lift_gpu_10k/sac_lift_step_9984.pkl` has `normalize_observations=True` but lacks `policy_normalizer` and `value_normalizer`. | Do not use the old checkpoint for trusted deterministic eval; after user confirmation, rerun a controlled smoke with the new schema and then check eval readiness. |
 | PPO default env count is not a SAC smoke setting | scope | OPEN_NON_BLOCKING | Older PPO docs mention large env counts; Route B smoke is `num_envs=128`. | Do not import PPO/Barkour `2048` or `8192` env assumptions into SAC migration smoke. |
 | Default G1 config reports `impl="warp"` | runtime backend | MITIGATED | CPU-only JAX cannot satisfy Warp's CUDA backend probe. | Route B and env checker now default to `impl="jax"` and expose `--impl`. Use `--impl warp` only where CUDA JAX/Warp is validated. |
@@ -32,6 +32,8 @@ Status: updated on 2026-05-12 after deterministic SAC checkpoint eval smoke.
 | CPU-only JAX after base sync | dependency | Base `uv sync` remains CPU-only, but the target WSL2 environment now uses the locked CUDA extra. Keep using `uv sync --frozen --extra cuda` for GPU validation. |
 | Future checkpoint schema did not persist observation normalizers | checkpoint schema | Route B checkpoint payloads now save `policy_normalizer` and `value_normalizer`; `scripts/check_sac_checkpoint.py` reports `deterministic_eval_ready` and can enforce it with `--require_eval_ready`; a dry-run schema checkpoint passed the readiness gate. |
 | Deterministic eval CLI not available | eval tooling | Added `scripts/eval_sac_checkpoint.py`; 4 env x 200 step eval smoke passed with `EVAL_OK`, no action/reward/obs NaN, and JSON output under ignored `logs`. |
+| Route B GPU 50k sanity not validated | validation | User authorized one controlled 50k sanity run; `TRAIN_OK`, checkpoint `./logs/sac_lift_gpu_50k_sanity/sac_lift_step_49920.pkl`, `--require_eval_ready` PASS, and no observed NaN/Inf/OOM/CUDA/checkpoint/eval error. |
+| Route B 50k bounded deterministic eval not validated | eval validation | `scripts/eval_sac_checkpoint.py` passed with 16 env x 1000 steps; JSON `./logs/sac_eval_50k/eval_16x1000.json`; no action/reward/obs NaN. |
 
 ## Current Acceptance Position
 
@@ -46,8 +48,11 @@ Status: updated on 2026-05-12 after deterministic SAC checkpoint eval smoke.
   readiness checks.
 - Deterministic eval smoke is validated at 4 env x 200 steps; this is not a
   full benchmark.
-- 1M, longer sanity runs, full eval benchmark, and PPO comparison are still
+- 50k sanity and its 16 env x 1000 bounded deterministic eval are validated.
+- 100k sanity, 1M, full eval benchmark, and PPO comparison are still
   `NOT VALIDATED`.
+- Logs, checkpoints, `.venv`, and menagerie assets remain ignored and are not
+  committed.
 - No LIFT fork wholesale copy was made.
 - No PPO/RSL behavior changes were made.
 - No world model, fine-tuning, vision, domain randomization, or deployment work was added.
