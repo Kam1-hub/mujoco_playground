@@ -1,0 +1,267 @@
+# Phase Summary and Risks
+
+Date: 2026-05-12
+
+This report freezes the current SAC Route B validation state so a new agent can
+continue without relying on chat history.
+
+## Repository State
+
+- Path: `/home/admin/projects/mujoco_playground/g1_sac_dev`
+- Branch: `sac-integration`
+- Current commit: `a64eaf6 Record SAC 50k sanity results`
+- Remote: `origin https://github.com/Kam1-hub/mujoco_playground.git`
+- External menagerie commit: `1b86ece576591213e2b666ebf59508454200ca97`
+
+Runtime artifacts are local and ignored. Do not commit `logs/`, `.venv/`,
+`g1_env/external_deps/mujoco_menagerie`, or generated checkpoints.
+
+## Validation Ladder
+
+| Level | Status | Evidence |
+| --- | --- | --- |
+| CPU tiny smoke | PASS | Earlier local smoke report |
+| WSL2 CUDA/JAX preflight | PASS | `scripts/gpu_preflight.py --impl jax --require_gpu` |
+| Route B GPU 10k smoke | PASS | `./logs/sac_lift_gpu_10k/sac_lift_step_9984.pkl` |
+| Future checkpoint schema with normalizers | PASS | `c59eda0 Save SAC normalizers in checkpoints` |
+| Normalizer-ready GPU 10k checkpoint | PASS | `./logs/sac_lift_gpu_10k_normalizer/sac_lift_step_9984.pkl` |
+| Deterministic eval smoke | PASS | `./logs/sac_eval_smoke/eval_4x200.json` |
+| Route B GPU 50k sanity | PASS | `./logs/sac_lift_gpu_50k_sanity/sac_lift_step_49920.pkl` |
+| 50k checkpoint eval readiness | PASS | `scripts/check_sac_checkpoint.py --require_eval_ready` |
+| 50k bounded deterministic eval | PASS | `./logs/sac_eval_50k/eval_16x1000.json` |
+| 100k sanity | NOT VALIDATED | Requires explicit user confirmation |
+| 1M training | NOT VALIDATED | Must wait for clean 100k report |
+
+## Completed Outcomes
+
+- Added a local SAC Route B implementation without modifying PPO/RSL code paths.
+- Validated WSL2 CUDA/JAX operation on an RTX 4070 SUPER 12GB setup.
+- Pinned the external MuJoCo Menagerie checkout and kept it untracked.
+- Verified SAC training can produce checkpoints on GPU at 10k and 50k scales.
+- Fixed future SAC checkpoint schema to save `policy_normalizer` and
+  `value_normalizer`.
+- Added checkpoint readiness checks for deterministic eval.
+- Added a bounded deterministic SAC checkpoint eval script.
+- Verified deterministic eval readiness and bounded eval on the normalizer-ready
+  10k and 50k checkpoints.
+
+## Key Metrics
+
+### GPU 10k Smoke
+
+- Command family: Route B SAC, `num_timesteps=10000`, `num_envs=128`,
+  `batch_size=256`, `max_replay_size=8192`, `grad_updates_per_step=2`
+- Checkpoint: `./logs/sac_lift_gpu_10k/sac_lift_step_9984.pkl`
+- `env_steps`: `9984`
+- `gradient_steps`: `142`
+- `wall_time`: `56.50599093900382`
+- `sps`: `176.68922947970893`
+- `actor_loss`: `-1.9058758020401`
+- `critic_loss`: `0.08382290601730347`
+- `alpha`: `0.04770537465810776`
+- `alpha_loss`: `1.585930585861206`
+- `policy_log_prob`: `-18.79882049560547`
+- `policy_q`: `1.0090709924697876`
+- `q`: `1.0673823356628418`
+- `target_q`: `1.0646085739135742`
+- `truncation_fraction`: `0.0`
+- NaN/Inf/OOM/CUDA error observed: no
+
+Note: the first 10k checkpoint predates the normalizer schema fix and is not a
+trusted deterministic eval input.
+
+### 10k Deterministic Eval Smoke
+
+- Checkpoint: `./logs/sac_lift_gpu_10k_normalizer/sac_lift_step_9984.pkl`
+- Eval JSON: `./logs/sac_eval_smoke/eval_4x200.json`
+- `num_eval_envs`: `4`
+- `episode_length`: `200`
+- `eval_env_steps`: `800`
+- `episode_reward_mean`: `-3.3628087043762207`
+- `episode_reward_std`: `0.34718504548072815`
+- `episode_reward_min`: `-3.778578281402588`
+- `episode_reward_max`: `-2.876215934753418`
+- `done_fraction`: `1.0`
+- `wall_time`: `62.32472045900067`
+- `sps`: `12.835998205981001`
+- `action_nan`: `false`
+- `reward_nan`: `false`
+- `obs_nan`: `false`
+- `truncation_present`: `true`
+- `truncation_fraction`: `0.0`
+
+### GPU 50k Sanity
+
+- Command family: Route B SAC, `num_timesteps=50000`, `num_envs=128`,
+  `batch_size=256`, `max_replay_size=50000`, `grad_updates_per_step=2`
+- Checkpoint: `./logs/sac_lift_gpu_50k_sanity/sac_lift_step_49920.pkl`
+- `env_steps`: `49920`
+- `gradient_steps`: `766`
+- `wall_time`: `35.99766752999858`
+- `sps`: `1386.756515777009`
+- `actor_loss`: `-3.6135072708129883`
+- `critic_loss`: `0.07097882032394409`
+- `alpha`: `0.03992176800966263`
+- `alpha_loss`: `1.327394962310791`
+- `policy_log_prob`: `-18.81831169128418`
+- `policy_q`: `2.8622469902038574`
+- `q`: `2.884032726287842`
+- `target_q`: `2.899707317352295`
+- `truncation_fraction`: `0.0`
+- NaN/Inf/OOM/CUDA/checkpoint/eval error observed: no
+
+The actual step count is `49920` because Route B uses
+`num_envs * (num_timesteps // num_envs)`.
+
+### 50k Bounded Deterministic Eval
+
+- Checkpoint: `./logs/sac_lift_gpu_50k_sanity/sac_lift_step_49920.pkl`
+- Eval JSON: `./logs/sac_eval_50k/eval_16x1000.json`
+- `num_eval_envs`: `16`
+- `episode_length`: `1000`
+- `eval_env_steps`: `16000`
+- `episode_reward_mean`: `-3.5016322135925293`
+- `episode_reward_std`: `0.75983726978302`
+- `episode_reward_min`: `-6.096090316772461`
+- `episode_reward_max`: `-2.531925916671753`
+- `done_fraction`: `1.0`
+- `wall_time`: `74.76505397899746`
+- `sps`: `214.00372431342888`
+- `action_nan`: `false`
+- `reward_nan`: `false`
+- `obs_nan`: `false`
+- `truncation_present`: `true`
+- `truncation_fraction`: `0.0`
+
+## Current Claims
+
+It is reasonable to claim:
+
+- SAC Route B imports, initializes, trains briefly, checkpoints, reloads, and
+  runs bounded deterministic eval on the target WSL2 CUDA/JAX stack.
+- The current checkpoint schema is sufficient for deterministic actor eval when
+  `normalize_observations=True`.
+- The 10k and 50k GPU runs did not show NaN, Inf, OOM, CUDA backend failure,
+  checkpoint failure, or eval failure.
+- Runtime artifacts are ignored and have not been committed.
+
+It is not yet reasonable to claim:
+
+- 100k or 1M training stability.
+- Any final policy quality or solved task performance.
+- Tuned rewards, tuned action scale, tuned stiffness/damping, or optimized SAC
+  hyperparameters.
+- PPO/RSL parity or superiority.
+- Robustness under domain randomization, fine-tuning, deployment, or long
+  rollout evaluation.
+
+## Remaining Risks
+
+- SAC algorithm maturity: Route B has the core SAC pieces, but only short GPU
+  runs have been validated.
+- Long training stability: 100k and 1M are still untested, so late NaN, replay
+  drift, alpha instability, or target-Q drift remain possible.
+- Eval reward is still low and should be treated as a smoke signal, not a
+  performance benchmark.
+- Truncation handling is currently synthesized as zero when absent. That passed
+  the tested ladder but is still a modeling assumption to watch in longer runs.
+- Replay, normalizer, and checkpoint interactions are now covered by schema
+  checks, but only at short and medium sanity scales.
+- Performance/SPS varies strongly because the first 10k run paid more compile
+  and warmup cost. Use same-machine comparisons only.
+- No PPO comparison has been run for the same conditions.
+
+## Recommended 100k Plan
+
+Run only after explicit user confirmation. Keep the 50k parameter shape and
+increase the horizon conservatively:
+
+```bash
+export XLA_PYTHON_CLIENT_PREALLOCATE=false
+export MUJOCO_GL=egl
+export JAX_COMPILATION_CACHE_DIR="$HOME/.cache/jax"
+
+uv run --no-sync python -m learning.train_jax_sac_lift \
+  --env_name G1JoystickFlatTerrain \
+  --impl jax \
+  --num_timesteps 100000 \
+  --num_envs 128 \
+  --num_eval_envs 32 \
+  --batch_size 256 \
+  --min_replay_size 1024 \
+  --max_replay_size 100000 \
+  --grad_updates_per_step 2 \
+  --render False \
+  --use_wandb False \
+  --logdir ./logs/sac_lift_gpu_100k_sanity
+```
+
+Expected checkpoint:
+
+```text
+./logs/sac_lift_gpu_100k_sanity/sac_lift_step_99968.pkl
+```
+
+Expected actual env steps:
+
+```text
+128 * (100000 // 128) = 99968
+```
+
+Replay memory estimate: around 256 MB raw sample storage for 100k entries, plus
+JAX/device overhead and optimizer/network state. This should fit the known 12GB
+GPU budget if no other large workloads are active.
+
+Checkpoint readiness command:
+
+```bash
+uv run --no-sync python scripts/check_sac_checkpoint.py \
+  --checkpoint ./logs/sac_lift_gpu_100k_sanity/sac_lift_step_99968.pkl \
+  --require_eval_ready
+```
+
+Bounded eval command:
+
+```bash
+uv run --no-sync python scripts/eval_sac_checkpoint.py \
+  --checkpoint ./logs/sac_lift_gpu_100k_sanity/sac_lift_step_99968.pkl \
+  --num_eval_envs 16 \
+  --episode_length 1000 \
+  --render False \
+  --output_json ./logs/sac_eval_100k/eval_16x1000.json
+```
+
+Stop immediately and report if any of these occur:
+
+- JAX backend is not GPU/CUDA.
+- `nvidia-smi` is unavailable.
+- Training does not print `TRAIN_OK`.
+- Any NaN, Inf, OOM, CUDA, env load, obs/action shape, replay-update,
+  checkpoint, or eval failure appears.
+- Checkpoint readiness fails.
+- Deterministic eval returns action/reward/obs NaN.
+- Git status shows unignored logs, checkpoints, `.venv`, or menagerie files.
+
+## 1M Plan
+
+Do not jump directly to 1M. Consider 1M only after a clean 100k report with:
+
+- `TRAIN_OK`
+- checkpoint readiness PASS
+- bounded deterministic eval PASS
+- no NaN/Inf/OOM/CUDA/checkpoint/eval errors
+- clean ignored-artifact audit
+
+The 1M replay buffer can require roughly 2.5-2.7 GB raw storage before overhead,
+so memory pressure, checkpoint size, compile behavior, and replay update cost
+must be budgeted explicitly. A 1M run should have its own user-approved command,
+fresh logdir, post-run checkpoint check, bounded eval, and report update.
+
+## Standing Prohibitions
+
+- Do not do domain randomization.
+- Do not do fine-tuning.
+- Do not tune reward, `action_scale`, Kp, or other control gains.
+- Do not modify PPO/RSL paths for SAC validation.
+- Do not commit `logs/`, checkpoints, `.venv/`, or menagerie.
+- Do not treat WSL2/JAX warnings as blockers unless the command fails.

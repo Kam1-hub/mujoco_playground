@@ -14,5 +14,10 @@ Required reports:
 - `06_next_actions.md`
 - `07_gpu_migration_prep.md`
 - `08_project_status_roadmap.md`
+- `09_phase_summary_and_risks.md`
+
+Repo-root continuation handoff:
+
+- `../../NEXT_AGENT_HANDOFF.md`
 
 Each report should cite concrete files and line numbers when making code claims.
