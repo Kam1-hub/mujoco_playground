@@ -18,7 +18,8 @@ domain randomization, or fine-tuning as part of the current validation phase.
 
 - Path: `/home/admin/projects/mujoco_playground/g1_sac_dev`
 - Branch: `sac-integration`
-- Current commit: `a64eaf6 Record SAC 50k sanity results`
+- Current committed baseline before 100k report update:
+  `31cc105 Add SAC phase summary and handoff`
 - Remote: `origin https://github.com/Kam1-hub/mujoco_playground.git`
 - Last known pushed branch: `sac-integration`
 
@@ -148,10 +149,12 @@ Current validated ladder:
 - GPU 50k sanity: PASS.
 - 50k checkpoint eval readiness: PASS.
 - 50k bounded deterministic eval: PASS.
+- GPU 100k sanity: PASS.
+- 100k checkpoint eval readiness: PASS.
+- 100k bounded deterministic eval: PASS.
 
 Still not validated:
 
-- 100k sanity.
 - 1M training.
 - Full performance benchmark.
 - PPO comparison.
@@ -176,6 +179,11 @@ All paths below are runtime artifacts and should remain ignored:
   - Checkpoint readiness PASS.
 - `./logs/sac_eval_50k/eval_16x1000.json`
   - 16 env x 1000 step bounded deterministic eval result.
+- `./logs/sac_lift_gpu_100k_sanity/sac_lift_step_99968.pkl`
+  - 100k sanity checkpoint with normalizers.
+  - Checkpoint readiness PASS.
+- `./logs/sac_eval_100k/eval_16x1000.json`
+  - 16 env x 1000 step bounded deterministic eval result after 100k.
 - `./logs/sac_lift_schema_dry_run/sac_lift_step_0.pkl`
   - Dry-run schema validation artifact, if still present.
 
@@ -237,12 +245,45 @@ GPU 50k sanity:
 - `wall_time=74.76505397899746`, `sps=214.00372431342888`
 - No action/reward/obs NaN.
 
+GPU 100k sanity:
+
+- `TRAIN_OK`
+- Checkpoint: `./logs/sac_lift_gpu_100k_sanity/sac_lift_step_99968.pkl`
+- `env_steps=99968`, `gradient_steps=1548`
+- `wall_time=56.80434615799459`, `sps=1759.8653406193746`
+- `actor_loss=-4.994826316833496`
+- `critic_loss=0.04054964333772659`
+- `alpha=0.03259027376770973`
+- `q=4.3698601722717285`
+- `target_q=4.456111907958984`
+- No NaN/Inf/OOM/fatal CUDA/checkpoint/eval error observed.
+
+100k bounded deterministic eval:
+
+- JSON: `./logs/sac_eval_100k/eval_16x1000.json`
+- `eval_env_steps=16000`
+- `episode_reward_mean=-3.894726037979126`
+- `episode_reward_std=0.9610732197761536`
+- `episode_reward_min=-7.2897186279296875`
+- `episode_reward_max=-2.889821767807007`
+- `done_fraction=1.0`
+- `wall_time=66.85148939098872`, `sps=239.33647770242092`
+- No action/reward/obs NaN.
+
+100k tooling notes:
+
+- WSL2 CUDA driver version format warning and JAX cast overflow warning were
+  observed and remained non-fatal.
+- A first sandboxed `uv` attempt hit a `snap-confine` capability issue before
+  training started. The identical command succeeded with external permission and
+  unchanged parameters, so this is tooling noise, not a training failure.
+
 ## Remaining Risks
 
-- 100k and 1M stability are unknown.
+- 1M stability is unknown.
 - Eval rewards are low and only prove bounded eval execution, not policy quality.
 - Truncation handling is still an assumption when absent from env info.
-- Replay memory and normalizer behavior need longer validation.
+- Replay memory and normalizer behavior need 1M-scale validation.
 - 1M replay can be around 2.5-2.7 GB raw before overhead.
 - SPS can vary due JIT compile and warmup.
 - No PPO comparison has been run.
@@ -251,15 +292,16 @@ GPU 50k sanity:
 
 1. Do read-only status checks.
 2. Read this file and `reports/sac_integration/09_phase_summary_and_risks.md`.
-3. If the user approves continuing, either refine the 100k plan or execute the
-   already documented 100k sanity run.
+3. If the user approves continuing, plan 1M explicitly with a resource budget,
+   fresh logdir, checkpoint readiness gate, bounded eval command, and stop
+   conditions.
 
-Do not jump directly to 1M. Do not modify reward, action scale, Kp, domain
+Do not start 1M automatically. Do not modify reward, action scale, Kp, domain
 randomization, fine-tuning, PPO, or RSL.
 
-## 100k Sanity Template
+## Completed 100k Sanity Command
 
-Use only after explicit user confirmation:
+The 100k sanity command that passed was:
 
 ```bash
 export XLA_PYTHON_CLIENT_PREALLOCATE=false
@@ -281,7 +323,7 @@ uv run --no-sync python -m learning.train_jax_sac_lift \
   --logdir ./logs/sac_lift_gpu_100k_sanity
 ```
 
-Then check readiness and run bounded eval:
+The readiness and bounded eval commands that passed were:
 
 ```bash
 uv run --no-sync python scripts/check_sac_checkpoint.py \
@@ -307,11 +349,12 @@ status checks: pwd, git status --short --branch, git log --oneline -5,
 git remote -v, and git check-ignore -v logs .venv
 g1_env/external_deps/mujoco_menagerie || true.
 
-Current HEAD should be a64eaf6 Record SAC 50k sanity results unless newer
-handoff commits exist. GPU 10k smoke, deterministic eval smoke, GPU 50k sanity,
-and 50k bounded eval have passed. 100k and 1M are not validated.
+Current HEAD should be at least 31cc105 Add SAC phase summary and handoff unless
+newer report commits exist. GPU 10k smoke, deterministic eval smoke, GPU 50k
+sanity/eval, and GPU 100k sanity/eval have passed. 1M is not validated.
 
 Do not run training, eval, preflight, installs, downloads, or git commits unless
-explicitly asked. Do not jump directly to 1M. Do not change reward,
-action_scale, Kp, domain randomization, fine-tuning, PPO, or RSL.
+explicitly asked. Do not start 1M without a separate resource/stop-condition
+plan and user confirmation. Do not change reward, action_scale, Kp, domain
+randomization, fine-tuning, PPO, or RSL.
 ```

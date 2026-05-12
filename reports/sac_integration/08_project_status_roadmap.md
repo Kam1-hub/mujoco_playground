@@ -1,6 +1,6 @@
 # G1 SAC Integration Status And Roadmap
 
-Status: updated on 2026-05-12 after Route B GPU 50k sanity and bounded eval.
+Status: updated on 2026-05-12 after Route B GPU 100k sanity and bounded eval.
 
 ## 1. Mission
 
@@ -174,11 +174,13 @@ Validation ladder:
 10. GPU 10k smoke
 11. 50k sanity run
 12. 100k or longer sanity run
+13. 1M training
 
 Status:
 
-- Steps 1 through 11 are complete.
-- Step 12 remains `NOT VALIDATED` and requires separate user confirmation.
+- Steps 1 through 12 are complete.
+- Step 13 remains `NOT VALIDATED` and requires separate user confirmation and
+  an explicit resource/stop-condition plan.
 
 ### Phase 6: Reports, Commits, Migration Handoff
 
@@ -202,11 +204,11 @@ Current GitHub branch:
 Key commits:
 
 ```text
+31cc105 Add SAC phase summary and handoff
+a64eaf6 Record SAC 50k sanity results
 5be043c Add SAC deterministic eval smoke
 c59eda0 Save SAC normalizers in checkpoints
 d5c0e8d Record Route B GPU smoke results
-6fa5160 Sync WSL2 GPU preflight documentation
-0ffcb91 Add WSL2 Codex handoff guide
 ```
 
 GitHub remote:
@@ -227,8 +229,8 @@ WSL2 target workspace state:
 
 - Path: `/home/admin/projects/mujoco_playground/g1_sac_dev`
 - Branch: `sac-integration...origin/sac-integration`
-- Latest committed baseline before 50k report update:
-  `5be043c Add SAC deterministic eval smoke`
+- Latest committed baseline before 100k report update:
+  `31cc105 Add SAC phase summary and handoff`
 - Menagerie: present at `1b86ece576591213e2b666ebf59508454200ca97`
 - Python env: present under ignored `.venv`
 - CUDA JAX: validated, backend `gpu`, device `cuda:0`
@@ -254,6 +256,13 @@ WSL2 target workspace state:
 - 50k bounded deterministic eval:
   16 env x 1000 steps, `EVAL_OK`, JSON
   `./logs/sac_eval_50k/eval_16x1000.json`, no action/reward/obs NaN.
+- Route B GPU 100k sanity: `PASS`.
+- 100k checkpoint:
+  `./logs/sac_lift_gpu_100k_sanity/sac_lift_step_99968.pkl` passed
+  `scripts/check_sac_checkpoint.py --require_eval_ready`.
+- 100k bounded deterministic eval:
+  16 env x 1000 steps, `EVAL_OK`, JSON
+  `./logs/sac_eval_100k/eval_16x1000.json`, no action/reward/obs NaN.
 - Logs, checkpoints, `.venv`, and menagerie remain ignored and are not
   committed.
 
@@ -377,7 +386,7 @@ Use these files only as environment and operating-experience references. Do not 
 
 Current objective:
 
-- Review and record the completed WSL2 GPU preflight and Route B GPU 10k smoke.
+- Review and record the completed Route B GPU 100k sanity and bounded eval.
 
 Completed in WSL2:
 
@@ -386,6 +395,8 @@ Completed in WSL2:
 - JAX backend/device check: `gpu`, `cuda:0`
 - `uv run --no-sync python scripts/gpu_preflight.py --impl jax --require_gpu`: `PASS`
 - `bash scripts/gpu_smoke_route_b.sh`: `TRAIN_OK`
+- 50k sanity and bounded eval: `PASS`
+- 100k sanity and bounded eval: `PASS`
 
 ## 9. GPU 10k Smoke Objective
 
@@ -483,12 +494,12 @@ json: ./logs/sac_eval_smoke/eval_4x200.json
 
 After report review, only then consider with explicit user confirmation:
 
-- commit the 50k sanity report update
-- 100k sanity run
+- commit the 100k sanity report update
+- 1M planning with resource budget and stop conditions
 - PPO comparison
 
 Do not jump directly to 1M training. The 4x200 eval is a smoke, not a full
-benchmark. The 50k sanity run is now validated; 100k and 1M remain
+benchmark. The 50k and 100k sanity runs are now validated; 1M remains
 `NOT VALIDATED`.
 
 ## 11. 50k Sanity Result
@@ -574,10 +585,94 @@ Known warnings:
 
 No NaN, Inf, OOM, CUDA, checkpoint, or eval error was observed.
 
-100k sanity and 1M training remain `NOT VALIDATED`. The next training scale
-should be 100k only after explicit user confirmation; do not jump directly to
-1M.
+## 12. 100k Sanity Result
 
-## 12. Current Position In One Sentence
+Command class:
 
-SAC Route B is implemented; CPU tiny smoke, WSL2 GPU preflight, Route B GPU 10k smoke, normalizer-ready checkpoint validation, bounded deterministic eval smoke, 50k sanity, and 50k bounded eval have passed; 100k, 1M, full eval benchmarking, domain randomization, and fine-tuning remain `NOT VALIDATED`.
+```bash
+uv run --no-sync python -m learning.train_jax_sac_lift \
+  --env_name G1JoystickFlatTerrain \
+  --impl jax \
+  --num_timesteps 100000 \
+  --num_envs 128 \
+  --num_eval_envs 32 \
+  --batch_size 256 \
+  --min_replay_size 1024 \
+  --max_replay_size 100000 \
+  --grad_updates_per_step 2 \
+  --render False \
+  --use_wandb False \
+  --logdir ./logs/sac_lift_gpu_100k_sanity
+```
+
+Observed result:
+
+```text
+status: TRAIN_OK
+checkpoint: ./logs/sac_lift_gpu_100k_sanity/sac_lift_step_99968.pkl
+env_steps: 99968
+gradient_steps: 1548
+wall_time: 56.80434615799459
+sps: 1759.8653406193746
+actor_loss: -4.994826316833496
+critic_loss: 0.04054964333772659
+alpha: 0.03259027376770973
+alpha_loss: 1.0562278032302856
+policy_log_prob: -17.77903938293457
+q: 4.3698601722717285
+target_q: 4.456111907958984
+truncation_fraction: 0.0
+```
+
+Checkpoint readiness:
+
+- `scripts/check_sac_checkpoint.py --require_eval_ready`: `PASS`
+- `policy_normalizer`: present
+- `value_normalizer`: present
+
+Bounded deterministic eval:
+
+```text
+status: EVAL_OK
+json: ./logs/sac_eval_100k/eval_16x1000.json
+eval_env_steps: 16000
+episode_reward_mean: -3.894726037979126
+episode_reward_std: 0.9610732197761536
+episode_reward_min: -7.2897186279296875
+episode_reward_max: -2.889821767807007
+done_fraction: 1.0
+wall_time: 66.85148939098872
+sps: 239.33647770242092
+action_nan: false
+reward_nan: false
+obs_nan: false
+truncation_present: true
+truncation_fraction: 0.0
+```
+
+Post-run GPU snapshot:
+
+- GPU: RTX 4070 SUPER
+- VRAM: `1508MiB / 12282MiB`
+- Temperature: `55C`
+- Power: `9W / 220W`
+- GPU util: `14%`
+- Process table only showed `/Xwayland`.
+
+Known warnings and tooling notes:
+
+- WSL2 CUDA driver version format warning and JAX cast overflow warning were
+  observed and remained non-fatal.
+- The first sandboxed `uv` attempt hit a `snap-confine` capability issue before
+  training started. The identical command succeeded with external permission and
+  unchanged parameters, so this is tooling noise, not a training failure.
+
+No NaN, Inf, OOM, fatal CUDA, checkpoint, or eval error was observed.
+
+1M training remains `NOT VALIDATED`. Consider it only after explicit user
+confirmation and with a resource budget, fresh logdir, checkpoint readiness
+gate, bounded eval command, and stop-condition plan.
+
+## 13. Current Position In One Sentence
+
+SAC Route B is implemented; CPU tiny smoke, WSL2 GPU preflight, Route B GPU 10k smoke, normalizer-ready checkpoint validation, bounded deterministic eval smoke, 50k sanity/eval, and 100k sanity/eval have passed; 1M, full eval benchmarking, domain randomization, and fine-tuning remain `NOT VALIDATED`.

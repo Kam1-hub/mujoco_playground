@@ -1,6 +1,6 @@
 # Smoke Results
 
-Status: updated on 2026-05-12 after Route B GPU 50k sanity and bounded eval.
+Status: updated on 2026-05-12 after Route B GPU 100k sanity and bounded eval.
 
 ## 2026-05-12 WSL2 GPU Result
 
@@ -8,8 +8,8 @@ Workspace:
 
 - Path: `/home/admin/projects/mujoco_playground/g1_sac_dev`
 - Branch: `sac-integration`
-- Latest committed baseline before 50k report update:
-  `5be043c Add SAC deterministic eval smoke`
+- Latest committed baseline before 100k report update:
+  `31cc105 Add SAC phase summary and handoff`
 
 Runtime:
 
@@ -118,19 +118,65 @@ Route B 50k bounded deterministic eval:
 - Scope note: this is a bounded eval attached to 50k sanity, not a full
   benchmark.
 
+Route B GPU 100k sanity:
+
+- Command class: `uv run --no-sync python -m learning.train_jax_sac_lift`
+- Status: `TRAIN_OK`
+- Logdir: `./logs/sac_lift_gpu_100k_sanity`
+- Checkpoint: `./logs/sac_lift_gpu_100k_sanity/sac_lift_step_99968.pkl`
+- Checkpoint readiness: `--require_eval_ready` PASS
+- Requested timesteps: `100000`
+- Actual env steps: `99968`
+- Gradient steps: `1548`
+- Wall time: `56.80434615799459`
+- SPS: `1759.8653406193746`
+- Actor loss: `-4.994826316833496`
+- Critic loss: `0.04054964333772659`
+- Alpha loss: `1.0562278032302856`
+- Alpha: `0.03259027376770973`
+- Policy log prob: `-17.77903938293457`
+- Q: `4.3698601722717285`
+- Target Q: `4.456111907958984`
+- Truncation fraction: `0.0`
+- NaN/Inf/OOM/fatal CUDA/checkpoint/eval error: none observed
+
+Route B 100k bounded deterministic eval:
+
+- Script: `scripts/eval_sac_checkpoint.py`
+- Checkpoint: `./logs/sac_lift_gpu_100k_sanity/sac_lift_step_99968.pkl`
+- JSON: `./logs/sac_eval_100k/eval_16x1000.json`
+- Status: `EVAL_OK`
+- Eval command scale: `num_eval_envs=16`, `episode_length=1000`
+- Eval env steps: `16000`
+- Episode reward mean/std/min/max:
+  `-3.894726037979126` / `0.9610732197761536` /
+  `-7.2897186279296875` / `-2.889821767807007`
+- Done fraction: `1.0`
+- Wall time: `66.85148939098872`
+- SPS: `239.33647770242092`
+- NaN: `action_nan=false`, `reward_nan=false`, `obs_nan=false`
+- Truncation: `truncation_present=true`, `truncation_fraction=0.0`
+- Scope note: this is a bounded eval attached to 100k sanity, not a full
+  benchmark.
+
 Step count note:
 
 - The command requested `num_timesteps=10000` with `num_envs=128`.
 - Route B currently computes actual env steps as `num_envs * (num_timesteps // num_envs)`.
 - Therefore this smoke records `128 * (10000 // 128) = 9984` actual env steps.
+- The 100k sanity records `128 * (100000 // 128) = 99968` actual env steps.
 
 Warnings observed:
 
 - WSL2 CUDA driver passthrough warning: `Could not get kernel mode driver version`.
 - JAX cast warning: `RuntimeWarning: overflow encountered in cast`.
 - CUDA timer warmup warning: `Delay kernel timed out: measured time has sub-optimal accuracy`.
-- These warnings did not fail preflight, 10k smoke, 50k sanity, or bounded eval;
-  they remain non-fatal WSL2/JAX noise unless accompanied by a failed command.
+- These warnings did not fail preflight, 10k smoke, 50k sanity, 100k sanity, or
+  bounded eval; they remain non-fatal WSL2/JAX noise unless accompanied by a
+  failed command.
+- A first sandboxed `uv` attempt hit a `snap-confine` capability issue. The
+  same command succeeded with external permission and unchanged parameters, so
+  this is recorded as tooling noise, not a training failure.
 
 Post-smoke `nvidia-smi` summary:
 
@@ -150,12 +196,23 @@ Post-50k `nvidia-smi` summary:
 - Power: `9W / 220W`
 - Process table only showed `/Xwayland`.
 
-Not run:
+Post-100k `nvidia-smi` summary:
+
+- Time: 2026-05-12 12:24:43
+- GPU: RTX 4070 SUPER
+- VRAM: `1508MiB / 12282MiB`
+- GPU util: `14%`
+- Temperature: `55C`
+- Power: `9W / 220W`
+- Process table only showed `/Xwayland`.
+
+Current validation state:
 
 - 50k sanity: `PASS`
-- 100k sanity and 1M training: `NOT VALIDATED`
-- deterministic eval smoke and 50k bounded eval: `PASS`; full eval benchmark:
-  `NOT VALIDATED`
+- 100k sanity: `PASS`
+- 1M training: `NOT VALIDATED`
+- deterministic eval smoke, 50k bounded eval, and 100k bounded eval: `PASS`;
+  full eval benchmark: `NOT VALIDATED`
 - PPO comparison: `NOT VALIDATED`
 - domain randomization, fine-tuning, reward/action_scale/Kp tuning: not run
 - No logs, checkpoints, `.venv`, or menagerie assets are committed.
