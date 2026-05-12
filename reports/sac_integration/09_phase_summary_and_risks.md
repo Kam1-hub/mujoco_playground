@@ -9,8 +9,8 @@ continue without relying on chat history.
 
 - Path: `/home/admin/projects/mujoco_playground/g1_sac_dev`
 - Branch: `sac-integration`
-- Current committed baseline before 250k report update:
-  `ee3f766 Record SAC 100k sanity results`
+- Current committed baseline before 500k report update:
+  `99da67d Record SAC 250k sanity results`
 - Remote: `origin https://github.com/Kam1-hub/mujoco_playground.git`
 - External menagerie commit: `1b86ece576591213e2b666ebf59508454200ca97`
 
@@ -36,7 +36,9 @@ Runtime artifacts are local and ignored. Do not commit `logs/`, `.venv/`,
 | 250k sanity | PASS | `./logs/sac_lift_gpu_250k_sanity/sac_lift_step_249984.pkl` |
 | 250k checkpoint eval readiness | PASS | `scripts/check_sac_checkpoint.py --require_eval_ready` |
 | 250k bounded deterministic eval | PASS | `./logs/sac_eval_250k/eval_16x1000.json` |
-| 500k sanity | NOT VALIDATED | Requires separate plan and user confirmation |
+| 500k sanity | PASS | `./logs/sac_lift_gpu_500k_sanity/sac_lift_step_499968.pkl` |
+| 500k checkpoint eval readiness | PASS | `scripts/check_sac_checkpoint.py --require_eval_ready` |
+| 500k bounded deterministic eval | PASS | `./logs/sac_eval_500k/eval_16x1000.json` |
 | 1M training | NOT VALIDATED | Requires explicit user confirmation and resource/stop plan |
 
 ## Completed Outcomes
@@ -44,8 +46,8 @@ Runtime artifacts are local and ignored. Do not commit `logs/`, `.venv/`,
 - Added a local SAC Route B implementation without modifying PPO/RSL code paths.
 - Validated WSL2 CUDA/JAX operation on an RTX 4070 SUPER 12GB setup.
 - Pinned the external MuJoCo Menagerie checkout and kept it untracked.
-- Verified SAC training can produce checkpoints on GPU at 10k, 50k, 100k, and
-  250k scales.
+- Verified SAC training can produce checkpoints on GPU at 10k, 50k, 100k,
+  250k, and 500k scales.
 - Fixed future SAC checkpoint schema to save `policy_normalizer` and
   `value_normalizer`.
 - Added checkpoint readiness checks for deterministic eval.
@@ -54,6 +56,7 @@ Runtime artifacts are local and ignored. Do not commit `logs/`, `.venv/`,
   10k and 50k checkpoints.
 - Verified 100k checkpoint readiness and bounded deterministic eval.
 - Verified 250k checkpoint readiness and bounded deterministic eval.
+- Verified 500k checkpoint readiness and bounded deterministic eval.
 
 ## Key Metrics
 
@@ -233,6 +236,53 @@ The actual step count is `249984` because Route B uses
 - `truncation_present`: `true`
 - `truncation_fraction`: `0.0`
 
+### GPU 500k Sanity
+
+- Command family: Route B SAC, `num_timesteps=500000`, `num_envs=128`,
+  `batch_size=256`, `max_replay_size=500000`, `grad_updates_per_step=2`
+- Checkpoint: `./logs/sac_lift_gpu_500k_sanity/sac_lift_step_499968.pkl`
+- Checkpoint readiness: PASS
+- `policy_normalizer` / `value_normalizer`: present
+- `deterministic_eval_ready`: `true`
+- `env_steps`: `499968`
+- `gradient_steps`: `7798`
+- `wall_time`: `223.88994164399628`
+- `sps`: `2233.0971919899416`
+- `actor_loss`: `-3.510934352874756`
+- `critic_loss`: `0.04195608198642731`
+- `alpha`: `0.008012857288122177`
+- `alpha_loss`: `0.20854677259922028`
+- `policy_log_prob`: `-12.072959899902344`
+- `q`: `3.348696231842041`
+- `target_q`: `3.3187503814697266`
+- `truncation_fraction`: `0.0`
+- NaN/Inf/OOM/fatal CUDA/env load/reset/step/shape/replay/checkpoint/eval
+  failure observed: no
+
+The actual step count is `499968` because Route B uses
+`num_envs * (num_timesteps // num_envs)`.
+
+### 500k Bounded Deterministic Eval
+
+- Checkpoint: `./logs/sac_lift_gpu_500k_sanity/sac_lift_step_499968.pkl`
+- Eval JSON: `./logs/sac_eval_500k/eval_16x1000.json`
+- Status: `EVAL_OK`
+- `num_eval_envs`: `16`
+- `episode_length`: `1000`
+- `eval_env_steps`: `16000`
+- `episode_reward_mean`: `-4.691065788269043`
+- `episode_reward_std`: `1.1929610967636108`
+- `episode_reward_min`: `-9.040802955627441`
+- `episode_reward_max`: `-3.7163496017456055`
+- `done_fraction`: `1.0`
+- `wall_time`: `68.70198891899781`
+- `sps`: `232.88990976468807`
+- `action_nan`: `false`
+- `reward_nan`: `false`
+- `obs_nan`: `false`
+- `truncation_present`: `true`
+- `truncation_fraction`: `0.0`
+
 ### 250k Risk Notes
 
 - WSL2 CUDA driver version format warning and JAX cast overflow warning were
@@ -243,6 +293,20 @@ The actual step count is `249984` because Route B uses
   critic loss stayed low; bounded eval reward did not improve versus 100k.
   This is not a failure, but a future 500k run should watch alpha collapse,
   Q drift, critic loss, eval NaN flags, and reward trend.
+
+### 500k Risk Notes
+
+- WSL2 CUDA driver version format warning and JAX cast overflow warning were
+  observed and remained non-fatal.
+- No traceback, NaN, Inf, OOM, fatal CUDA, env load/reset/step/shape, replay,
+  checkpoint, or eval failure was observed.
+- Alpha continued down from about `0.0187` at 250k to about `0.0080` at 500k.
+- Q and target Q decreased from about `5.2` at 250k to about `3.3` at 500k;
+  critic loss stayed finite/low.
+- Bounded eval reward mean worsened from `-4.27974` at 250k to `-4.69107` at
+  500k. Eval max also worsened from `-3.09396` to `-3.71635`.
+- This is not a runtime failure, but alpha decline and eval degradation must
+  block any automatic jump to 1M.
 
 ### 100k Warning Notes
 
@@ -260,13 +324,13 @@ It is reasonable to claim:
   runs bounded deterministic eval on the target WSL2 CUDA/JAX stack.
 - The current checkpoint schema is sufficient for deterministic actor eval when
   `normalize_observations=True`.
-- The 10k, 50k, 100k, and 250k GPU runs did not show NaN, Inf, OOM, fatal CUDA
-  failure, env failure, checkpoint failure, or eval failure.
+- The 10k, 50k, 100k, 250k, and 500k GPU runs did not show NaN, Inf, OOM,
+  fatal CUDA failure, env failure, checkpoint failure, or eval failure.
 - Runtime artifacts are ignored and have not been committed.
 
 It is not yet reasonable to claim:
 
-- 500k or 1M training stability.
+- 1M training stability.
 - Any final policy quality or solved task performance.
 - Tuned rewards, tuned action scale, tuned stiffness/damping, or optimized SAC
   hyperparameters.
@@ -276,16 +340,18 @@ It is not yet reasonable to claim:
 
 ## Remaining Risks
 
-- SAC algorithm maturity: Route B has the core SAC pieces, but only short and
-  intermediate GPU runs have been validated.
-- Long training stability: 500k and 1M are still untested, so late NaN, replay
-  drift, alpha instability, or target-Q drift remain possible.
+- SAC algorithm maturity: Route B has the core SAC pieces, but 1M-scale
+  training has not been validated.
+- Long training stability: 1M is still untested, so late NaN, replay drift,
+  alpha instability, or target-Q drift remain possible.
+- 500k exposed training-dynamics risk: alpha reached about `0.0080` and
+  bounded eval reward worsened versus 250k despite no runtime failure.
 - Eval reward is still low and should be treated as a smoke signal, not a
   performance benchmark.
 - Truncation handling is currently synthesized as zero when absent. That passed
   the tested ladder but is still a modeling assumption to watch in longer runs.
 - Replay, normalizer, and checkpoint interactions are now covered by schema
-  checks through 250k, but not at 500k or 1M scale.
+  checks through 500k, but not at 1M scale.
 - Performance/SPS varies strongly because the first 10k run paid more compile
   and warmup cost. Use same-machine comparisons only.
 - No PPO comparison has been run for the same conditions.
@@ -361,11 +427,12 @@ Stop immediately and report if any of these occur:
 - Deterministic eval returns action/reward/obs NaN.
 - Git status shows unignored logs, checkpoints, `.venv`, or menagerie files.
 
-## 500k And 1M Plan
+## 1M Decision And Readiness Plan
 
-Do not automatically jump to 500k or 1M from this report update. The next
-recommended step is a separate 500k sanity plan and user confirmation. Consider
-1M only after 500k is validated and a separate user approval is given with:
+Do not automatically jump to 1M from this report update. The next recommended
+step is a separate 1M decision/readiness review and user confirmation. The
+review should consider whether alpha floor, target entropy, or log-alpha
+dynamics need analysis before a longer run. Consider 1M only with:
 
 - explicit resource budget
 - fresh logdir and checkpoint path

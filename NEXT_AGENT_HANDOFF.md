@@ -18,8 +18,8 @@ domain randomization, or fine-tuning as part of the current validation phase.
 
 - Path: `/home/admin/projects/mujoco_playground/g1_sac_dev`
 - Branch: `sac-integration`
-- Current committed baseline before 250k report update:
-  `ee3f766 Record SAC 100k sanity results`
+- Current committed baseline before 500k report update:
+  `99da67d Record SAC 250k sanity results`
 - Remote: `origin https://github.com/Kam1-hub/mujoco_playground.git`
 - Last known pushed branch: `sac-integration`
 
@@ -155,10 +155,12 @@ Current validated ladder:
 - GPU 250k sanity: PASS.
 - 250k checkpoint eval readiness: PASS.
 - 250k bounded deterministic eval: PASS.
+- GPU 500k sanity: PASS.
+- 500k checkpoint eval readiness: PASS.
+- 500k bounded deterministic eval: PASS.
 
 Still not validated:
 
-- 500k sanity.
 - 1M training.
 - Full performance benchmark.
 - PPO comparison.
@@ -193,6 +195,11 @@ All paths below are runtime artifacts and should remain ignored:
   - Checkpoint readiness PASS.
 - `./logs/sac_eval_250k/eval_16x1000.json`
   - 16 env x 1000 step bounded deterministic eval result after 250k.
+- `./logs/sac_lift_gpu_500k_sanity/sac_lift_step_499968.pkl`
+  - 500k sanity checkpoint with normalizers.
+  - Checkpoint readiness PASS.
+- `./logs/sac_eval_500k/eval_16x1000.json`
+  - 16 env x 1000 step bounded deterministic eval result after 500k.
 - `./logs/sac_lift_schema_dry_run/sac_lift_step_0.pkl`
   - Dry-run schema validation artifact, if still present.
 
@@ -306,14 +313,45 @@ GPU 250k sanity:
 - `wall_time=68.2435936529946`, `sps=234.45424168833907`
 - No action/reward/obs NaN.
 
-250k risk notes:
+GPU 500k sanity:
+
+- `TRAIN_OK`
+- Checkpoint: `./logs/sac_lift_gpu_500k_sanity/sac_lift_step_499968.pkl`
+- `env_steps=499968`, `gradient_steps=7798`
+- `wall_time=223.88994164399628`, `sps=2233.0971919899416`
+- `actor_loss=-3.510934352874756`
+- `critic_loss=0.04195608198642731`
+- `alpha=0.008012857288122177`
+- `q=3.348696231842041`
+- `target_q=3.3187503814697266`
+- Checkpoint readiness PASS with `policy_normalizer` and `value_normalizer`
+  present.
+- No NaN/Inf/OOM/fatal CUDA/env load/reset/step/shape/replay/checkpoint/eval
+  failure observed.
+
+500k bounded deterministic eval:
+
+- JSON: `./logs/sac_eval_500k/eval_16x1000.json`
+- `eval_env_steps=16000`
+- `episode_reward_mean=-4.691065788269043`
+- `episode_reward_std=1.1929610967636108`
+- `episode_reward_min=-9.040802955627441`
+- `episode_reward_max=-3.7163496017456055`
+- `done_fraction=1.0`
+- `wall_time=68.70198891899781`, `sps=232.88990976468807`
+- No action/reward/obs NaN.
+
+500k risk notes:
 
 - WSL2 CUDA driver version format warning and JAX cast overflow warning were
   observed and remained non-fatal.
-- Alpha dropped to about `0.0187`; Q and target Q rose to about `5.2` while
-  critic loss stayed low; bounded eval reward did not improve versus 100k.
-  This is not a failure, but 500k should watch alpha collapse, Q drift, critic
-  loss, eval NaN flags, and reward trend.
+- Alpha continued down from about `0.0187` at 250k to about `0.0080` at 500k.
+- Q and target Q decreased from about `5.2` to about `3.3`; critic loss stayed
+  finite/low.
+- Bounded eval reward mean worsened from `-4.27974` to `-4.69107`, and eval
+  max worsened from `-3.09396` to `-3.71635`.
+- This is not a runtime failure, but alpha decline and eval degradation block
+  any automatic jump to 1M.
 
 100k tooling notes:
 
@@ -325,10 +363,12 @@ GPU 250k sanity:
 
 ## Remaining Risks
 
-- 500k and 1M stability are unknown.
+- 1M stability is unknown.
 - Eval rewards are low and only prove bounded eval execution, not policy quality.
 - Truncation handling is still an assumption when absent from env info.
-- Replay memory and normalizer behavior need 500k and 1M-scale validation.
+- Replay memory and normalizer behavior need 1M-scale validation.
+- 500k exposed alpha-decline and eval-degradation risk despite a clean runtime
+  sanity PASS.
 - 1M replay can be around 2.5-2.7 GB raw before overhead.
 - SPS can vary due JIT compile and warmup.
 - No PPO comparison has been run.
@@ -337,12 +377,14 @@ GPU 250k sanity:
 
 1. Do read-only status checks.
 2. Read this file and `reports/sac_integration/09_phase_summary_and_risks.md`.
-3. If the user approves continuing, draft a separate 500k sanity plan with a
-   resource budget, fresh logdir, checkpoint readiness gate, bounded eval
-   command, and stop conditions.
+3. If the user approves continuing, draft a separate 1M decision/readiness
+   review with a resource budget, fresh logdir, checkpoint readiness gate,
+   bounded eval command, and stop conditions.
+4. Include alpha floor, target entropy/log-alpha dynamics, Q drift, critic
+   loss, eval reward trend, and NaN flags in that review.
 
-Do not start 500k or 1M automatically. Do not modify reward, action scale, Kp,
-domain randomization, fine-tuning, PPO, or RSL.
+Do not start 1M automatically. Do not modify reward, action scale, Kp, domain
+randomization, fine-tuning, PPO, or RSL.
 
 ## Completed 100k Sanity Command
 
@@ -394,13 +436,13 @@ status checks: pwd, git status --short --branch, git log --oneline -5,
 git remote -v, and git check-ignore -v logs .venv
 g1_env/external_deps/mujoco_menagerie || true.
 
-Current HEAD should be at least ee3f766 Record SAC 100k sanity results unless
+Current HEAD should be at least 99da67d Record SAC 250k sanity results unless
 newer report commits exist. GPU 10k smoke, deterministic eval smoke, GPU 50k
-sanity/eval, GPU 100k sanity/eval, and GPU 250k sanity/eval have passed. 500k
-and 1M are not validated.
+sanity/eval, GPU 100k sanity/eval, GPU 250k sanity/eval, and GPU 500k
+sanity/eval have passed. 1M is not validated.
 
 Do not run training, eval, preflight, installs, downloads, or git commits unless
-explicitly asked. Do not start 500k or 1M without a separate
-resource/stop-condition plan and user confirmation. Do not change reward,
-action_scale, Kp, domain randomization, fine-tuning, PPO, or RSL.
+explicitly asked. Do not start 1M without a separate resource/stop-condition
+plan and user confirmation. Do not change reward, action_scale, Kp, domain
+randomization, fine-tuning, PPO, or RSL.
 ```
