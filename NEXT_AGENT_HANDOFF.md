@@ -165,6 +165,7 @@ Current validated ladder:
 - 100k/250k/500k full action distribution / reward-component eval diagnostic:
   PASS.
 - Fresh 100k train-time actor drift diagnostic: PASS.
+- Fresh 250k train-time actor drift diagnostic: PASS.
 
 Still not validated:
 
@@ -225,6 +226,13 @@ All paths below are runtime artifacts and should remain ignored:
   - 4 env x 200 action diagnostic eval from the fresh 100k actor drift
     checkpoint.
   - Status `EVAL_OK`; JSON sanity PASS.
+- `./logs/sac_lift_gpu_250k_actor_diag/sac_lift_step_249984.pkl`
+  - Fresh 250k train-time actor drift diagnostic checkpoint.
+  - Checkpoint readiness PASS.
+- `./logs/sac_eval_actor_diag_250k/eval_both_seed0_4x200_actiondiag.json`
+  - 4 env x 200 action diagnostic eval from the fresh 250k actor drift
+    checkpoint.
+  - Status `EVAL_OK`; JSON sanity PASS.
 - `./logs/sac_lift_schema_dry_run/sac_lift_step_0.pkl`
   - Dry-run schema validation artifact, if still present.
 
@@ -279,8 +287,24 @@ Fresh 100k actor drift diagnostic:
 - Interpretation: actor mean drift is already forming by 100k. This is not a
   runtime failure.
 
-Next recommended step: fresh 250k actor drift diagnostic after user
-confirmation. Do not run 750k or 1M yet.
+Fresh 250k actor drift diagnostic:
+
+- Scope: diagnostic training plus small action diagnostic eval; no fresh
+  500k/750k/1M.
+- Checkpoint: `./logs/sac_lift_gpu_250k_actor_diag/sac_lift_step_249984.pkl`.
+- Checkpoint readiness: PASS.
+- Eval JSON:
+  `./logs/sac_eval_actor_diag_250k/eval_both_seed0_4x200_actiondiag.json`.
+- Eval status: `EVAL_OK`.
+- Actor mean abs final increased `0.238568 -> 0.299021`.
+- Deterministic action abs final increased `0.218864 -> 0.270944`.
+- Final log_std moved down `-0.157116 -> -0.205270`.
+- Alpha declined `0.032585 -> 0.018768`.
+- Interpretation: actor mean / deterministic action drift amplifies in
+  absolute level by fresh 250k. This is not a runtime failure.
+
+Next recommended step: decision review before any fresh 500k diagnostic. Do not
+run fresh 500k, 750k, or 1M automatically.
 
 GPU 10k smoke:
 
@@ -457,6 +481,8 @@ Both-mode eval diagnostic:
 - Fresh 100k train-time diagnostics show the mean/action drift signal is already
   visible by 100k, so the next diagnostic should test whether the final-vs-
   interval gap widens by fresh 250k.
+- Fresh 250k train-time diagnostics show the drift amplifies in absolute level,
+  while log_std/std and alpha continue downward.
 - 1M replay can be around 2.5-2.7 GB raw before overhead.
 - SPS can vary due JIT compile and warmup.
 - No PPO comparison has been run.
@@ -465,13 +491,15 @@ Both-mode eval diagnostic:
 
 1. Do read-only status checks.
 2. Read this file and `reports/sac_integration/09_phase_summary_and_risks.md`.
-3. If the user approves continuing, run a fresh 250k actor drift diagnostic
-   using the committed train-time metrics.
-4. Do not draft or execute 750k/1M until deterministic actor mean drift is
-   understood or explicitly accepted by the user.
+3. If the user approves continuing, perform a decision review comparing fresh
+   500k trajectory completion, alpha/entropy hyperparameter review,
+   deterministic actor regularization / eval-policy design, and action/reward
+   component targeted analysis.
+4. Do not draft or execute fresh 500k/750k/1M until deterministic actor mean
+   drift is understood or explicitly accepted by the user.
 
-Do not start 750k or 1M automatically. Do not modify reward, action scale, Kp, domain
-randomization, fine-tuning, PPO, or RSL.
+Do not start fresh 500k, 750k, or 1M automatically. Do not modify reward,
+action scale, Kp, domain randomization, fine-tuning, PPO, or RSL.
 
 ## Completed 100k Sanity Command
 
@@ -527,12 +555,12 @@ Current HEAD should be at least 202c6a9 Add SAC actor drift train diagnostics
 unless newer report commits exist. GPU 10k smoke, deterministic
 eval smoke, GPU 50k sanity/eval, GPU 100k sanity/eval, GPU 250k sanity/eval,
 GPU 500k sanity/eval, 100k/250k/500k both-mode eval diagnostic, and full action
-distribution / reward-component diagnostic have passed. Fresh 100k actor drift
-diagnostic has also passed. 750k and 1M are not validated.
+distribution / reward-component diagnostic have passed. Fresh 100k and fresh
+250k actor drift diagnostics have also passed. 750k and 1M are not validated.
 
 Do not run training, eval, preflight, installs, downloads, or git commits unless
-explicitly asked. Next recommended work is fresh 250k actor drift diagnostic
-after user confirmation. Do not start 750k or 1M without a separate resource/
-stop-condition plan and user confirmation. Do not change reward, action_scale,
-Kp, domain randomization, fine-tuning, PPO, or RSL.
+explicitly asked. Next recommended work is a decision review before any fresh
+500k diagnostic. Do not start fresh 500k, 750k, or 1M without a separate
+resource/stop-condition plan and user confirmation. Do not change reward,
+action_scale, Kp, domain randomization, fine-tuning, PPO, or RSL.
 ```

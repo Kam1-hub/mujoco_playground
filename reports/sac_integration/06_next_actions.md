@@ -1,6 +1,6 @@
 # Next Actions
 
-Status: updated on 2026-05-13 after fresh 100k actor drift diagnostic.
+Status: updated on 2026-05-13 after fresh 250k actor drift diagnostic.
 
 ## Immediate State
 
@@ -82,6 +82,11 @@ Status: updated on 2026-05-13 after fresh 100k actor drift diagnostic.
 - Fresh 100k result: final actor mean magnitude and deterministic action
   magnitude are already above their interval averages, while final log_std/std
   are lower than interval averages.
+- Fresh 250k actor drift diagnostic passed with `TRAIN_OK`, checkpoint
+  `./logs/sac_lift_gpu_250k_actor_diag/sac_lift_step_249984.pkl`, checkpoint
+  readiness PASS, and 4 env x 200 action diagnostic eval `EVAL_OK`.
+- Fresh 250k result: actor mean abs and deterministic action abs increased
+  versus fresh 100k, while log_std/std and alpha continued downward.
 
 ## Completed WSL2 GPU Validation
 
@@ -248,15 +253,15 @@ or menagerie.
 
 Do not run 750k or 1M yet.
 
-Recommended next step is a fresh 250k actor drift diagnostic run, but only after
-explicit user confirmation:
+Recommended next step is a decision review, not automatic fresh 500k/750k/1M:
 
-1. Reuse the committed train-time actor drift metrics from `202c6a9`.
-2. Keep the same Route B parameters as prior 250k sanity unless the user
-   explicitly approves a diagnostic-specific change.
-3. Use a new logdir so the original 250k sanity is not overwritten.
-4. Run checkpoint readiness and a bounded action diagnostic eval after training.
-5. Do not tune reward, `action_scale`, or Kp yet.
+1. Compare fresh 100k and fresh 250k actor drift trajectories.
+2. Decide whether a fresh 500k diagnostic is needed to complete the trajectory.
+3. Consider alpha/entropy hyperparameter review before any longer diagnostic.
+4. Consider deterministic actor regularization / eval-policy design only as a
+   design discussion, not an immediate code change.
+5. Consider action/reward component targeted analysis.
+6. Do not tune reward, `action_scale`, or Kp yet.
 
 ## Completed Both-Mode Eval Diagnostic
 
@@ -349,17 +354,19 @@ CPU, stop and report the CUDA/JAX blocker.
 
 ## Recommended Next Step
 
-Do not automatically run 750k or 1M. The next useful step is a fresh 250k actor
-drift diagnostic, only after explicit user confirmation.
+Do not automatically run fresh 500k, 750k, or 1M. The next useful step is a
+decision review.
 
 Recommended diagnostic questions:
 
-1. Does the final-vs-interval actor mean gap widen by 250k?
-2. Does log_std/std continue to decline from the 100k diagnostic values?
-3. Does deterministic action magnitude keep moving above interval averages?
+1. Is a fresh 500k diagnostic worth the runtime cost, or is the 100k/250k trend
+   already sufficient?
+2. Should alpha/entropy behavior be reviewed before more training?
+3. Should deterministic actor regularization or an eval-policy design be
+   discussed before changing any code?
 4. Do reward components continue to implicate angular velocity, orientation, or
    stand-still penalties?
-5. Does checkpoint readiness and bounded action diagnostic eval remain clean?
+5. What stop conditions would apply if a fresh 500k diagnostic is approved?
 
 Do not jump into 750k or 1M from this report update.
 
@@ -375,9 +382,9 @@ Do not jump into 750k or 1M from this report update.
 
 ## Recommended Follow-Ups After Deterministic Eval Smoke
 
-1. Run fresh 250k actor drift diagnostic only after user confirmation.
+1. Run a decision review before any fresh 500k diagnostic.
 2. Keep eval scales bounded unless the user asks for a benchmark.
-3. Do not start 750k or 1M automatically from this report update.
+3. Do not start fresh 500k, 750k, or 1M automatically from this report update.
 4. Compare against PPO baseline only after SAC smoke plus eval have clean
    reports.
 

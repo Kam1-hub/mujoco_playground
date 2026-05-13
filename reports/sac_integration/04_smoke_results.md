@@ -1,6 +1,90 @@
 # Smoke Results
 
-Status: updated on 2026-05-13 after fresh 100k actor drift diagnostic.
+Status: updated on 2026-05-13 after fresh 250k actor drift diagnostic.
+
+## 2026-05-13 Fresh 250k Actor Drift Diagnostic
+
+- Scope: fresh diagnostic training run plus small eval-only action diagnostic.
+- Status: `TRAIN_OK`
+- Checkpoint:
+  `./logs/sac_lift_gpu_250k_actor_diag/sac_lift_step_249984.pkl`
+- Checkpoint readiness: PASS
+- Eval JSON:
+  `./logs/sac_eval_actor_diag_250k/eval_both_seed0_4x200_actiondiag.json`
+- Eval status: `EVAL_OK`
+- JSON sanity: PASS
+- No fresh 500k, 750k, or 1M run was executed.
+- No code or report changes were made during the diagnostic run.
+
+Training metrics:
+
+- `env_steps`: `249984`
+- `gradient_steps`: `3892`
+- `wall_time`: `140.85426465800265`
+- `sps`: `1774.7705446261555`
+- `actor_loss`: `-5.850378513336182`
+- `critic_loss`: `0.03159185126423836`
+- `alpha`: `0.01876842975616455`
+- `log_alpha`: `-3.975579023361206`
+- `alpha_loss`: `0.587762713432312`
+- `alpha_log_prob`: `-16.816566467285156`
+- `q`: `5.547477722167969`
+- `target_q`: `5.520053863525391`
+- `reward_mean`: `-0.12411123514175415`
+- `done_fraction`: `0.01953125`
+- `discount_mean`: `0.98046875`
+
+Actor drift metrics:
+
+| Metric | Final | Interval Avg |
+|---|---:|---:|
+| actor policy mean abs mean | 0.2990209758281708 | 0.233315885204818 |
+| actor policy mean abs max | 1.9897916316986084 | 1.739523811275398 |
+| actor log_std mean | -0.20526975393295288 | -0.16304866696410225 |
+| actor log_std min | -0.7766156792640686 | -0.6616444636331555 |
+| actor log_std max | 0.07799282670021057 | 0.1512706000589979 |
+| actor policy std mean | 0.8162157535552979 | 0.8529925538726603 |
+| sampled action abs mean | 0.535484254360199 | 0.5281302615586679 |
+| sampled action saturation 0.95 | 0.04431573301553726 | 0.04565783552844594 |
+| deterministic action abs mean | 0.2709442377090454 | 0.21555377979248855 |
+| deterministic action saturation 0.95 | 0.0005387931014411151 | 0.00023288404075520971 |
+
+Fresh 100k comparison:
+
+- Actor mean abs increased: final `0.238568 -> 0.299021`, interval
+  `0.170754 -> 0.233316`.
+- Deterministic action abs increased: final `0.218864 -> 0.270944`, interval
+  `0.163467 -> 0.215554`.
+- Log_std/std continued downward: final log_std `-0.157116 -> -0.205270`,
+  final std `0.857329 -> 0.816216`.
+- Alpha declined: `0.032585 -> 0.018768`.
+- Interpretation: drift amplifies in absolute level by fresh 250k.
+
+Small action diagnostic eval:
+
+| Mode | Reward Mean | Reward SD | Reward Min | Reward Max | Action Abs | Sat 0.95 | Mean Abs | LogStd Mean | Std Mean |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| deterministic | -4.01785135269165 | 0.34408432245254517 | -4.546696662902832 | -3.588685989379883 | 0.18537074327468872 | 0.0 | 0.19577054679393768 | -0.13236531615257263 | 0.8772842288017273 |
+| stochastic | -5.697283744812012 | 0.1435307413339615 | -5.888537883758545 | -5.491363525390625 | 0.5233082175254822 | 0.04060344770550728 | 0.269175261259079 | -0.20079341530799866 | 0.8196967244148254 |
+
+Reward component highlights:
+
+- Deterministic negatives: `reward/termination -100`,
+  `reward/orientation -47.33`, `reward/ang_vel_xy -44.81`,
+  `reward/joint_deviation_hip -31.37`, `reward/feet_slip -14.83`.
+- Deterministic positives: `reward/feet_phase 25.82`,
+  `reward/tracking_ang_vel 20.20`, `reward/tracking_lin_vel 2.90`.
+- Stochastic negatives: `reward/ang_vel_xy -108.26`,
+  `reward/termination -100`, `reward/orientation -46.87`,
+  `reward/joint_deviation_hip -35.09`, `reward/feet_slip -10.07`.
+- Stochastic positives: `reward/feet_phase 27.63`,
+  `reward/tracking_lin_vel 4.17`, `reward/tracking_ang_vel 3.64`.
+
+Warnings: known non-fatal WSL2 CUDA driver version warning, known non-fatal JAX
+cast overflow warning, and sandbox `snap-confine` capability errors on first
+`uv` attempts. The same commands were rerun externally with unchanged
+parameters. No traceback, NaN, OOM, fatal CUDA error, checkpoint failure, or
+eval failure was observed.
 
 ## 2026-05-13 Fresh 100k Actor Drift Diagnostic
 

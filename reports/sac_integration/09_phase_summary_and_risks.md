@@ -42,6 +42,7 @@ Runtime artifacts are local and ignored. Do not commit `logs/`, `.venv/`,
 | Both-mode eval diagnostic | PASS | `reports/sac_integration/10_both_mode_eval_diagnostic.md` |
 | Full action distribution diagnostic | PASS | `reports/sac_integration/10_action_distribution_diagnostics.md` |
 | Fresh 100k actor drift train diagnostic | PASS | `reports/sac_integration/11_actor_drift_train_diagnostic.md` |
+| Fresh 250k actor drift train diagnostic | PASS | `reports/sac_integration/11_actor_drift_train_diagnostic.md` |
 | 1M training | NOT VALIDATED | Requires explicit user confirmation and resource/stop plan |
 
 ## Completed Outcomes
@@ -70,6 +71,9 @@ Runtime artifacts are local and ignored. Do not commit `logs/`, `.venv/`,
   diagnostic run. The run produced checkpoint
   `./logs/sac_lift_gpu_100k_actor_diag/sac_lift_step_99968.pkl`, passed
   checkpoint readiness, and passed a 4 env x 200 action diagnostic eval.
+- Validated a fresh 250k actor drift diagnostic run. The run produced
+  checkpoint `./logs/sac_lift_gpu_250k_actor_diag/sac_lift_step_249984.pkl`,
+  passed checkpoint readiness, and passed a 4 env x 200 action diagnostic eval.
 
 ### Full Action Diagnostic Summary
 
@@ -141,6 +145,53 @@ Interpretation: fresh 100k already shows actor mean drift forming. Final actor
 mean magnitude and deterministic action magnitude are higher than interval
 averages, while final log_std/std are lower. This supports the early-drift
 hypothesis and is not a runtime failure.
+
+### Fresh 250k Actor Drift Diagnostic Summary
+
+Training:
+
+- Checkpoint:
+  `./logs/sac_lift_gpu_250k_actor_diag/sac_lift_step_249984.pkl`
+- Checkpoint readiness: PASS
+- `env_steps`: `249984`
+- `gradient_steps`: `3892`
+- `wall_time`: `140.85426465800265`
+- `sps`: `1774.7705446261555`
+- `alpha`: `0.01876842975616455`
+- `log_alpha`: `-3.975579023361206`
+- `q`: `5.547477722167969`
+- `target_q`: `5.520053863525391`
+
+Actor drift evidence:
+
+| Metric | Final | Interval Avg |
+|---|---:|---:|
+| actor policy mean abs mean | 0.2990209758281708 | 0.233315885204818 |
+| actor policy mean abs max | 1.9897916316986084 | 1.739523811275398 |
+| actor log_std mean | -0.20526975393295288 | -0.16304866696410225 |
+| actor policy std mean | 0.8162157535552979 | 0.8529925538726603 |
+| deterministic action abs mean | 0.2709442377090454 | 0.21555377979248855 |
+| sampled action abs mean | 0.535484254360199 | 0.5281302615586679 |
+
+Fresh 100k comparison:
+
+- Actor mean abs final: `0.238568 -> 0.299021`.
+- Deterministic action abs final: `0.218864 -> 0.270944`.
+- Final log_std: `-0.157116 -> -0.205270`.
+- Final std: `0.857329 -> 0.816216`.
+- Alpha: `0.032585 -> 0.018768`.
+
+Small action diagnostic eval:
+
+- JSON:
+  `./logs/sac_eval_actor_diag_250k/eval_both_seed0_4x200_actiondiag.json`
+- Status: `EVAL_OK`
+- Deterministic reward mean: `-4.01785135269165`
+- Stochastic reward mean: `-5.697283744812012`
+- NaN flags: `action_nan=false`, `reward_nan=false`, `obs_nan=false`
+
+Interpretation: drift amplifies in absolute level by fresh 250k. This is not a
+runtime failure.
 
 ## Key Metrics
 
@@ -438,8 +489,8 @@ It is reasonable to claim:
 - Both-mode eval shows the 500k quality concern is concentrated in the
   deterministic `tanh(mean)` path; sampled stochastic eval does not show the
   same degradation.
-- Fresh 100k train-time diagnostics show actor mean drift is already visible by
-  100k, before any longer fresh diagnostic run.
+- Fresh 100k and fresh 250k train-time diagnostics show actor mean drift is
+  already visible by 100k and amplifies in absolute level by 250k.
 - Runtime artifacts are ignored and have not been committed.
 
 It is not yet reasonable to claim:
@@ -463,9 +514,9 @@ It is not yet reasonable to claim:
 - Both-mode eval narrowed the quality issue: deterministic `tanh(mean)` reward
   degrades while sampled stochastic reward improves slightly, so the next risk
   area is actor mean / action distribution behavior.
-- Fresh 100k train-time diagnostics support that the actor mean / deterministic
-  action drift starts early; 250k should be a targeted diagnostic only, not a
-  step toward 750k/1M.
+- Fresh 100k/250k train-time diagnostics support that the actor mean /
+  deterministic action drift starts early and grows in absolute level. The next
+  step should be a decision review, not an automatic fresh 500k/750k/1M run.
 - Eval reward is still low and should be treated as a smoke signal, not a
   performance benchmark.
 - Truncation handling is currently synthesized as zero when absent. That passed
@@ -549,11 +600,13 @@ Stop immediately and report if any of these occur:
 
 ## 1M Decision And Readiness Plan
 
-Do not automatically jump to 750k or 1M from this report update. The next
-recommended step is fresh 250k actor drift diagnostic, only after user
-confirmation. A later 1M review should consider whether alpha floor, target
-entropy, log-alpha dynamics, or deterministic mean action drift need analysis
-before a longer run. Consider 1M only with:
+Do not automatically jump to fresh 500k, 750k, or 1M from this report update.
+The next recommended step is a decision review comparing fresh 500k trajectory
+completion, alpha/entropy hyperparameter review, deterministic actor
+regularization / eval-policy design, and action/reward component targeted
+analysis. A later 1M review should consider whether alpha floor, target entropy,
+log-alpha dynamics, or deterministic mean action drift need analysis before a
+longer run. Consider 1M only with:
 
 - explicit resource budget
 - fresh logdir and checkpoint path

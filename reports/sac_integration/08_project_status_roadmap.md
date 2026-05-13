@@ -1,6 +1,6 @@
 # G1 SAC Integration Status And Roadmap
 
-Status: updated on 2026-05-13 after fresh 100k actor drift diagnostic.
+Status: updated on 2026-05-13 after fresh 250k actor drift diagnostic.
 
 ## 1. Mission
 
@@ -179,12 +179,13 @@ Validation ladder:
 15. Both-mode deterministic/stochastic eval diagnostic
 16. Full action distribution / reward-component eval diagnostic
 17. Fresh 100k train-time actor drift diagnostic
-18. 1M training
+18. Fresh 250k train-time actor drift diagnostic
+19. 1M training
 
 Status:
 
-- Steps 1 through 17 are complete.
-- Step 18 remains `NOT VALIDATED` and requires separate user confirmation and
+- Steps 1 through 18 are complete.
+- Step 19 remains `NOT VALIDATED` and requires separate user confirmation and
   an explicit resource/stop-condition plan.
 
 ### Phase 6: Reports, Commits, Migration Handoff
@@ -307,6 +308,14 @@ WSL2 target workspace state:
   Final actor mean abs `0.238568` exceeded interval avg `0.170754`, final
   deterministic action abs `0.218864` exceeded interval avg `0.163467`, and
   final log_std mean `-0.157116` was below interval avg `-0.136390`.
+- Fresh 250k train-time actor drift diagnostic:
+  `TRAIN_OK`, checkpoint
+  `./logs/sac_lift_gpu_250k_actor_diag/sac_lift_step_249984.pkl`, checkpoint
+  readiness PASS, and 4 env x 200 action diagnostic eval `EVAL_OK`.
+  Actor mean abs increased from fresh 100k `0.238568 -> 0.299021`,
+  deterministic action abs increased `0.218864 -> 0.270944`, final log_std
+  moved down `-0.157116 -> -0.205270`, and alpha declined
+  `0.032585 -> 0.018768`.
 - Latest diagnostic report:
   `reports/sac_integration/11_actor_drift_train_diagnostic.md`.
 - Logs, checkpoints, `.venv`, and menagerie remain ignored and are not
@@ -544,7 +553,7 @@ json: ./logs/sac_eval_smoke/eval_4x200.json
 
 After report review, only then consider with explicit user confirmation:
 
-- fresh 250k actor drift diagnostic run
+- decision review before any fresh 500k actor drift diagnostic
 - 1M decision/readiness review only after the deterministic policy issue is
   understood
 - PPO comparison
@@ -553,7 +562,8 @@ Do not jump directly to 1M training. The 4x200 eval is a smoke, not a full
 benchmark. The 50k, 100k, 250k, and 500k sanity runs are now validated. The
 both-mode diagnostic shows deterministic `tanh(mean)` degradation while
 sampled stochastic eval does not degrade. Fresh 100k train-time diagnostics now
-show actor mean drift forming early. 1M remains `NOT VALIDATED`.
+show actor mean drift forming early, and fresh 250k shows the drift amplifies in
+absolute level. 1M remains `NOT VALIDATED`.
 
 ## 11. 50k Sanity Result
 
@@ -922,9 +932,57 @@ action/reward/obs NaN: false/false/false
 ```
 
 Interpretation: fresh 100k supports the early actor mean drift hypothesis. This
-is not a runtime failure. The next recommended run is fresh 250k actor drift
-diagnostic after user confirmation; do not run 750k or 1M yet.
+is not a runtime failure.
 
-## 16. Current Position In One Sentence
+## 16. Fresh 250k Actor Drift Diagnostic
 
-SAC Route B is implemented; CPU tiny smoke, WSL2 GPU preflight, Route B GPU 10k smoke, normalizer-ready checkpoint validation, bounded deterministic eval smoke, 50k sanity/eval, 100k sanity/eval, 250k sanity/eval, 500k sanity/eval, both-mode eval diagnostic, full action diagnostic, and fresh 100k train-time actor drift diagnostic have passed; 1M, full eval benchmarking, domain randomization, and fine-tuning remain `NOT VALIDATED`.
+Status: `TRAIN_OK`
+
+```text
+checkpoint: ./logs/sac_lift_gpu_250k_actor_diag/sac_lift_step_249984.pkl
+checkpoint readiness: PASS
+env_steps: 249984
+gradient_steps: 3892
+wall_time: 140.85426465800265
+sps: 1774.7705446261555
+alpha: 0.01876842975616455
+log_alpha: -3.975579023361206
+q: 5.547477722167969
+target_q: 5.520053863525391
+```
+
+Actor drift evidence:
+
+```text
+actor_policy_mean_abs_mean final / interval: 0.2990209758281708 / 0.233315885204818
+deterministic_action_abs_mean final / interval: 0.2709442377090454 / 0.21555377979248855
+actor_log_std_mean final / interval: -0.20526975393295288 / -0.16304866696410225
+actor_policy_std_mean final / interval: 0.8162157535552979 / 0.8529925538726603
+```
+
+Fresh 100k comparison:
+
+```text
+actor mean abs final: 0.238568 -> 0.299021
+deterministic action abs final: 0.218864 -> 0.270944
+log_std final: -0.157116 -> -0.205270
+alpha: 0.032585 -> 0.018768
+```
+
+Small action diagnostic eval:
+
+```text
+json: ./logs/sac_eval_actor_diag_250k/eval_both_seed0_4x200_actiondiag.json
+status: EVAL_OK
+deterministic reward mean: -4.01785135269165
+stochastic reward mean: -5.697283744812012
+action/reward/obs NaN: false/false/false
+```
+
+Interpretation: drift amplifies in absolute level by fresh 250k. This is not a
+runtime failure. The next recommended step is a decision review, not automatic
+fresh 500k, 750k, or 1M.
+
+## 17. Current Position In One Sentence
+
+SAC Route B is implemented; CPU tiny smoke, WSL2 GPU preflight, Route B GPU 10k smoke, normalizer-ready checkpoint validation, bounded deterministic eval smoke, 50k sanity/eval, 100k sanity/eval, 250k sanity/eval, 500k sanity/eval, both-mode eval diagnostic, full action diagnostic, and fresh 100k/250k train-time actor drift diagnostics have passed; 1M, full eval benchmarking, domain randomization, and fine-tuning remain `NOT VALIDATED`.
