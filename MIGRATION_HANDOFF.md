@@ -342,6 +342,7 @@ Validated:
 
 Not validated:
 
+- 750k / 1M status: NOT VALIDATED.
 - fresh 500k actor drift diagnostic.
 - 750k training.
 - 1M training.
