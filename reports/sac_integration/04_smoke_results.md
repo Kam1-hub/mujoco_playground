@@ -1,6 +1,40 @@
 # Smoke Results
 
-Status: updated on 2026-05-12 after both-mode eval diagnostic.
+Status: updated on 2026-05-13 after full action diagnostic eval.
+
+## 2026-05-13 Full Action Diagnostic Eval
+
+- Scope: eval-only; no training and no SAC code modification.
+- Script class: `scripts/eval_sac_checkpoint.py --policy_mode both --action_diagnostics --reward_components`.
+- Checkpoints: 100k, 250k, and 500k sanity checkpoints.
+- Checkpoint readiness: PASS for all three checkpoints.
+- Seeds: `0..4`.
+- Eval scale: `num_eval_envs=16`, `episode_length=1000`.
+- Output directory: `./logs/sac_eval_action_diag_full/`.
+- JSON outputs present: `15`.
+- Status: all deterministic and stochastic evals returned `EVAL_OK`.
+- NaN: all action/reward/obs NaN flags were false.
+
+Deterministic aggregate:
+
+| Scale | Reward Avg | Reward SD | Action Abs | Mean Abs | LogStd Mean | Std Mean | Det Sat |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| 100k | -4.2130 | 0.3669 | 0.1823 | 0.1950 | -0.1077 | 0.8996 | 0.0000004 |
+| 250k | -4.4792 | 0.3633 | 0.2147 | 0.2288 | -0.1415 | 0.8692 | 0.0000 |
+| 500k | -4.8204 | 0.3151 | 0.3029 | 0.3468 | -0.2909 | 0.7519 | 0.00113 |
+
+Stochastic aggregate:
+
+| Scale | Reward Avg | Reward SD | Action Abs | Mean Abs | LogStd Mean | Std Mean | Sto Sat |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| 100k | -6.4741 | 0.5045 | 0.5274 | 0.2240 | -0.1562 | 0.8578 | 0.0445 |
+| 250k | -6.2374 | 0.4256 | 0.5236 | 0.2712 | -0.1939 | 0.8254 | 0.0415 |
+| 500k | -5.8911 | 0.5841 | 0.5221 | 0.3954 | -0.3288 | 0.7256 | 0.0413 |
+
+Interpretation: deterministic eval degradation is not a runtime failure and not
+stochastic policy collapse. The main risk is deterministic deployment/eval
+degradation driven by actor mean/action magnitude drift. Full details are in
+`reports/sac_integration/10_action_distribution_diagnostics.md`.
 
 ## 2026-05-12 WSL2 GPU Result
 

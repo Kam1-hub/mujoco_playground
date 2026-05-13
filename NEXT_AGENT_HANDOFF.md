@@ -18,8 +18,8 @@ domain randomization, or fine-tuning as part of the current validation phase.
 
 - Path: `/home/admin/projects/mujoco_playground/g1_sac_dev`
 - Branch: `sac-integration`
-- Current committed diagnostic baseline before this report update:
-  `926a14f Add SAC alpha entropy diagnostics`
+- Current action diagnostic patch baseline before this report update:
+  `8ff4f1d Add SAC action distribution eval diagnostics`
 - Remote: `origin https://github.com/Kam1-hub/mujoco_playground.git`
 - Last known pushed branch: `sac-integration`
 
@@ -96,7 +96,9 @@ SAC Route B code lives in local files and should not disturb PPO/RSL:
 - `scripts/check_sac_checkpoint.py`: checkpoint schema and eval readiness
   checker.
 - `scripts/eval_sac_checkpoint.py`: bounded checkpoint eval with
-  `--policy_mode deterministic|stochastic|both`.
+  `--policy_mode deterministic|stochastic|both`, optional
+  `--action_diagnostics`, optional `--reward_components`, and
+  `--top_k_actions`.
 - `g1_env/config/sac_params.py`: SAC Route B config defaults.
 
 ## Entry Points
@@ -160,6 +162,8 @@ Current validated ladder:
 - 500k checkpoint eval readiness: PASS.
 - 500k bounded deterministic eval: PASS.
 - 100k/250k/500k both-mode deterministic/stochastic eval diagnostic: PASS.
+- 100k/250k/500k full action distribution / reward-component eval diagnostic:
+  PASS.
 
 Still not validated:
 
@@ -207,6 +211,12 @@ All paths below are runtime artifacts and should remain ignored:
   - 100k/250k/500k eval-only diagnostic JSONs using
     `--policy_mode both`, seeds `0..4`, `num_eval_envs=16`, and
     `episode_length=1000`.
+- `./logs/sac_eval_action_diag_full/`
+  - 100k/250k/500k eval-only diagnostic JSONs using `--policy_mode both`,
+    `--action_diagnostics`, and `--reward_components`.
+  - Seeds `0..4`, `num_eval_envs=16`, `episode_length=1000`.
+  - Contains `15` JSON outputs. All evals returned `EVAL_OK`; all
+    action/reward/obs NaN flags were false.
 - `./logs/sac_lift_schema_dry_run/sac_lift_step_0.pkl`
   - Dry-run schema validation artifact, if still present.
 
@@ -225,6 +235,28 @@ git check-ignore -v logs .venv g1_env/external_deps/mujoco_menagerie || true
 ```
 
 ## Key Results
+
+Full action distribution diagnostic:
+
+- Scope: eval-only; no training and no SAC code change during the diagnostic.
+- Output directory: `./logs/sac_eval_action_diag_full/`
+- JSON count: `15`
+- Checkpoints: 100k, 250k, 500k
+- Checkpoint readiness: PASS for all three checkpoints
+- Deterministic reward average: `-4.2130 -> -4.4792 -> -4.8204`
+- Deterministic action abs: `0.1823 -> 0.2147 -> 0.3029`
+- Deterministic policy mean abs: `0.1950 -> 0.2288 -> 0.3468`
+- Deterministic policy std mean: `0.8996 -> 0.8692 -> 0.7519`
+- Stochastic reward average: `-6.4741 -> -6.2374 -> -5.8911`
+- Stochastic policy std mean: `0.8578 -> 0.8254 -> 0.7256`
+- Deterministic degradation aligns mainly with `reward/ang_vel_xy`,
+  `reward/stand_still`, and `reward/orientation`.
+- Conclusion: not a runtime failure and not stochastic policy collapse. The key
+  risk is deterministic deployment/eval degradation driven by actor mean/action
+  magnitude drift, with entropy/alpha dynamics likely upstream.
+
+Next recommended step: targeted actor mean drift / alpha entropy diagnostic
+design. Do not run 750k or 1M yet.
 
 GPU 10k smoke:
 
@@ -395,6 +427,9 @@ Both-mode eval diagnostic:
   clean runtime sanity PASS.
 - Both-mode eval suggests deterministic actor mean behavior is the immediate
   issue; stochastic sampled behavior does not degrade in the same way.
+- Full action diagnostic confirms the issue is tied to deterministic actor
+  mean/action magnitude drift and specific reward components, mainly
+  `reward/ang_vel_xy`, `reward/stand_still`, and `reward/orientation`.
 - 1M replay can be around 2.5-2.7 GB raw before overhead.
 - SPS can vary due JIT compile and warmup.
 - No PPO comparison has been run.
@@ -403,9 +438,9 @@ Both-mode eval diagnostic:
 
 1. Do read-only status checks.
 2. Read this file and `reports/sac_integration/09_phase_summary_and_risks.md`.
-3. If the user approves continuing, draft actor mean / action distribution /
-   reward-component diagnostic design.
-4. Do not draft or execute 750k/1M until the deterministic actor degradation is
+3. If the user approves continuing, draft a targeted actor mean drift / alpha
+   entropy diagnostic design based on the full action diagnostic results.
+4. Do not draft or execute 750k/1M until deterministic actor mean drift is
    understood or explicitly accepted by the user.
 
 Do not start 750k or 1M automatically. Do not modify reward, action scale, Kp, domain
@@ -461,10 +496,11 @@ status checks: pwd, git status --short --branch, git log --oneline -5,
 git remote -v, and git check-ignore -v logs .venv
 g1_env/external_deps/mujoco_menagerie || true.
 
-Current HEAD should be at least 926a14f Add SAC alpha entropy diagnostics unless
-newer report commits exist. GPU 10k smoke, deterministic eval smoke, GPU 50k
-sanity/eval, GPU 100k sanity/eval, GPU 250k sanity/eval, GPU 500k sanity/eval,
-and 100k/250k/500k both-mode eval diagnostic have passed. 750k and 1M are not
+Current HEAD should be at least 8ff4f1d Add SAC action distribution eval
+diagnostics unless newer report commits exist. GPU 10k smoke, deterministic
+eval smoke, GPU 50k sanity/eval, GPU 100k sanity/eval, GPU 250k sanity/eval,
+GPU 500k sanity/eval, 100k/250k/500k both-mode eval diagnostic, and full action
+distribution / reward-component diagnostic have passed. 750k and 1M are not
 validated.
 
 Do not run training, eval, preflight, installs, downloads, or git commits unless

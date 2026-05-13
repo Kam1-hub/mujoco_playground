@@ -16,6 +16,7 @@ Required reports:
 - `08_project_status_roadmap.md`
 - `09_phase_summary_and_risks.md`
 - `10_both_mode_eval_diagnostic.md`
+- `10_action_distribution_diagnostics.md`
 
 Repo-root continuation handoff:
 

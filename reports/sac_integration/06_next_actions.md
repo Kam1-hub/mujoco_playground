@@ -1,6 +1,6 @@
 # Next Actions
 
-Status: updated on 2026-05-12 after both-mode eval diagnostic.
+Status: updated on 2026-05-13 after full action diagnostic eval.
 
 ## Immediate State
 
@@ -66,6 +66,14 @@ Status: updated on 2026-05-12 after both-mode eval diagnostic.
 - Both-mode diagnostic result: deterministic `tanh(mean)` reward degrades
   across 100k/250k/500k, while sampled stochastic reward does not show the same
   degradation.
+- Full action diagnostic eval passed for 100k, 250k, and 500k checkpoints with
+  `--policy_mode both --action_diagnostics --reward_components`.
+- Full action diagnostic output: `./logs/sac_eval_action_diag_full/`, `15`
+  ignored JSON files.
+- Full action diagnostic result: deterministic action magnitude and actor mean
+  magnitude increase with scale, policy std narrows, and deterministic reward
+  degradation aligns mainly with angular-velocity, stand-still, and orientation
+  reward components.
 
 ## Completed WSL2 GPU Validation
 
@@ -227,6 +235,18 @@ Bounded deterministic eval after 500k:
 
 Artifacts remain ignored under `logs`; do not commit logs, checkpoints, `.venv`,
 or menagerie.
+
+## Current Recommended Next Step
+
+Do not run 750k or 1M yet.
+
+Recommended next step is targeted diagnostic/design, not training:
+
+1. Inspect actor mean drift by action dimension and reward components.
+2. Compare deterministic vs stochastic behavior around affected components.
+3. Review target entropy, alpha loss, and log_std dynamics.
+4. Consider instrumentation or controlled ablation before any longer run.
+5. Do not tune reward, `action_scale`, or Kp yet.
 
 ## Completed Both-Mode Eval Diagnostic
 

@@ -1,6 +1,6 @@
 # Phase Summary and Risks
 
-Date: 2026-05-12
+Date: 2026-05-13
 
 This report freezes the current SAC Route B validation state so a new agent can
 continue without relying on chat history.
@@ -9,8 +9,8 @@ continue without relying on chat history.
 
 - Path: `/home/admin/projects/mujoco_playground/g1_sac_dev`
 - Branch: `sac-integration`
-- Current committed diagnostic baseline before this report update:
-  `926a14f Add SAC alpha entropy diagnostics`
+- Current action diagnostic patch baseline before this report update:
+  `8ff4f1d Add SAC action distribution eval diagnostics`
 - Remote: `origin https://github.com/Kam1-hub/mujoco_playground.git`
 - External menagerie commit: `1b86ece576591213e2b666ebf59508454200ca97`
 
@@ -40,6 +40,7 @@ Runtime artifacts are local and ignored. Do not commit `logs/`, `.venv/`,
 | 500k checkpoint eval readiness | PASS | `scripts/check_sac_checkpoint.py --require_eval_ready` |
 | 500k bounded deterministic eval | PASS | `./logs/sac_eval_500k/eval_16x1000.json` |
 | Both-mode eval diagnostic | PASS | `reports/sac_integration/10_both_mode_eval_diagnostic.md` |
+| Full action distribution diagnostic | PASS | `reports/sac_integration/10_action_distribution_diagnostics.md` |
 | 1M training | NOT VALIDATED | Requires explicit user confirmation and resource/stop plan |
 
 ## Completed Outcomes
@@ -60,6 +61,40 @@ Runtime artifacts are local and ignored. Do not commit `logs/`, `.venv/`,
 - Verified 500k checkpoint readiness and bounded deterministic eval.
 - Synced alpha/entropy diagnostics and validated `--policy_mode both` eval-only
   diagnostic on 100k, 250k, and 500k checkpoints.
+- Validated full action distribution / reward-component eval diagnostic on
+  100k, 250k, and 500k checkpoints. All 15 JSON outputs are present under
+  ignored `./logs/sac_eval_action_diag_full/`; all evals returned `EVAL_OK` and
+  all action/reward/obs NaN flags were false.
+
+### Full Action Diagnostic Summary
+
+Deterministic aggregate:
+
+| Scale | Reward Avg | Action Abs | Mean Abs | LogStd Mean | Std Mean | Det Sat |
+|---|---:|---:|---:|---:|---:|---:|
+| 100k | -4.2130 | 0.1823 | 0.1950 | -0.1077 | 0.8996 | 0.0000004 |
+| 250k | -4.4792 | 0.2147 | 0.2288 | -0.1415 | 0.8692 | 0.0000 |
+| 500k | -4.8204 | 0.3029 | 0.3468 | -0.2909 | 0.7519 | 0.00113 |
+
+Stochastic aggregate:
+
+| Scale | Reward Avg | Action Abs | Mean Abs | LogStd Mean | Std Mean | Sto Sat |
+|---|---:|---:|---:|---:|---:|---:|
+| 100k | -6.4741 | 0.5274 | 0.2240 | -0.1562 | 0.8578 | 0.0445 |
+| 250k | -6.2374 | 0.5236 | 0.2712 | -0.1939 | 0.8254 | 0.0415 |
+| 500k | -5.8911 | 0.5221 | 0.3954 | -0.3288 | 0.7256 | 0.0413 |
+
+Interpretation:
+
+- This is not a runtime failure.
+- This is not stochastic policy collapse.
+- The key risk is deterministic deployment/eval degradation driven by actor
+  mean/action magnitude drift.
+- Entropy/alpha dynamics remain likely upstream because alpha/log_std/std
+  decrease while policy mean/action magnitude increase.
+- Deterministic degradation aligns mainly with `reward/ang_vel_xy`,
+  `reward/stand_still`, and `reward/orientation`.
+- 750k and 1M should remain paused until actor mean drift is understood.
 
 ## Key Metrics
 

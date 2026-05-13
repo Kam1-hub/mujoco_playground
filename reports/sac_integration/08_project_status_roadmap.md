@@ -1,6 +1,6 @@
 # G1 SAC Integration Status And Roadmap
 
-Status: updated on 2026-05-12 after both-mode eval diagnostic.
+Status: updated on 2026-05-13 after full action diagnostic eval.
 
 ## 1. Mission
 
@@ -177,12 +177,13 @@ Validation ladder:
 13. 250k sanity run
 14. 500k sanity run
 15. Both-mode deterministic/stochastic eval diagnostic
-16. 1M training
+16. Full action distribution / reward-component eval diagnostic
+17. 1M training
 
 Status:
 
-- Steps 1 through 15 are complete.
-- Step 16 remains `NOT VALIDATED` and requires separate user confirmation and
+- Steps 1 through 16 are complete.
+- Step 17 remains `NOT VALIDATED` and requires separate user confirmation and
   an explicit resource/stop-condition plan.
 
 ### Phase 6: Reports, Commits, Migration Handoff
@@ -207,6 +208,8 @@ Current GitHub branch:
 Key commits:
 
 ```text
+8ff4f1d Add SAC action distribution eval diagnostics
+9cb5112 Record SAC both-mode eval diagnostics
 926a14f Add SAC alpha entropy diagnostics
 87bca63 Record SAC 500k sanity results
 99da67d Record SAC 250k sanity results
@@ -235,8 +238,8 @@ WSL2 target workspace state:
 
 - Path: `/home/admin/projects/mujoco_playground/g1_sac_dev`
 - Branch: `sac-integration...origin/sac-integration`
-- Latest committed diagnostic baseline before this report update:
-  `926a14f Add SAC alpha entropy diagnostics`
+- Latest action diagnostic patch baseline before this report update:
+  `8ff4f1d Add SAC action distribution eval diagnostics`
 - Menagerie: present at `1b86ece576591213e2b666ebf59508454200ca97`
 - Python env: present under ignored `.venv`
 - CUDA JAX: validated, backend `gpu`, device `cuda:0`
@@ -288,8 +291,15 @@ WSL2 target workspace state:
   and 500k checkpoints with seeds `0..4`. Deterministic `tanh(mean)` reward
   degraded from `-4.2218` to `-4.8476`, while sampled stochastic reward did
   not show the same degradation and improved from `-6.4616` to `-5.9091`.
+- Full action distribution / reward-component diagnostic:
+  `scripts/eval_sac_checkpoint.py --policy_mode both --action_diagnostics --reward_components`
+  passed for 100k, 250k, and 500k checkpoints with seeds `0..4`.
+  All 15 JSON outputs are present under ignored
+  `./logs/sac_eval_action_diag_full/`. Deterministic degradation is tied to
+  actor mean/action magnitude drift and component-specific penalties, not
+  stochastic policy collapse.
 - Latest diagnostic report:
-  `reports/sac_integration/10_both_mode_eval_diagnostic.md`.
+  `reports/sac_integration/10_action_distribution_diagnostics.md`.
 - Logs, checkpoints, `.venv`, and menagerie remain ignored and are not
   committed.
 
