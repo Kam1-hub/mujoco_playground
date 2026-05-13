@@ -38,6 +38,16 @@ DIAGNOSTIC_METRIC_NAMES = (
     "truncation_fraction",
     "q",
     "target_q",
+    "actor_policy_mean_abs_mean",
+    "actor_policy_mean_abs_max",
+    "actor_log_std_mean",
+    "actor_log_std_min",
+    "actor_log_std_max",
+    "actor_policy_std_mean",
+    "sampled_action_abs_mean",
+    "sampled_action_saturation_fraction_095",
+    "deterministic_action_abs_mean",
+    "deterministic_action_saturation_fraction_095",
 )
 
 

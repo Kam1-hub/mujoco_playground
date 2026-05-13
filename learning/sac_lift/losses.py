@@ -7,6 +7,7 @@ from typing import Any
 import jax
 import jax.numpy as jnp
 
+from learning.sac_lift import distributions
 from learning.sac_lift import networks
 from learning.sac_lift import normalizer
 from learning.sac_lift.types import Transition
@@ -76,9 +77,10 @@ def actor_loss(
   value_obs = normalizer.normalize(
       value_normalizer, batch.value_obs, normalize_observations
   )
-  action, log_prob = networks.sample_action(
-      sac_networks, policy_params, policy_obs, key
-  )
+  mean, log_std = sac_networks.actor.apply(policy_params, policy_obs)
+  action, log_prob = distributions.sample_tanh_normal(mean, log_std, key)
+  deterministic_action = jnp.tanh(mean)
+  std = jnp.exp(log_std)
   q = networks.q_values(sac_networks, q_params, value_obs, action)
   min_q = jnp.min(q, axis=-1)
   loss = jnp.mean(jnp.exp(log_alpha) * log_prob - min_q)
@@ -86,6 +88,20 @@ def actor_loss(
       "actor_loss": loss,
       "policy_log_prob": jnp.mean(log_prob),
       "policy_q": jnp.mean(min_q),
+      "actor_policy_mean_abs_mean": jnp.mean(jnp.abs(mean)),
+      "actor_policy_mean_abs_max": jnp.max(jnp.abs(mean)),
+      "actor_log_std_mean": jnp.mean(log_std),
+      "actor_log_std_min": jnp.min(log_std),
+      "actor_log_std_max": jnp.max(log_std),
+      "actor_policy_std_mean": jnp.mean(std),
+      "sampled_action_abs_mean": jnp.mean(jnp.abs(action)),
+      "sampled_action_saturation_fraction_095": jnp.mean(
+          (jnp.abs(action) >= 0.95).astype(action.dtype)
+      ),
+      "deterministic_action_abs_mean": jnp.mean(jnp.abs(deterministic_action)),
+      "deterministic_action_saturation_fraction_095": jnp.mean(
+          (jnp.abs(deterministic_action) >= 0.95).astype(deterministic_action.dtype)
+      ),
   }
   return loss, metrics
 
