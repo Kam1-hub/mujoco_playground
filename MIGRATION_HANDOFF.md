@@ -14,10 +14,15 @@ artifacts that may or may not exist after migration.
 
 - Repository: `https://github.com/Kam1-hub/mujoco_playground.git`
 - Branch: `sac-integration`
-- Latest expected commit:
+- Latest project-state commit before this migration handoff:
   `d094a4a Record SAC fresh 250k actor diagnostic`
 - Full commit:
   `d094a4a37660bdcde35ee96be89552dee6ca703c`
+- Current branch head may be newer than `d094a4a` because this handoff document
+  is committed after the fresh 250k actor diagnostic. Treat `d094a4a` as the
+  validated project-state baseline, not as the maximum expected HEAD.
+- Handoff file:
+  `MIGRATION_HANDOFF.md` in the repository root.
 - Canonical WSL2 path used during validation:
   `/home/admin/projects/mujoco_playground/g1_sac_dev`
 - Historical Windows path:
@@ -38,7 +43,8 @@ git rev-parse HEAD
 git rev-parse origin/sac-integration
 ```
 
-Expected current log head:
+Expected project-state sequence should include these commits below any newer
+handoff-only commits:
 
 ```text
 d094a4a Record SAC fresh 250k actor diagnostic
@@ -167,7 +173,8 @@ git log --oneline -5
 git rev-parse HEAD
 ```
 
-Expected HEAD should be `d094a4a` or newer.
+Expected HEAD should be `d094a4a` or newer. If `MIGRATION_HANDOFF.md` exists in
+the repository root, the clone is on a post-handoff commit and this is expected.
 
 ### 4.2 Recreate Python Environment
 
@@ -702,8 +709,10 @@ git check-ignore -v logs .venv g1_env/external_deps/mujoco_menagerie || true
 test -d g1_env/external_deps/mujoco_menagerie && echo MENAGERIE_PRESENT || echo MENAGERIE_MISSING
 test -d .venv && echo VENV_PRESENT || echo VENV_MISSING
 
-Expected branch is sac-integration. Expected latest commit is at least:
+Expected branch is sac-integration. Expected project-state commit is at least:
 d094a4a Record SAC fresh 250k actor diagnostic
+HEAD may be newer because the migration handoff itself is committed after
+d094a4a. Confirm MIGRATION_HANDOFF.md exists in the repository root.
 
 Then read:
 
