@@ -18,6 +18,7 @@ from g1_env import registry
 from g1_env import wrapper
 from g1_env.config import sac_params
 from learning.sac_lift import checkpoint as sac_checkpoint
+from learning.sac_lift import distributions
 from learning.sac_lift import evaluator
 from learning.sac_lift import networks
 from learning.sac_lift import normalizer
@@ -55,6 +56,22 @@ def _parse_args() -> argparse.Namespace:
           "Evaluate tanh(mean), sampled stochastic actions, or both. The "
           "default deterministic mode preserves prior behavior."
       ),
+  )
+  parser.add_argument(
+      "--action_diagnostics",
+      action="store_true",
+      help="Include actor mean/log_std and per-dimension action summaries.",
+  )
+  parser.add_argument(
+      "--reward_components",
+      action="store_true",
+      help="Include per-component episode sums from state.metrics reward/* keys.",
+  )
+  parser.add_argument(
+      "--top_k_actions",
+      type=int,
+      default=8,
+      help="Number of highest-saturation action dimensions to report.",
   )
   parser.add_argument("--output_json", default=None)
   return parser.parse_args()
@@ -108,6 +125,313 @@ def _as_bool(value: Any) -> bool:
   return bool(jax.device_get(value))
 
 
+def _as_float_list(value: Any) -> list[float]:
+  return [float(v) for v in jax.device_get(value).reshape(-1).tolist()]
+
+
+def _metric_to_env_vector(value: Any, reference: jax.Array) -> jax.Array:
+  value = jnp.asarray(value, dtype=jnp.float32)
+  if value.shape == ():
+    return jnp.broadcast_to(value, reference.shape)
+  if value.shape == reference.shape:
+    return value
+  if value.shape[: reference.ndim] == reference.shape:
+    reduce_axes = tuple(range(reference.ndim, value.ndim))
+    return jnp.mean(value, axis=reduce_axes)
+  return jnp.broadcast_to(jnp.mean(value), reference.shape)
+
+
+def _reward_component_keys(env: Any, num_eval_envs: int, seed: int) -> tuple[str, ...]:
+  reset_keys = jax.random.split(jax.random.PRNGKey(seed), num_eval_envs)
+  state = env.reset(reset_keys)
+  if not isinstance(state.metrics, Mapping):
+    return ()
+  return tuple(sorted(str(key) for key in state.metrics if str(key).startswith("reward/")))
+
+
+def _empty_action_diag(action_size: int) -> dict[str, jax.Array]:
+  zeros_dim = jnp.zeros((action_size,), dtype=jnp.float32)
+  return {
+      "value_count": jnp.asarray(0.0, dtype=jnp.float32),
+      "per_dim_count": jnp.asarray(0.0, dtype=jnp.float32),
+      "policy_mean_sum": jnp.asarray(0.0, dtype=jnp.float32),
+      "policy_mean_sq_sum": jnp.asarray(0.0, dtype=jnp.float32),
+      "policy_mean_abs_sum": jnp.asarray(0.0, dtype=jnp.float32),
+      "policy_mean_abs_max": jnp.asarray(0.0, dtype=jnp.float32),
+      "policy_log_std_sum": jnp.asarray(0.0, dtype=jnp.float32),
+      "policy_log_std_min": jnp.asarray(jnp.inf, dtype=jnp.float32),
+      "policy_log_std_max": jnp.asarray(-jnp.inf, dtype=jnp.float32),
+      "policy_std_sum": jnp.asarray(0.0, dtype=jnp.float32),
+      "deterministic_action_abs_sum": jnp.asarray(0.0, dtype=jnp.float32),
+      "stochastic_action_abs_sum": jnp.asarray(0.0, dtype=jnp.float32),
+      "deterministic_action_saturation_sum": jnp.asarray(0.0, dtype=jnp.float32),
+      "stochastic_action_saturation_sum": jnp.asarray(0.0, dtype=jnp.float32),
+      "deterministic_minus_stochastic_abs_sum": jnp.asarray(0.0, dtype=jnp.float32),
+      "deterministic_per_dim_sum": zeros_dim,
+      "deterministic_per_dim_sq_sum": zeros_dim,
+      "deterministic_per_dim_abs_sum": zeros_dim,
+      "deterministic_per_dim_min": jnp.full((action_size,), jnp.inf, dtype=jnp.float32),
+      "deterministic_per_dim_max": jnp.full((action_size,), -jnp.inf, dtype=jnp.float32),
+      "deterministic_per_dim_saturation_sum": zeros_dim,
+      "stochastic_per_dim_sum": zeros_dim,
+      "stochastic_per_dim_sq_sum": zeros_dim,
+      "stochastic_per_dim_abs_sum": zeros_dim,
+      "stochastic_per_dim_min": jnp.full((action_size,), jnp.inf, dtype=jnp.float32),
+      "stochastic_per_dim_max": jnp.full((action_size,), -jnp.inf, dtype=jnp.float32),
+      "stochastic_per_dim_saturation_sum": zeros_dim,
+  }
+
+
+def _update_action_diag(
+    action_diag: dict[str, jax.Array],
+    mean: jax.Array,
+    log_std: jax.Array,
+    deterministic_action: jax.Array,
+    stochastic_action: jax.Array,
+) -> dict[str, jax.Array]:
+  std = jnp.exp(log_std)
+  mean_abs = jnp.abs(mean)
+  det_abs = jnp.abs(deterministic_action)
+  stoch_abs = jnp.abs(stochastic_action)
+  value_count = jnp.asarray(mean.size, dtype=jnp.float32)
+  per_dim_count = jnp.asarray(mean.shape[0], dtype=jnp.float32)
+
+  return {
+      **action_diag,
+      "value_count": action_diag["value_count"] + value_count,
+      "per_dim_count": action_diag["per_dim_count"] + per_dim_count,
+      "policy_mean_sum": action_diag["policy_mean_sum"] + jnp.sum(mean),
+      "policy_mean_sq_sum": action_diag["policy_mean_sq_sum"]
+      + jnp.sum(jnp.square(mean)),
+      "policy_mean_abs_sum": action_diag["policy_mean_abs_sum"] + jnp.sum(mean_abs),
+      "policy_mean_abs_max": jnp.maximum(
+          action_diag["policy_mean_abs_max"], jnp.max(mean_abs)
+      ),
+      "policy_log_std_sum": action_diag["policy_log_std_sum"] + jnp.sum(log_std),
+      "policy_log_std_min": jnp.minimum(
+          action_diag["policy_log_std_min"], jnp.min(log_std)
+      ),
+      "policy_log_std_max": jnp.maximum(
+          action_diag["policy_log_std_max"], jnp.max(log_std)
+      ),
+      "policy_std_sum": action_diag["policy_std_sum"] + jnp.sum(std),
+      "deterministic_action_abs_sum": action_diag["deterministic_action_abs_sum"]
+      + jnp.sum(det_abs),
+      "stochastic_action_abs_sum": action_diag["stochastic_action_abs_sum"]
+      + jnp.sum(stoch_abs),
+      "deterministic_action_saturation_sum": action_diag[
+          "deterministic_action_saturation_sum"
+      ]
+      + jnp.sum(det_abs > 0.95),
+      "stochastic_action_saturation_sum": action_diag[
+          "stochastic_action_saturation_sum"
+      ]
+      + jnp.sum(stoch_abs > 0.95),
+      "deterministic_minus_stochastic_abs_sum": action_diag[
+          "deterministic_minus_stochastic_abs_sum"
+      ]
+      + jnp.sum(jnp.abs(deterministic_action - stochastic_action)),
+      "deterministic_per_dim_sum": action_diag["deterministic_per_dim_sum"]
+      + jnp.sum(deterministic_action, axis=0),
+      "deterministic_per_dim_sq_sum": action_diag["deterministic_per_dim_sq_sum"]
+      + jnp.sum(jnp.square(deterministic_action), axis=0),
+      "deterministic_per_dim_abs_sum": action_diag["deterministic_per_dim_abs_sum"]
+      + jnp.sum(det_abs, axis=0),
+      "deterministic_per_dim_min": jnp.minimum(
+          action_diag["deterministic_per_dim_min"],
+          jnp.min(deterministic_action, axis=0),
+      ),
+      "deterministic_per_dim_max": jnp.maximum(
+          action_diag["deterministic_per_dim_max"],
+          jnp.max(deterministic_action, axis=0),
+      ),
+      "deterministic_per_dim_saturation_sum": action_diag[
+          "deterministic_per_dim_saturation_sum"
+      ]
+      + jnp.sum(det_abs > 0.95, axis=0),
+      "stochastic_per_dim_sum": action_diag["stochastic_per_dim_sum"]
+      + jnp.sum(stochastic_action, axis=0),
+      "stochastic_per_dim_sq_sum": action_diag["stochastic_per_dim_sq_sum"]
+      + jnp.sum(jnp.square(stochastic_action), axis=0),
+      "stochastic_per_dim_abs_sum": action_diag["stochastic_per_dim_abs_sum"]
+      + jnp.sum(stoch_abs, axis=0),
+      "stochastic_per_dim_min": jnp.minimum(
+          action_diag["stochastic_per_dim_min"], jnp.min(stochastic_action, axis=0)
+      ),
+      "stochastic_per_dim_max": jnp.maximum(
+          action_diag["stochastic_per_dim_max"], jnp.max(stochastic_action, axis=0)
+      ),
+      "stochastic_per_dim_saturation_sum": action_diag[
+          "stochastic_per_dim_saturation_sum"
+      ]
+      + jnp.sum(stoch_abs > 0.95, axis=0),
+  }
+
+
+def _finalize_action_diag(action_diag: dict[str, jax.Array]) -> dict[str, jax.Array]:
+  count = jnp.maximum(action_diag["value_count"], 1.0)
+  per_dim_count = jnp.maximum(action_diag["per_dim_count"], 1.0)
+  policy_mean_mean = action_diag["policy_mean_sum"] / count
+  policy_mean_sq_mean = action_diag["policy_mean_sq_sum"] / count
+
+  def per_dim_stats(prefix: str) -> dict[str, jax.Array]:
+    mean = action_diag[f"{prefix}_per_dim_sum"] / per_dim_count
+    sq_mean = action_diag[f"{prefix}_per_dim_sq_sum"] / per_dim_count
+    return {
+        "mean": mean,
+        "std": jnp.sqrt(jnp.maximum(sq_mean - jnp.square(mean), 0.0)),
+        "min": action_diag[f"{prefix}_per_dim_min"],
+        "max": action_diag[f"{prefix}_per_dim_max"],
+    }
+
+  return {
+      "policy_mean_mean": policy_mean_mean,
+      "policy_mean_std": jnp.sqrt(
+          jnp.maximum(policy_mean_sq_mean - jnp.square(policy_mean_mean), 0.0)
+      ),
+      "policy_mean_abs_mean": action_diag["policy_mean_abs_sum"] / count,
+      "policy_mean_abs_max": action_diag["policy_mean_abs_max"],
+      "policy_log_std_mean": action_diag["policy_log_std_sum"] / count,
+      "policy_log_std_min": action_diag["policy_log_std_min"],
+      "policy_log_std_max": action_diag["policy_log_std_max"],
+      "policy_std_mean": action_diag["policy_std_sum"] / count,
+      "deterministic_action_abs_mean": action_diag[
+          "deterministic_action_abs_sum"
+      ]
+      / count,
+      "stochastic_action_abs_mean": action_diag["stochastic_action_abs_sum"] / count,
+      "deterministic_action_saturation_fraction_095": action_diag[
+          "deterministic_action_saturation_sum"
+      ]
+      / count,
+      "stochastic_action_saturation_fraction_095": action_diag[
+          "stochastic_action_saturation_sum"
+      ]
+      / count,
+      "deterministic_minus_stochastic_action_abs_mean": action_diag[
+          "deterministic_minus_stochastic_abs_sum"
+      ]
+      / count,
+      "deterministic_action_per_dim": per_dim_stats("deterministic"),
+      "stochastic_action_per_dim": per_dim_stats("stochastic"),
+      "deterministic_action_abs_mean_per_dim": action_diag[
+          "deterministic_per_dim_abs_sum"
+      ]
+      / per_dim_count,
+      "stochastic_action_abs_mean_per_dim": action_diag[
+          "stochastic_per_dim_abs_sum"
+      ]
+      / per_dim_count,
+      "deterministic_action_saturation_fraction_095_per_dim": action_diag[
+          "deterministic_per_dim_saturation_sum"
+      ]
+      / per_dim_count,
+      "stochastic_action_saturation_fraction_095_per_dim": action_diag[
+          "stochastic_per_dim_saturation_sum"
+      ]
+      / per_dim_count,
+  }
+
+
+def _format_action_diagnostics(
+    diagnostics: dict[str, Any], top_k_actions: int
+) -> dict[str, Any]:
+  deterministic_sat = _as_float_list(
+      diagnostics["deterministic_action_saturation_fraction_095_per_dim"]
+  )
+  stochastic_sat = _as_float_list(
+      diagnostics["stochastic_action_saturation_fraction_095_per_dim"]
+  )
+  deterministic_abs = _as_float_list(
+      diagnostics["deterministic_action_abs_mean_per_dim"]
+  )
+  stochastic_abs = _as_float_list(diagnostics["stochastic_action_abs_mean_per_dim"])
+  top_dims = sorted(
+      range(len(deterministic_sat)),
+      key=lambda dim: (
+          max(deterministic_sat[dim], stochastic_sat[dim]),
+          max(deterministic_abs[dim], stochastic_abs[dim]),
+      ),
+      reverse=True,
+  )[: max(top_k_actions, 0)]
+
+  def per_dim(name: str) -> dict[str, list[float]]:
+    values = diagnostics[name]
+    return {
+        "mean": _as_float_list(values["mean"]),
+        "std": _as_float_list(values["std"]),
+        "min": _as_float_list(values["min"]),
+        "max": _as_float_list(values["max"]),
+    }
+
+  return {
+      "policy_mean_mean": _as_float(diagnostics["policy_mean_mean"]),
+      "policy_mean_std": _as_float(diagnostics["policy_mean_std"]),
+      "policy_mean_abs_mean": _as_float(diagnostics["policy_mean_abs_mean"]),
+      "policy_mean_abs_max": _as_float(diagnostics["policy_mean_abs_max"]),
+      "policy_log_std_mean": _as_float(diagnostics["policy_log_std_mean"]),
+      "policy_log_std_min": _as_float(diagnostics["policy_log_std_min"]),
+      "policy_log_std_max": _as_float(diagnostics["policy_log_std_max"]),
+      "policy_std_mean": _as_float(diagnostics["policy_std_mean"]),
+      "deterministic_action_abs_mean": _as_float(
+          diagnostics["deterministic_action_abs_mean"]
+      ),
+      "stochastic_action_abs_mean": _as_float(
+          diagnostics["stochastic_action_abs_mean"]
+      ),
+      "deterministic_action_saturation_fraction_095": _as_float(
+          diagnostics["deterministic_action_saturation_fraction_095"]
+      ),
+      "stochastic_action_saturation_fraction_095": _as_float(
+          diagnostics["stochastic_action_saturation_fraction_095"]
+      ),
+      "deterministic_minus_stochastic_action_abs_mean": _as_float(
+          diagnostics["deterministic_minus_stochastic_action_abs_mean"]
+      ),
+      "deterministic_action_per_dim": per_dim("deterministic_action_per_dim"),
+      "stochastic_action_per_dim": per_dim("stochastic_action_per_dim"),
+      "top_saturated_action_dims": [
+          {
+              "dim": int(dim),
+              "saturation_fraction_095": max(
+                  deterministic_sat[dim], stochastic_sat[dim]
+              ),
+              "abs_mean": max(deterministic_abs[dim], stochastic_abs[dim]),
+              "deterministic_saturation_fraction_095": deterministic_sat[dim],
+              "stochastic_saturation_fraction_095": stochastic_sat[dim],
+              "deterministic_abs_mean": deterministic_abs[dim],
+              "stochastic_abs_mean": stochastic_abs[dim],
+          }
+          for dim in top_dims
+      ],
+  }
+
+
+def _format_reward_components(
+    stats: dict[str, Any], component_keys: tuple[str, ...]
+) -> dict[str, Any]:
+  if not component_keys:
+    return {"available": False, "keys": [], "components": {}}
+
+  means = _as_float_list(stats["episode_sum_mean"])
+  stds = _as_float_list(stats["episode_sum_std"])
+  mins = _as_float_list(stats["episode_sum_min"])
+  maxs = _as_float_list(stats["episode_sum_max"])
+  return {
+      "available": True,
+      "keys": list(component_keys),
+      "components": {
+          key: {
+              "episode_sum_mean": means[index],
+              "episode_sum_std": stds[index],
+              "episode_sum_min": mins[index],
+              "episode_sum_max": maxs[index],
+          }
+          for index, key in enumerate(component_keys)
+      },
+  }
+
+
 def _run_eval(
     env: Any,
     sac_networks: networks.SACNetworks,
@@ -119,11 +443,14 @@ def _run_eval(
     episode_length: int,
     normalize_observations: bool,
     deterministic: bool,
+    action_diagnostics: bool,
+    component_keys: tuple[str, ...],
 ) -> dict[str, Any]:
   reset_key, rollout_key = jax.random.split(rng)
   reset_keys = jax.random.split(reset_key, num_eval_envs)
   state = env.reset(reset_keys)
   truncation_present = isinstance(state.info, Mapping) and "truncation" in state.info
+  action_size = int(env.action_size)
 
   def step_fn(carry: tuple[Any, ...], _: Any) -> tuple[tuple[Any, ...], Any]:
     (
@@ -139,6 +466,8 @@ def _run_eval(
         action_abs_sum,
         action_count,
         action_saturation_sum,
+        action_diag,
+        component_sums,
         current_key,
     ) = carry
     policy_obs = evaluator.select_obs(current_state.obs, policy_obs_key)
@@ -147,12 +476,19 @@ def _run_eval(
         policy_normalizer, policy_obs, normalize_observations
     )
     current_key, action_key = jax.random.split(current_key)
-    action, log_prob = networks.sample_action(
-        sac_networks,
-        policy_params,
-        policy_obs,
-        action_key,
-        deterministic=deterministic,
+    mean, log_std = sac_networks.actor.apply(policy_params, policy_obs)
+    deterministic_action = distributions.mode_tanh_normal(mean)
+    stochastic_action, stochastic_log_prob = distributions.sample_tanh_normal(
+        mean, log_std, action_key
+    )
+    if deterministic:
+      action = deterministic_action
+      log_prob = jnp.zeros(policy_obs.shape[:-1], dtype=policy_obs.dtype)
+    else:
+      action = stochastic_action
+      log_prob = stochastic_log_prob
+    action_diag = _update_action_diag(
+        action_diag, mean, log_std, deterministic_action, stochastic_action
     )
     action_abs = jnp.abs(action)
     action_log_prob_sum = action_log_prob_sum + jnp.sum(log_prob)
@@ -165,7 +501,17 @@ def _run_eval(
     action_nan = jnp.logical_or(action_nan, jnp.any(jnp.isnan(action)))
     next_state = env.step(current_state, action)
     reward_nan = jnp.logical_or(reward_nan, jnp.any(jnp.isnan(next_state.reward)))
-    total_reward = total_reward + next_state.reward * (1.0 - done_any)
+    active = 1.0 - done_any
+    total_reward = total_reward + next_state.reward * active
+    if component_keys:
+      component_values = jnp.stack(
+          [
+              _metric_to_env_vector(next_state.metrics[key], next_state.reward)
+              for key in component_keys
+          ],
+          axis=0,
+      )
+      component_sums = component_sums + component_values * active[None, :]
     done_any = jnp.maximum(done_any, next_state.done)
     if truncation_present:
       truncation_sum = truncation_sum + jnp.sum(
@@ -184,11 +530,17 @@ def _run_eval(
         action_abs_sum,
         action_count,
         action_saturation_sum,
+        action_diag,
+        component_sums,
         current_key,
     ), None
 
   rewards = jnp.zeros_like(state.reward)
   done_any = jnp.zeros_like(state.done)
+  action_diag = _empty_action_diag(action_size)
+  component_sums = jnp.zeros(
+      (len(component_keys),) + rewards.shape, dtype=jnp.float32
+  )
   initial = (
       state,
       rewards,
@@ -202,6 +554,8 @@ def _run_eval(
       jnp.asarray(0.0, dtype=jnp.float32),
       jnp.asarray(0.0, dtype=jnp.float32),
       jnp.asarray(0.0, dtype=jnp.float32),
+      action_diag,
+      component_sums,
       rollout_key,
   )
   (
@@ -217,13 +571,15 @@ def _run_eval(
       action_abs_sum,
       action_count,
       action_saturation_sum,
+      action_diag,
+      component_sums,
       _,
   ), _ = jax.lax.scan(step_fn, initial, None, length=episode_length)
 
   eval_env_steps = num_eval_envs * episode_length
   action_log_prob_count = jnp.maximum(action_log_prob_count, 1.0)
   action_count = jnp.maximum(action_count, 1.0)
-  return {
+  result = {
       "episode_reward_mean": jnp.mean(total_reward),
       "episode_reward_std": jnp.std(total_reward),
       "episode_reward_min": jnp.min(total_reward),
@@ -240,6 +596,16 @@ def _run_eval(
       "action_abs_mean": action_abs_sum / action_count,
       "action_saturation_fraction_095": action_saturation_sum / action_count,
   }
+  if action_diagnostics:
+    result["action_diagnostics"] = _finalize_action_diag(action_diag)
+  if component_keys:
+    result["reward_components"] = {
+        "episode_sum_mean": jnp.mean(component_sums, axis=1),
+        "episode_sum_std": jnp.std(component_sums, axis=1),
+        "episode_sum_min": jnp.min(component_sums, axis=1),
+        "episode_sum_max": jnp.max(component_sums, axis=1),
+    }
+  return result
 
 
 def evaluate_checkpoint(args: argparse.Namespace) -> dict[str, Any]:
@@ -303,6 +669,11 @@ def evaluate_checkpoint(args: argparse.Namespace) -> dict[str, Any]:
       log_std_min=float(config.get("log_std_min", -5.0)),
       log_std_max=float(config.get("log_std_max", 2.0)),
   )
+  reward_component_keys = (
+      _reward_component_keys(env, args.num_eval_envs, args.seed)
+      if args.reward_components
+      else ()
+  )
 
   def run_policy_mode(policy_mode: str, deterministic: bool) -> dict[str, Any]:
     rollout = jax.jit(
@@ -317,6 +688,8 @@ def evaluate_checkpoint(args: argparse.Namespace) -> dict[str, Any]:
             episode_length,
             bool(config.get("normalize_observations", True)),
             deterministic,
+            bool(args.action_diagnostics),
+            reward_component_keys,
         )
     )
 
@@ -334,6 +707,7 @@ def evaluate_checkpoint(args: argparse.Namespace) -> dict[str, Any]:
         wall_time=wall_time,
         policy_mode=policy_mode,
         deterministic=deterministic,
+        reward_component_keys=reward_component_keys,
     )
 
   if args.policy_mode == "both":
@@ -366,6 +740,7 @@ def _format_eval_result(
     wall_time: float,
     policy_mode: str,
     deterministic: bool,
+    reward_component_keys: tuple[str, ...],
 ) -> dict[str, Any]:
   eval_env_steps = int(args.num_eval_envs * episode_length)
   result = {
@@ -399,6 +774,14 @@ def _format_eval_result(
       "checkpoint_env_steps": _get(checkpoint_metrics, "env_steps"),
       "checkpoint_gradient_steps": _get(checkpoint_metrics, "gradient_steps"),
   }
+  if args.action_diagnostics:
+    result["action_diagnostics"] = _format_action_diagnostics(
+        metrics["action_diagnostics"], args.top_k_actions
+    )
+  if args.reward_components:
+    result["reward_components"] = _format_reward_components(
+        metrics.get("reward_components", {}), reward_component_keys
+    )
   return result
 
 
