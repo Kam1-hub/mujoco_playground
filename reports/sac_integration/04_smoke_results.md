@@ -1,6 +1,89 @@
 # Smoke Results
 
-Status: updated on 2026-05-13 after full action diagnostic eval.
+Status: updated on 2026-05-13 after fresh 100k actor drift diagnostic.
+
+## 2026-05-13 Fresh 100k Actor Drift Diagnostic
+
+- Scope: fresh diagnostic training run plus small eval-only action diagnostic.
+- Code baseline: `202c6a9 Add SAC actor drift train diagnostics`.
+- Status: `TRAIN_OK`
+- Checkpoint:
+  `./logs/sac_lift_gpu_100k_actor_diag/sac_lift_step_99968.pkl`
+- Checkpoint readiness: PASS
+- Eval JSON:
+  `./logs/sac_eval_actor_diag_100k/eval_both_seed0_4x200_actiondiag.json`
+- Eval status: `EVAL_OK`
+- JSON sanity: PASS
+- No 250k, 750k, or 1M run was executed.
+- No code or report changes were made during the diagnostic run.
+
+Training metrics:
+
+- `env_steps`: `99968`
+- `gradient_steps`: `1548`
+- `wall_time`: `68.07941276300699`
+- `sps`: `1468.4027952473857`
+- `actor_loss`: `-4.796189308166504`
+- `critic_loss`: `0.04373161494731903`
+- `alpha`: `0.03258506953716278`
+- `log_alpha`: `-3.423901081085205`
+- `alpha_loss`: `1.0434787273406982`
+- `alpha_log_prob`: `-17.523212432861328`
+- `alpha_error_log_prob_plus_target`: `-32.02321243286133`
+- `alpha_error_neg_log_prob_minus_target`: `32.02321243286133`
+- `alpha_grad_proxy_exp`: `1.0434786081314087`
+- `q`: `4.1935601234436035`
+- `target_q`: `4.180259704589844`
+- `reward_mean`: `-0.1281944066286087`
+- `done_fraction`: `0.01953125`
+- `discount_mean`: `0.98046875`
+
+Actor drift metrics:
+
+| Metric | Final | Interval Avg |
+|---|---:|---:|
+| actor policy mean abs mean | 0.23856812715530396 | 0.1707537253543696 |
+| actor policy mean abs max | 1.7372020483016968 | 1.1534156603329557 |
+| actor log_std mean | -0.15711648762226105 | -0.13639042302196033 |
+| actor log_std min | -0.7160005569458008 | -0.5989941709725431 |
+| actor log_std max | 0.13092592358589172 | 0.24042806924544563 |
+| actor policy std mean | 0.8573285341262817 | 0.8771794435281778 |
+| sampled action abs mean | 0.5348999500274658 | 0.5254770112669129 |
+| sampled action saturation 0.95 | 0.046336207538843155 | 0.04516821260051441 |
+| deterministic action abs mean | 0.218863844871521 | 0.16346676852698475 |
+| deterministic action saturation 0.95 | 0.0 | 3.74161874120682e-06 |
+
+Interpretation: fresh 100k already shows actor mean drift forming. Final actor
+mean magnitude and deterministic action magnitude are higher than their interval
+averages, while final log_std/std are lower. This supports the hypothesis that
+deterministic path degradation starts early and is coupled with reduced
+std/entropy pressure. This is not a runtime failure.
+
+Small action diagnostic eval:
+
+| Mode | Reward Mean | Reward SD | Reward Min | Reward Max | Action Abs | Sat 0.95 | Mean Abs | LogStd Mean | Std Mean |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| deterministic | -4.315369606018066 | 0.4851875901222229 | -4.684144496917725 | -3.4863786697387695 | 0.17660009860992432 | 0.0 | 0.18980830907821655 | -0.10445457696914673 | 0.9032111763954163 |
+| stochastic | -6.333320140838623 | 0.6809744238853455 | -7.328940391540527 | -5.642662525177002 | 0.5322253704071045 | 0.04625000059604645 | 0.22738231718540192 | -0.15493662655353546 | 0.8592240214347839 |
+
+Reward component highlights:
+
+- Deterministic main negatives: `reward/termination -100`,
+  `reward/ang_vel_xy -59.17`, `reward/joint_deviation_hip -36.96`,
+  `reward/orientation -33.44`, `reward/feet_slip -16.88`.
+- Deterministic positives: `reward/feet_phase 23.39`,
+  `reward/tracking_ang_vel 17.95`, `reward/tracking_lin_vel 1.09`.
+- Stochastic main negatives: `reward/termination -100`,
+  `reward/ang_vel_xy -130.07`, `reward/orientation -41.22`,
+  `reward/joint_deviation_hip -40.42`, `reward/feet_slip -12.29`.
+- Stochastic positives: `reward/feet_phase 22.56`,
+  `reward/tracking_ang_vel 4.79`, `reward/tracking_lin_vel 2.78`.
+
+Warnings: known non-fatal WSL2 CUDA driver version warning, known non-fatal JAX
+cast overflow warning, and sandbox `snap-confine` capability errors on first
+`uv` attempts. The same commands were rerun externally with unchanged
+parameters. No traceback, NaN, OOM, fatal CUDA error, checkpoint failure, or
+eval failure was observed.
 
 ## 2026-05-13 Full Action Diagnostic Eval
 

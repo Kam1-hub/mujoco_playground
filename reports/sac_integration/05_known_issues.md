@@ -1,6 +1,6 @@
 # Known Issues
 
-Status: updated on 2026-05-13 after full action diagnostic eval.
+Status: updated on 2026-05-13 after fresh 100k actor drift diagnostic.
 
 ## Open
 
@@ -14,6 +14,7 @@ Status: updated on 2026-05-13 after full action diagnostic eval.
 | 500k metrics require follow-up diagnostics | training dynamics | OPEN_NON_BLOCKING | At 500k, alpha dropped to about `0.0080`; bounded deterministic eval reward worsened from `-4.27974` at 250k to `-4.69107`; critic loss stayed finite/low and Q/target Q decreased to about `3.3`. | Treat 500k as sanity PASS, not a failure. Before any 750k/1M run, diagnose actor mean/action distribution/reward components and keep watching alpha/log-alpha dynamics. |
 | Deterministic `tanh(mean)` path degrades while stochastic sampled eval does not | policy diagnostics | OPEN | Both-mode eval across 100k/250k/500k showed deterministic reward mean `-4.2218 -> -4.4585 -> -4.8476`, while stochastic reward mean improved `-6.4616 -> -6.1954 -> -5.9091`. Deterministic action magnitude increased `0.1823 -> 0.2148 -> 0.3029`. | Do not run 750k/1M. Design actor mean / action distribution / reward-component diagnostics. |
 | Actor mean/action magnitude drift explains deterministic eval risk | policy diagnostics | OPEN | Full action diagnostic found deterministic action abs `0.1823 -> 0.2147 -> 0.3029`, policy mean abs `0.1950 -> 0.2288 -> 0.3468`, policy std mean `0.8996 -> 0.8692 -> 0.7519`, and deterministic reward avg `-4.2130 -> -4.4792 -> -4.8204`. | Keep 750k/1M paused. Review actor mean drift by dimension, target entropy / alpha / log_std dynamics, and reward component sensitivity before longer runs. |
+| Actor mean drift appears by fresh 100k | policy diagnostics | OPEN | Fresh 100k diagnostic showed final actor mean abs `0.238568` vs interval avg `0.170754`, final deterministic action abs `0.218864` vs interval avg `0.163467`, final log_std mean `-0.157116` vs interval avg `-0.136390`, and alpha about `0.0326`. | Run fresh 250k diagnostic only after user confirmation; do not jump to 750k/1M and do not tune reward/action_scale/Kp yet. |
 | Deterministic reward degradation is component-specific | reward diagnostics | OPEN | Full action diagnostic links deterministic degradation mainly to `reward/ang_vel_xy` `-50.82 -> -62.66 -> -73.31`, `reward/stand_still` `-18.72 -> -21.72 -> -28.33`, and `reward/orientation` `-34.80 -> -43.27 -> -40.37`; positive `feet_phase` and `tracking_lin_vel` partially offset it. | Diagnose affected components before reward tuning. Do not change reward/action_scale/Kp in the current validation phase. |
 | Existing GPU 10k checkpoint is not deterministic-eval ready | checkpoint/eval | OPEN_NON_BLOCKING | `./logs/sac_lift_gpu_10k/sac_lift_step_9984.pkl` has `normalize_observations=True` but lacks `policy_normalizer` and `value_normalizer`. | Do not use the old checkpoint for trusted deterministic eval; use normalizer-ready 10k, 50k, or 100k checkpoints instead. |
 | Sandboxed `uv` may hit `snap-confine` capability restrictions | tooling | OPEN_NON_BLOCKING | The first sandboxed 100k `uv` attempt failed before training started with a `snap-confine` capability error; the identical command then succeeded with external permission and unchanged parameters. | Treat as tooling noise unless it prevents a command from starting; do not classify it as a training failure. |
@@ -67,6 +68,9 @@ Status: updated on 2026-05-13 after full action diagnostic eval.
   previous reward-degradation conclusion was incomplete: deterministic
   `tanh(mean)` reward degrades, but sampled stochastic reward does not show the
   same degradation.
+- Fresh 100k train-time actor drift diagnostic is validated. It shows final
+  actor mean magnitude and deterministic action magnitude already above their
+  interval averages, with final log_std/std lower than interval averages.
 - 1M, full eval benchmark, and PPO comparison are still `NOT VALIDATED`.
 - The 500k sanity PASS exposed a watch item: alpha declined to about `0.0080`
   and deterministic reward worsened versus 250k. Both-mode eval suggests the

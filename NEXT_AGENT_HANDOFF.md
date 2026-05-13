@@ -18,8 +18,8 @@ domain randomization, or fine-tuning as part of the current validation phase.
 
 - Path: `/home/admin/projects/mujoco_playground/g1_sac_dev`
 - Branch: `sac-integration`
-- Current action diagnostic patch baseline before this report update:
-  `8ff4f1d Add SAC action distribution eval diagnostics`
+- Current train-time actor drift diagnostic code baseline before this report
+  update: `202c6a9 Add SAC actor drift train diagnostics`
 - Remote: `origin https://github.com/Kam1-hub/mujoco_playground.git`
 - Last known pushed branch: `sac-integration`
 
@@ -164,6 +164,7 @@ Current validated ladder:
 - 100k/250k/500k both-mode deterministic/stochastic eval diagnostic: PASS.
 - 100k/250k/500k full action distribution / reward-component eval diagnostic:
   PASS.
+- Fresh 100k train-time actor drift diagnostic: PASS.
 
 Still not validated:
 
@@ -217,6 +218,13 @@ All paths below are runtime artifacts and should remain ignored:
   - Seeds `0..4`, `num_eval_envs=16`, `episode_length=1000`.
   - Contains `15` JSON outputs. All evals returned `EVAL_OK`; all
     action/reward/obs NaN flags were false.
+- `./logs/sac_lift_gpu_100k_actor_diag/sac_lift_step_99968.pkl`
+  - Fresh 100k train-time actor drift diagnostic checkpoint.
+  - Checkpoint readiness PASS.
+- `./logs/sac_eval_actor_diag_100k/eval_both_seed0_4x200_actiondiag.json`
+  - 4 env x 200 action diagnostic eval from the fresh 100k actor drift
+    checkpoint.
+  - Status `EVAL_OK`; JSON sanity PASS.
 - `./logs/sac_lift_schema_dry_run/sac_lift_step_0.pkl`
   - Dry-run schema validation artifact, if still present.
 
@@ -255,8 +263,24 @@ Full action distribution diagnostic:
   risk is deterministic deployment/eval degradation driven by actor mean/action
   magnitude drift, with entropy/alpha dynamics likely upstream.
 
-Next recommended step: targeted actor mean drift / alpha entropy diagnostic
-design. Do not run 750k or 1M yet.
+Fresh 100k actor drift diagnostic:
+
+- Code baseline: `202c6a9 Add SAC actor drift train diagnostics`.
+- Scope: diagnostic training plus small action diagnostic eval; no 250k/750k/1M.
+- Checkpoint: `./logs/sac_lift_gpu_100k_actor_diag/sac_lift_step_99968.pkl`.
+- Checkpoint readiness: PASS.
+- Eval JSON:
+  `./logs/sac_eval_actor_diag_100k/eval_both_seed0_4x200_actiondiag.json`.
+- Eval status: `EVAL_OK`.
+- Final actor mean abs `0.238568` exceeded interval avg `0.170754`.
+- Final deterministic action abs `0.218864` exceeded interval avg `0.163467`.
+- Final log_std mean `-0.157116` was below interval avg `-0.136390`.
+- Alpha was about `0.0326`.
+- Interpretation: actor mean drift is already forming by 100k. This is not a
+  runtime failure.
+
+Next recommended step: fresh 250k actor drift diagnostic after user
+confirmation. Do not run 750k or 1M yet.
 
 GPU 10k smoke:
 
@@ -430,6 +454,9 @@ Both-mode eval diagnostic:
 - Full action diagnostic confirms the issue is tied to deterministic actor
   mean/action magnitude drift and specific reward components, mainly
   `reward/ang_vel_xy`, `reward/stand_still`, and `reward/orientation`.
+- Fresh 100k train-time diagnostics show the mean/action drift signal is already
+  visible by 100k, so the next diagnostic should test whether the final-vs-
+  interval gap widens by fresh 250k.
 - 1M replay can be around 2.5-2.7 GB raw before overhead.
 - SPS can vary due JIT compile and warmup.
 - No PPO comparison has been run.
@@ -438,8 +465,8 @@ Both-mode eval diagnostic:
 
 1. Do read-only status checks.
 2. Read this file and `reports/sac_integration/09_phase_summary_and_risks.md`.
-3. If the user approves continuing, draft a targeted actor mean drift / alpha
-   entropy diagnostic design based on the full action diagnostic results.
+3. If the user approves continuing, run a fresh 250k actor drift diagnostic
+   using the committed train-time metrics.
 4. Do not draft or execute 750k/1M until deterministic actor mean drift is
    understood or explicitly accepted by the user.
 
@@ -496,16 +523,16 @@ status checks: pwd, git status --short --branch, git log --oneline -5,
 git remote -v, and git check-ignore -v logs .venv
 g1_env/external_deps/mujoco_menagerie || true.
 
-Current HEAD should be at least 8ff4f1d Add SAC action distribution eval
-diagnostics unless newer report commits exist. GPU 10k smoke, deterministic
+Current HEAD should be at least 202c6a9 Add SAC actor drift train diagnostics
+unless newer report commits exist. GPU 10k smoke, deterministic
 eval smoke, GPU 50k sanity/eval, GPU 100k sanity/eval, GPU 250k sanity/eval,
 GPU 500k sanity/eval, 100k/250k/500k both-mode eval diagnostic, and full action
-distribution / reward-component diagnostic have passed. 750k and 1M are not
-validated.
+distribution / reward-component diagnostic have passed. Fresh 100k actor drift
+diagnostic has also passed. 750k and 1M are not validated.
 
 Do not run training, eval, preflight, installs, downloads, or git commits unless
-explicitly asked. Next recommended work is actor mean / action distribution /
-reward-component diagnostic design. Do not start 750k or 1M without a separate
-resource/stop-condition plan and user confirmation. Do not change reward,
-action_scale, Kp, domain randomization, fine-tuning, PPO, or RSL.
+explicitly asked. Next recommended work is fresh 250k actor drift diagnostic
+after user confirmation. Do not start 750k or 1M without a separate resource/
+stop-condition plan and user confirmation. Do not change reward, action_scale,
+Kp, domain randomization, fine-tuning, PPO, or RSL.
 ```

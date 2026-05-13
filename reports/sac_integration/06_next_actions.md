@@ -1,6 +1,6 @@
 # Next Actions
 
-Status: updated on 2026-05-13 after full action diagnostic eval.
+Status: updated on 2026-05-13 after fresh 100k actor drift diagnostic.
 
 ## Immediate State
 
@@ -74,6 +74,14 @@ Status: updated on 2026-05-13 after full action diagnostic eval.
   magnitude increase with scale, policy std narrows, and deterministic reward
   degradation aligns mainly with angular-velocity, stand-still, and orientation
   reward components.
+- Train-time actor drift instrumentation is committed at
+  `202c6a9 Add SAC actor drift train diagnostics`.
+- Fresh 100k actor drift diagnostic passed with `TRAIN_OK`, checkpoint
+  `./logs/sac_lift_gpu_100k_actor_diag/sac_lift_step_99968.pkl`, checkpoint
+  readiness PASS, and 4 env x 200 action diagnostic eval `EVAL_OK`.
+- Fresh 100k result: final actor mean magnitude and deterministic action
+  magnitude are already above their interval averages, while final log_std/std
+  are lower than interval averages.
 
 ## Completed WSL2 GPU Validation
 
@@ -240,12 +248,14 @@ or menagerie.
 
 Do not run 750k or 1M yet.
 
-Recommended next step is targeted diagnostic/design, not training:
+Recommended next step is a fresh 250k actor drift diagnostic run, but only after
+explicit user confirmation:
 
-1. Inspect actor mean drift by action dimension and reward components.
-2. Compare deterministic vs stochastic behavior around affected components.
-3. Review target entropy, alpha loss, and log_std dynamics.
-4. Consider instrumentation or controlled ablation before any longer run.
+1. Reuse the committed train-time actor drift metrics from `202c6a9`.
+2. Keep the same Route B parameters as prior 250k sanity unless the user
+   explicitly approves a diagnostic-specific change.
+3. Use a new logdir so the original 250k sanity is not overwritten.
+4. Run checkpoint readiness and a bounded action diagnostic eval after training.
 5. Do not tune reward, `action_scale`, or Kp yet.
 
 ## Completed Both-Mode Eval Diagnostic
@@ -339,18 +349,17 @@ CPU, stop and report the CUDA/JAX blocker.
 
 ## Recommended Next Step
 
-Do not automatically run 750k or 1M. The next useful step is an actor mean /
-action distribution / reward-component diagnostic design, only after explicit
-user confirmation.
+Do not automatically run 750k or 1M. The next useful step is a fresh 250k actor
+drift diagnostic, only after explicit user confirmation.
 
 Recommended diagnostic questions:
 
-1. Inspect actor mean and std/log_std statistics by checkpoint.
-2. Compare deterministic action against stochastic sampled action per dimension.
-3. Inspect whether deterministic action magnitude drift explains reward loss.
-4. Add reward component eval only if env metrics expose stable reward terms.
-5. Keep all diagnostics eval-only or dry-run unless the user explicitly
-   approves a training run.
+1. Does the final-vs-interval actor mean gap widen by 250k?
+2. Does log_std/std continue to decline from the 100k diagnostic values?
+3. Does deterministic action magnitude keep moving above interval averages?
+4. Do reward components continue to implicate angular velocity, orientation, or
+   stand-still penalties?
+5. Does checkpoint readiness and bounded action diagnostic eval remain clean?
 
 Do not jump into 750k or 1M from this report update.
 
@@ -366,12 +375,10 @@ Do not jump into 750k or 1M from this report update.
 
 ## Recommended Follow-Ups After Deterministic Eval Smoke
 
-1. Commit the both-mode eval diagnostic report update after review.
-2. Draft actor mean / action distribution / reward-component diagnostics for
-   user review.
-3. Keep eval scales bounded unless the user asks for a benchmark.
-4. Do not start 750k or 1M automatically from this report update.
-5. Compare against PPO baseline only after SAC smoke plus eval have clean
+1. Run fresh 250k actor drift diagnostic only after user confirmation.
+2. Keep eval scales bounded unless the user asks for a benchmark.
+3. Do not start 750k or 1M automatically from this report update.
+4. Compare against PPO baseline only after SAC smoke plus eval have clean
    reports.
 
 ## Do Not Start Yet

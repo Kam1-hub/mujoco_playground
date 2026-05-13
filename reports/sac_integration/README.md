@@ -17,6 +17,7 @@ Required reports:
 - `09_phase_summary_and_risks.md`
 - `10_both_mode_eval_diagnostic.md`
 - `10_action_distribution_diagnostics.md`
+- `11_actor_drift_train_diagnostic.md`
 
 Repo-root continuation handoff:
 
