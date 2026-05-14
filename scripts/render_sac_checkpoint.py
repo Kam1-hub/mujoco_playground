@@ -24,6 +24,62 @@ from learning.sac_lift import networks
 from learning.sac_lift import normalizer
 
 
+TERMINATION_REASON_METRICS: tuple[tuple[str, str], ...] = (
+    ("fall", "termination/fall_torso_up_z_lt_0"),
+    ("contact/right_foot_left_foot", "termination/contact/right_foot_left_foot"),
+    ("contact/left_foot_right_shin", "termination/contact/left_foot_right_shin"),
+    ("contact/right_foot_left_shin", "termination/contact/right_foot_left_shin"),
+    ("contact_any", "termination/contact_any"),
+    ("qpos_nan", "termination/qpos_nan"),
+    ("qvel_nan", "termination/qvel_nan"),
+)
+
+TERMINATION_CONDITIONS: tuple[str, ...] = (
+    "fall_torso_up_z_lt_0",
+    "contact/right_foot_left_foot",
+    "contact/left_foot_right_shin",
+    "contact/right_foot_left_shin",
+    "qpos_nan",
+    "qvel_nan",
+)
+
+TERMINATION_SCALAR_STATE_METRICS: tuple[tuple[str, str], ...] = (
+    ("torso_up_z", "termination/torso_up_z"),
+    ("root_height", "termination/root_height"),
+    ("orientation_cost", "termination/orientation_cost"),
+    ("torso_up_xy_norm", "termination/torso_up_xy_norm"),
+    ("torso_ang_vel_xy_norm", "termination/torso_ang_vel_xy_norm"),
+    ("tracking_lin_vel_error", "termination/tracking_lin_vel_error"),
+    ("tracking_yaw_error", "termination/tracking_yaw_error"),
+)
+
+TERMINATION_VECTOR_STATE_METRICS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    (
+        "command",
+        (
+            "termination/command_x",
+            "termination/command_y",
+            "termination/command_yaw",
+        ),
+    ),
+    (
+        "pelvis_local_linvel",
+        (
+            "termination/pelvis_local_linvel_x",
+            "termination/pelvis_local_linvel_y",
+            "termination/pelvis_local_linvel_z",
+        ),
+    ),
+    (
+        "feet_floor_contact",
+        (
+            "termination/feet_floor_contact_left",
+            "termination/feet_floor_contact_right",
+        ),
+    ),
+)
+
+
 def _str_to_bool(value: str | bool) -> bool:
   if isinstance(value, bool):
     return value
@@ -100,6 +156,11 @@ def _parse_args() -> argparse.Namespace:
       help="Fixed joystick yaw velocity command used with --fixed_command.",
   )
   parser.add_argument(
+      "--termination_diagnostics",
+      action="store_true",
+      help="Include first-done termination reason and terminal-state summaries.",
+  )
+  parser.add_argument(
       "--output",
       required=True,
       help=(
@@ -139,6 +200,30 @@ def _merged_config(payload_config: Any, env_name: str, impl: str) -> dict[str, A
   config["env_name"] = env_name
   config["impl"] = impl
   return config
+
+
+def _render_env_overrides(config: Mapping[str, Any], impl: str) -> dict[str, Any]:
+  overrides: dict[str, Any] = {"impl": impl}
+  env_feet_slip_mode = config.get("env_feet_slip_mode")
+  if env_feet_slip_mode is not None:
+    overrides["feet_slip_mode"] = str(env_feet_slip_mode)
+  env_feet_slip_scale = config.get("env_feet_slip_scale")
+  if env_feet_slip_scale is not None:
+    overrides["reward_config.scales.feet_slip"] = float(env_feet_slip_scale)
+  env_push_enable = config.get("env_push_enable")
+  if env_push_enable is not None:
+    overrides["push_config.enable"] = _str_to_bool(env_push_enable)
+  env_zero_command_phase_freeze = config.get("env_zero_command_phase_freeze")
+  if env_zero_command_phase_freeze is not None:
+    overrides["zero_command_phase_freeze"] = _str_to_bool(
+        env_zero_command_phase_freeze
+    )
+  env_feet_air_time_command_mask = config.get("env_feet_air_time_command_mask")
+  if env_feet_air_time_command_mask is not None:
+    overrides["feet_air_time_command_mask"] = _str_to_bool(
+        env_feet_air_time_command_mask
+    )
+  return overrides
 
 
 def _obs_size(obs_size: Any, key: str) -> int:
@@ -210,6 +295,134 @@ def _replace_obs_command(obs: Any, command: jax.Array) -> Any:
   return replace_in_array(obs)
 
 
+def _as_float(value: Any) -> float:
+  return float(jax.device_get(value))
+
+
+def _as_bool(value: Any) -> bool:
+  return bool(jax.device_get(value))
+
+
+def _as_float_list(value: Any) -> list[float]:
+  return [float(v) for v in jax.device_get(value).reshape(-1).tolist()]
+
+
+def _metric_scalar(metrics: Mapping[str, Any], key: str) -> jax.Array:
+  return jnp.mean(jnp.asarray(metrics[key], dtype=jnp.float32))
+
+
+def _empty_termination_diag(episode_length: int) -> dict[str, Any]:
+  return {
+      "available": jnp.asarray(True),
+      "done_seen": jnp.asarray(False),
+      "first_done_step": jnp.asarray(episode_length, dtype=jnp.int32),
+      "reason_flags": {
+          name: jnp.asarray(0.0, dtype=jnp.float32)
+          for name, _ in TERMINATION_REASON_METRICS
+      },
+      "terminal_count": jnp.asarray(0.0, dtype=jnp.float32),
+      "scalar_state": {
+          name: jnp.asarray(0.0, dtype=jnp.float32)
+          for name, _ in TERMINATION_SCALAR_STATE_METRICS
+      },
+      "vector_state": {
+          name: jnp.zeros((len(metric_keys),), dtype=jnp.float32)
+          for name, metric_keys in TERMINATION_VECTOR_STATE_METRICS
+      },
+  }
+
+
+def _update_termination_diag(
+    termination_diag: dict[str, Any],
+    metrics: Mapping[str, Any],
+    new_done: jax.Array,
+    step_index: jax.Array,
+) -> dict[str, Any]:
+  new_done = jnp.asarray(new_done, dtype=bool)
+  reason_flags = {}
+  for name, metric_key in TERMINATION_REASON_METRICS:
+    value = _metric_scalar(metrics, metric_key)
+    reason_flags[name] = jnp.where(
+        new_done, value, termination_diag["reason_flags"][name]
+    )
+
+  scalar_state = {}
+  for name, metric_key in TERMINATION_SCALAR_STATE_METRICS:
+    value = _metric_scalar(metrics, metric_key)
+    scalar_state[name] = jnp.where(
+        new_done, value, termination_diag["scalar_state"][name]
+    )
+
+  vector_state = {}
+  for name, metric_keys in TERMINATION_VECTOR_STATE_METRICS:
+    values = jnp.stack(
+        [_metric_scalar(metrics, metric_key) for metric_key in metric_keys],
+        axis=0,
+    )
+    vector_state[name] = jnp.where(
+        new_done, values, termination_diag["vector_state"][name]
+    )
+
+  return {
+      **termination_diag,
+      "done_seen": jnp.logical_or(termination_diag["done_seen"], new_done),
+      "first_done_step": jnp.where(
+          new_done, step_index.astype(jnp.int32), termination_diag["first_done_step"]
+      ),
+      "reason_flags": reason_flags,
+      "terminal_count": jnp.where(new_done, 1.0, termination_diag["terminal_count"]),
+      "scalar_state": scalar_state,
+      "vector_state": vector_state,
+  }
+
+
+def _format_termination_diagnostics(
+    stats: dict[str, Any],
+    episode_length: int,
+    render_indices: Sequence[int],
+) -> dict[str, Any]:
+  if not stats:
+    return {"available": False}
+
+  done_seen = _as_bool(stats["done_seen"])
+  first_done_step = int(jax.device_get(stats["first_done_step"]))
+  first_done_frame = first_done_step - 1 if done_seen else None
+  rendered_frame_index = None
+  if first_done_frame is not None:
+    try:
+      rendered_frame_index = list(render_indices).index(first_done_frame)
+    except ValueError:
+      rendered_frame_index = None
+
+  reason_flags = {
+      name: _as_bool(stats["reason_flags"][name] > 0.0)
+      for name, _ in TERMINATION_REASON_METRICS
+  }
+  reason_counts = {
+      name: int(reason_flags[name]) for name, _ in TERMINATION_REASON_METRICS
+  }
+
+  terminal_state: dict[str, Any] = {"count": int(done_seen)}
+  if done_seen:
+    for name, _ in TERMINATION_SCALAR_STATE_METRICS:
+      terminal_state[name] = _as_float(stats["scalar_state"][name])
+    for name, _ in TERMINATION_VECTOR_STATE_METRICS:
+      terminal_state[name] = _as_float_list(stats["vector_state"][name])
+
+  return {
+      "available": _as_bool(stats["available"]),
+      "termination_conditions": list(TERMINATION_CONDITIONS),
+      "episode_length": int(episode_length),
+      "done_seen": done_seen,
+      "first_done_step": first_done_step if done_seen else None,
+      "first_done_frame": first_done_frame,
+      "rendered_frame_index": rendered_frame_index,
+      "reason_flags": reason_flags,
+      "reason_counts": reason_counts,
+      "terminal_state": terminal_state,
+  }
+
+
 def _rollout(
     env: Any,
     sac_networks: networks.SACNetworks,
@@ -221,6 +434,7 @@ def _rollout(
     episode_length: int,
     deterministic: bool,
     fixed_command: jax.Array | None = None,
+    termination_diagnostics: bool = False,
 ) -> dict[str, Any]:
   def rollout_fn(rng: jax.Array) -> dict[str, Any]:
     reset_key, action_key = jax.random.split(rng)
@@ -228,8 +442,11 @@ def _rollout(
     if fixed_command is not None:
       state = _set_state_command(state, fixed_command)
 
-    def step_fn(carry: tuple[Any, jax.Array, jax.Array, jax.Array], _: Any):
-      current_state, current_key, total_reward, done_any = carry
+    def step_fn(
+        carry: tuple[Any, jax.Array, jax.Array, jax.Array, Any],
+        step_index: jax.Array,
+    ):
+      current_state, current_key, total_reward, done_any, termination_diag = carry
       policy_obs = evaluator.select_obs(current_state.obs, policy_obs_key)
       policy_obs = normalizer.normalize(
           policy_normalizer, policy_obs, normalize_observations
@@ -246,24 +463,47 @@ def _rollout(
       if fixed_command is not None:
         next_state = _set_state_command(next_state, fixed_command)
       active = 1.0 - done_any
+      new_done = jnp.logical_and(next_state.done > 0.0, done_any <= 0.0)
       total_reward = total_reward + next_state.reward * active
+      if termination_diagnostics:
+        termination_diag = _update_termination_diag(
+            termination_diag, next_state.metrics, new_done, step_index + 1
+        )
       done_any = jnp.maximum(done_any, next_state.done)
-      return (next_state, current_key, total_reward, done_any), next_state
+      return (
+          next_state,
+          current_key,
+          total_reward,
+          done_any,
+          termination_diag,
+      ), next_state
 
     initial = (
         state,
         action_key,
         jnp.zeros_like(state.reward),
         jnp.zeros_like(state.done),
+        (
+            _empty_termination_diag(episode_length)
+            if termination_diagnostics
+            else {}
+        ),
     )
-    (final_state, _, total_reward, done_any), trajectory = jax.lax.scan(
-        step_fn, initial, None, length=episode_length
+    (
+        final_state,
+        _,
+        total_reward,
+        done_any,
+        termination_diag,
+    ), trajectory = jax.lax.scan(
+        step_fn, initial, jnp.arange(episode_length, dtype=jnp.int32)
     )
     del final_state
     return {
         "trajectory": trajectory,
         "total_reward": total_reward,
         "done_any": done_any,
+        "termination_diagnostics": termination_diag,
     }
 
   compiled = jax.jit(rollout_fn)
@@ -359,10 +599,13 @@ def render_checkpoint(args: argparse.Namespace) -> dict[str, Any]:
   )
 
   env_cfg = registry.get_default_config(env_name)
+  env_overrides = _render_env_overrides(config, impl)
+  if args.termination_diagnostics:
+    env_overrides["termination_diagnostics"] = True
   env = registry.load(
       env_name,
       config=env_cfg,
-      config_overrides={"impl": impl},
+      config_overrides=env_overrides,
   )
   (
       sac_networks,
@@ -386,12 +629,13 @@ def render_checkpoint(args: argparse.Namespace) -> dict[str, Any]:
       fixed_command=(
           jnp.asarray(command, dtype=jnp.float32) if args.fixed_command else None
       ),
+      termination_diagnostics=bool(args.termination_diagnostics),
   )
   rollout_wall_time = time.monotonic() - start
 
   render_length = episode_length
   if args.stop_on_done:
-    render_length = _first_done_frame(rollout["done_any"], episode_length)
+    render_length = _first_done_frame(rollout["trajectory"].done, episode_length)
   render_indices = list(range(0, render_length, args.render_every))
   trajectory = _trajectory_to_list(rollout["trajectory"], episode_length)
   trajectory = [trajectory[index] for index in render_indices]
@@ -412,7 +656,7 @@ def render_checkpoint(args: argparse.Namespace) -> dict[str, Any]:
   render_wall_time = time.monotonic() - render_start
   output_info = _write_render_output(frames, Path(args.output), float(args.fps))
 
-  return {
+  result = {
       "status": "RENDER_OK",
       "checkpoint": str(Path(args.checkpoint)),
       "env_name": env_name,
@@ -435,6 +679,12 @@ def render_checkpoint(args: argparse.Namespace) -> dict[str, Any]:
       "render_wall_time": render_wall_time,
       **output_info,
   }
+  if args.termination_diagnostics:
+    result["env_overrides"] = env_overrides
+    result["termination_diagnostics"] = _format_termination_diagnostics(
+        rollout.get("termination_diagnostics", {}), episode_length, render_indices
+    )
+  return result
 
 
 def main() -> int:
