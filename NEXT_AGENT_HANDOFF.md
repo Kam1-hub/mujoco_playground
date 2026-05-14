@@ -18,10 +18,11 @@ domain randomization, or fine-tuning as part of the current validation phase.
 
 - Path: `/home/admin/projects/mujoco_playground/g1_sac_dev`
 - Branch: `sac-integration`
-- Latest recorded diagnostic state: fixed-command 3M render helper smoke after
-  the deterministic 3M render helper smoke, bounded 1024-env 3M R3 run,
-  high-parallel 512/1024/2048 capacity benchmark, and 1M follow-up;
-  use `git log --oneline -5` for the exact commit hash.
+- Latest recorded diagnostic state: fixed-command eval support and alpha sign
+  audit after the fixed-command 3M render helper smoke, deterministic 3M render
+  helper smoke, bounded 1024-env 3M R3 run, high-parallel 512/1024/2048
+  capacity benchmark, and 1M follow-up; use `git log --oneline -5` for the
+  exact commit hash.
 - Remote: `origin https://github.com/Kam1-hub/mujoco_playground.git`
 - Last known pushed branch: `sac-integration`
 
@@ -99,8 +100,9 @@ SAC Route B code lives in local files and should not disturb PPO/RSL:
   checker.
 - `scripts/eval_sac_checkpoint.py`: bounded checkpoint eval with
   `--policy_mode deterministic|stochastic|both`, optional
-  `--action_diagnostics`, optional `--reward_components`, and
-  `--top_k_actions`.
+  `--action_diagnostics`, optional `--reward_components`, `--top_k_actions`,
+  and optional fixed joystick command support through `--fixed_command`,
+  `--command_x`, `--command_y`, and `--command_yaw`.
 - `scripts/render_sac_checkpoint.py`: eval-only checkpoint render/export
   helper for MP4/GIF/PNG-frame visual inspection. It supports default
   reset-sampled joystick commands and optional fixed joystick commands with
@@ -217,6 +219,19 @@ Current validated ladder:
   `./logs/sac_render_3m_r3_fixedcmd/` all returned `RENDER_OK`, `done=false`,
   and `600` frames: forward `[0.5, 0.0, 0.0]`, stand `[0.0, 0.0, 0.0]`, and
   yaw `[0.0, 0.0, 0.5]`.
+- Fixed-command 3M eval helper smoke: PASS. `scripts/eval_sac_checkpoint.py`
+  now supports fixed joystick commands with the same command override semantics
+  as the render helper. The `[0.5, 0.0, 0.0]` 3M R3 smoke returned `EVAL_OK`
+  with deterministic reward mean `0.5099`, stochastic reward mean `-2.3354`,
+  `policy_mode=both`, and no action/reward/obs NaN flags. A default
+  deterministic compatibility smoke without `--fixed_command` also returned
+  `EVAL_OK`, `fixed_command=false`, and no NaN flags.
+- Alpha sign audit: PASS with caveat. No direct sign bug was found relative to
+  Brax-style SAC: `target_entropy = -target_entropy_coef * action_dim`, R3
+  target entropy is `-7.25`, and the current alpha-loss sign matches the common
+  log-alpha equivalent. The unresolved risk is persistent downward alpha
+  pressure in the observed log-probability range plus no alpha floor; the
+  `exp(log_alpha)` form also weakens updates as alpha approaches zero.
 - Action joint mapping diagnostic: PASS.
 
 Still not validated:
@@ -848,10 +863,17 @@ stochastic eval degraded and alpha/std collapsed.
 Fixed-command 3M render support has also been added and smoke-validated for
 forward, stand, and yaw commands, with artifacts under ignored
 `./logs/sac_render_3m_r3_fixedcmd/`.
+Fixed-command eval support has also been added to
+`scripts/eval_sac_checkpoint.py` and smoke-validated on the 3M R3 checkpoint:
+`[0.5,0,0]` returned `EVAL_OK` with deterministic reward mean `0.5099`,
+stochastic reward mean `-2.3354`, and no action/reward/obs NaN flags. Alpha
+sign audit found `SIGN_OK_BUT_COLLAPSE_RISK`: no direct sign bug, but current
+target entropy and observed log-probability ranges keep downward pressure on
+alpha and there is still no alpha floor.
 
 Do not run training, eval, preflight, installs, downloads, or git commits unless
-explicitly asked. Next recommended work is command-specific visual inspection
-of the fixed-command renders, then an entropy/alpha decision review before any
-longer run. Do not change reward, action_scale, Kp, domain randomization,
-fine-tuning, PPO, or RSL.
+explicitly asked. Next recommended work is full fixed-command eval/render
+coverage for `[0.5,0,0]`, `[1,0,0]`, `[0,0.3,0]`, `[0,0,0.5]`, and `[0,0,0]`,
+then an entropy/alpha decision review before any longer run. Do not change
+reward, action_scale, Kp, domain randomization, fine-tuning, PPO, or RSL.
 ```

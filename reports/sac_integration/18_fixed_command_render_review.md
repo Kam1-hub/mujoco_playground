@@ -76,3 +76,14 @@ Use the fixed-command MP4s for command-specific visual inspection before
 deciding on longer SAC runs. The next SAC stabilization step should remain a
 bounded decision review; do not jump blindly to 750k, 1M, 5M, or 10M from this
 render helper update alone.
+
+## Follow-Up Gate
+
+Fixed-command eval support has now been added to
+`scripts/eval_sac_checkpoint.py` with the same command override semantics as
+this render helper. The 3M R3 `[0.5, 0.0, 0.0]` eval smoke returned `EVAL_OK`,
+deterministic reward mean `0.5099`, stochastic reward mean `-2.3354`, and no
+action/reward/obs NaN flags. The related alpha sign audit found no direct SAC
+temperature sign bug, but confirmed persistent downward alpha pressure remains
+a risk. Details are recorded in
+`reports/sac_integration/19_alpha_entropy_and_fixed_eval_gate.md`.

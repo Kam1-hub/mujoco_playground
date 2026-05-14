@@ -73,6 +73,33 @@ def _parse_args() -> argparse.Namespace:
       default=8,
       help="Number of highest-saturation action dimensions to report.",
   )
+  parser.add_argument(
+      "--fixed_command",
+      type=_str_to_bool,
+      default=False,
+      help=(
+          "If true, force a fixed joystick command throughout eval instead of "
+          "using the command sampled by env reset/resample."
+      ),
+  )
+  parser.add_argument(
+      "--command_x",
+      type=float,
+      default=0.0,
+      help="Fixed joystick x velocity command used with --fixed_command.",
+  )
+  parser.add_argument(
+      "--command_y",
+      type=float,
+      default=0.0,
+      help="Fixed joystick y velocity command used with --fixed_command.",
+  )
+  parser.add_argument(
+      "--command_yaw",
+      type=float,
+      default=0.0,
+      help="Fixed joystick yaw velocity command used with --fixed_command.",
+  )
   parser.add_argument("--output_json", default=None)
   return parser.parse_args()
 
@@ -139,6 +166,34 @@ def _metric_to_env_vector(value: Any, reference: jax.Array) -> jax.Array:
     reduce_axes = tuple(range(reference.ndim, value.ndim))
     return jnp.mean(value, axis=reduce_axes)
   return jnp.broadcast_to(jnp.mean(value), reference.shape)
+
+
+def _broadcast_command(command: jax.Array, target: jax.Array) -> jax.Array:
+  return jnp.broadcast_to(command, target.shape)
+
+
+def _replace_obs_command(obs: Any, command: jax.Array) -> Any:
+  def replace_in_array(value: jax.Array) -> jax.Array:
+    value = jnp.asarray(value)
+    command_value = jnp.broadcast_to(command, value.shape[:-1] + (3,))
+    return value.at[..., 9:12].set(command_value)
+
+  if isinstance(obs, Mapping):
+    replaced = dict(obs)
+    for key in ("state", "privileged_state"):
+      if key in replaced:
+        replaced[key] = replace_in_array(replaced[key])
+    return replaced
+  return replace_in_array(obs)
+
+
+def _set_state_command(state: Any, command: jax.Array) -> Any:
+  command = jnp.asarray(command, dtype=jnp.float32)
+  if isinstance(state.info, Mapping) and "command" in state.info:
+    state.info["command"] = _broadcast_command(command, state.info["command"])
+  else:
+    state.info["command"] = command
+  return state.replace(obs=_replace_obs_command(state.obs, command))
 
 
 def _reward_component_keys(env: Any, num_eval_envs: int, seed: int) -> tuple[str, ...]:
@@ -445,10 +500,13 @@ def _run_eval(
     deterministic: bool,
     action_diagnostics: bool,
     component_keys: tuple[str, ...],
+    fixed_command: jax.Array | None,
 ) -> dict[str, Any]:
   reset_key, rollout_key = jax.random.split(rng)
   reset_keys = jax.random.split(reset_key, num_eval_envs)
   state = env.reset(reset_keys)
+  if fixed_command is not None:
+    state = _set_state_command(state, fixed_command)
   truncation_present = isinstance(state.info, Mapping) and "truncation" in state.info
   action_size = int(env.action_size)
 
@@ -500,6 +558,8 @@ def _run_eval(
     action_saturation_sum = action_saturation_sum + jnp.sum(action_abs > 0.95)
     action_nan = jnp.logical_or(action_nan, jnp.any(jnp.isnan(action)))
     next_state = env.step(current_state, action)
+    if fixed_command is not None:
+      next_state = _set_state_command(next_state, fixed_command)
     reward_nan = jnp.logical_or(reward_nan, jnp.any(jnp.isnan(next_state.reward)))
     active = 1.0 - done_any
     total_reward = total_reward + next_state.reward * active
@@ -613,6 +673,11 @@ def evaluate_checkpoint(args: argparse.Namespace) -> dict[str, Any]:
     raise NotImplementedError("Route B SAC deterministic eval render is unsupported.")
   if args.num_eval_envs < 1:
     raise ValueError("--num_eval_envs must be >= 1")
+  command = [
+      float(args.command_x),
+      float(args.command_y),
+      float(args.command_yaw),
+  ]
 
   payload = sac_checkpoint.load(args.checkpoint)
   if not isinstance(payload, Mapping):
@@ -690,6 +755,7 @@ def evaluate_checkpoint(args: argparse.Namespace) -> dict[str, Any]:
             deterministic,
             bool(args.action_diagnostics),
             reward_component_keys,
+            jnp.asarray(command, dtype=jnp.float32) if args.fixed_command else None,
         )
     )
 
@@ -708,6 +774,8 @@ def evaluate_checkpoint(args: argparse.Namespace) -> dict[str, Any]:
         policy_mode=policy_mode,
         deterministic=deterministic,
         reward_component_keys=reward_component_keys,
+        fixed_command=bool(args.fixed_command),
+        command=command,
     )
 
   if args.policy_mode == "both":
@@ -720,6 +788,8 @@ def evaluate_checkpoint(args: argparse.Namespace) -> dict[str, Any]:
         "num_eval_envs": int(args.num_eval_envs),
         "episode_length": int(episode_length),
         "policy_mode": "both",
+        "fixed_command": bool(args.fixed_command),
+        "command": command,
         "results": {
             "deterministic": run_policy_mode("deterministic", True),
             "stochastic": run_policy_mode("stochastic", False),
@@ -741,6 +811,8 @@ def _format_eval_result(
     policy_mode: str,
     deterministic: bool,
     reward_component_keys: tuple[str, ...],
+    fixed_command: bool,
+    command: list[float],
 ) -> dict[str, Any]:
   eval_env_steps = int(args.num_eval_envs * episode_length)
   result = {
@@ -753,6 +825,8 @@ def _format_eval_result(
       "episode_length": int(episode_length),
       "policy_mode": policy_mode,
       "deterministic": bool(deterministic),
+      "fixed_command": bool(fixed_command),
+      "command": command,
       "eval_env_steps": eval_env_steps,
       "episode_reward_mean": _as_float(metrics["episode_reward_mean"]),
       "episode_reward_std": _as_float(metrics["episode_reward_std"]),

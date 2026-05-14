@@ -1,6 +1,7 @@
 # Next Actions
 
-Status: updated on 2026-05-14 after the fixed-command 3M render helper smoke.
+Status: updated on 2026-05-14 after fixed-command eval support and the alpha
+sign audit.
 
 ## Immediate State
 
@@ -202,19 +203,27 @@ Status: updated on 2026-05-14 after the fixed-command 3M render helper smoke.
   forward `[0.5, 0.0, 0.0]`, stand `[0.0, 0.0, 0.0]`, and yaw
   `[0.0, 0.0, 0.5]`. All reported `RENDER_OK`, `done=false`, and `600`
   frames.
+- Fixed-command eval support is available in `scripts/eval_sac_checkpoint.py`
+  through `--fixed_command`, `--command_x`, `--command_y`, and `--command_yaw`.
+  The 3M R3 `[0.5, 0.0, 0.0]` smoke returned `EVAL_OK`, `policy_mode=both`,
+  deterministic reward mean `0.5099`, stochastic reward mean `-2.3354`, and no
+  action/reward/obs NaN flags. A default deterministic compatibility smoke
+  without `--fixed_command` also returned `EVAL_OK` with `fixed_command=false`.
+- Alpha sign audit result: `SIGN_OK_BUT_COLLAPSE_RISK`. No direct sign bug was
+  found versus Brax-style SAC, but the observed log-probability range keeps
+  downward pressure on alpha and there is still no alpha floor.
 
 ## Current Recommendation
 
 - Do not jump directly to 10M.
 - Do not declare stable SAC integration from the 3M result.
-- Next step should use the fixed-command MP4s under
-  `./logs/sac_render_3m_r3_fixedcmd/` for command-specific visual inspection,
-  followed by an entropy/alpha decision review before any longer run:
-  - decide whether alpha/log_std need a floor or another entropy-handling
-    ablation;
-  - decide whether to run a bounded entropy ablation before longer training;
-  - only then decide whether the deterministic improvement justifies a
-    carefully gated longer run.
+- Next step should run full fixed-command eval/render coverage before any
+  longer run. Cover `[0.5,0,0]`, `[1,0,0]`, `[0,0.3,0]`, `[0,0,0.5]`, and
+  `[0,0,0]` with bounded deterministic/stochastic eval, action diagnostics,
+  reward components, NaN checks, and command-specific visual inspection.
+- After fixed-command coverage, run an entropy/alpha decision review. Do not
+  patch the alpha sign blindly; consider controlled alpha-floor, fixed-alpha,
+  standard log-alpha, or target-entropy ablations only after the command gate.
 
 ## Completed WSL2 GPU Validation
 

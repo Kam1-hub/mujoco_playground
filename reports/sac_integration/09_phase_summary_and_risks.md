@@ -9,8 +9,8 @@ continue without relying on chat history.
 
 - Path: `/home/admin/projects/mujoco_playground/g1_sac_dev`
 - Branch: `sac-integration`
-- Current actor-regularization diagnostic code baseline before this report
-  update: `208eef2 Add SAC actor regularization diagnostics`
+- Current diagnostic code baseline before this report update:
+  `fd8a014 Add SAC fixed-command render support`
 - Remote: `origin https://github.com/Kam1-hub/mujoco_playground.git`
 - External menagerie commit: `1b86ece576591213e2b666ebf59508454200ca97`
 
@@ -56,7 +56,9 @@ Runtime artifacts are local and ignored. Do not commit `logs/`, `.venv/`,
 | Bounded 1024-env 3M R3 run | PASS_RUNTIME_MIXED_POLICY | `./logs/sac_lift_gpu_3m_env1024_r3_b256_g16_replay1m/sac_lift_step_2999296.pkl` |
 | Deterministic 3M render helper smoke | PASS_RENDER_SMOKE | `./logs/sac_render_3m_r3/render_seed0_det.mp4` |
 | Fixed-command 3M render helper smoke | PASS_RENDER_SMOKE | `./logs/sac_render_3m_r3_fixedcmd/`, commands `[0.5, 0.0, 0.0]`, `[0.0, 0.0, 0.0]`, and `[0.0, 0.0, 0.5]` |
-| 10M training | NOT VALIDATED | Requires visual inspection, entropy/alpha decision review, resource plan, and stop conditions |
+| Fixed-command 3M eval helper smoke | PASS_EVAL_SMOKE | `./logs/sac_eval_fixedcmd_smoke_3m/eval_cmd_x0p5_seed0_both_4x200.json` |
+| Alpha sign audit | SIGN_OK_BUT_COLLAPSE_RISK | No direct Brax-style SAC sign bug found; persistent downward alpha pressure remains a risk |
+| 10M training | NOT VALIDATED | Requires full fixed-command coverage, entropy/alpha decision review, resource plan, and stop conditions |
 
 ## Completed Outcomes
 
@@ -167,6 +169,15 @@ Runtime artifacts are local and ignored. Do not commit `logs/`, `.venv/`,
   `./logs/sac_render_3m_r3_fixedcmd/` all returned `RENDER_OK`, `done=false`,
   and `600` frames for forward `[0.5, 0.0, 0.0]`, stand
   `[0.0, 0.0, 0.0]`, and yaw `[0.0, 0.0, 0.5]`.
+- Added fixed-command eval support to `scripts/eval_sac_checkpoint.py` with the
+  same command override semantics. The 3M R3 `[0.5, 0.0, 0.0]` eval smoke
+  returned `EVAL_OK`, deterministic reward mean `0.5099`, stochastic reward
+  mean `-2.3354`, and no action/reward/obs NaN flags. A default deterministic
+  compatibility smoke without `--fixed_command` also returned `EVAL_OK`.
+- Completed alpha sign audit. Result: `SIGN_OK_BUT_COLLAPSE_RISK`. No direct
+  sign bug was found relative to Brax-style SAC, but the observed
+  log-probability range keeps downward alpha pressure active and no alpha floor
+  is present.
 
 ### Full Action Diagnostic Summary
 
@@ -1006,11 +1017,17 @@ feasible on the 12GB GPU and produced the first strong deterministic-policy
 improvement signal. However, alpha/std collapsed and stochastic eval degraded
 severely.
 
-The next recommended step is a decision review focused on:
+The next recommended step is full fixed-command eval/render coverage before
+any longer run. Cover `[0.5,0,0]`, `[1,0,0]`, `[0,0.3,0]`, `[0,0,0.5]`, and
+`[0,0,0]` with bounded deterministic/stochastic eval, action diagnostics,
+reward components, NaN checks, and command-specific visual inspection.
 
-1. entropy/alpha handling, including possible alpha/log_std floor or a
-   controlled entropy ablation;
-2. deterministic render helper for visual inspection;
+After that command gate, run a decision review focused on:
+
+1. entropy/alpha handling, including possible alpha/log_std floor, fixed alpha,
+   standard log-alpha update, or target-entropy ablation;
+2. whether fixed-command evidence shows real velocity tracking or upright
+   shuffle/reward exploitation;
 3. whether the deterministic recovery justifies a carefully gated longer run.
 
 Any 10M plan should include:

@@ -1423,3 +1423,24 @@ Resolution:
 - Windows native GPU smoke remained unavailable.
 - WSL2/Linux CUDA later superseded this blocker; GPU preflight, GPU 10k smoke,
   and the small deterministic eval smoke now pass in the WSL2 workspace.
+
+## Fixed-Command Eval And Alpha Sign Gate
+
+`scripts/eval_sac_checkpoint.py` now supports fixed joystick commands through
+`--fixed_command`, `--command_x`, `--command_y`, and `--command_yaw`. The
+override updates both `state.info["command"]` and the command slice `9:12` in
+policy/value observations, matching the render helper.
+
+Validation:
+
+- `eval_sac_checkpoint.py --help`: PASS; fixed-command flags are present.
+- Fixed-command 3M R3 smoke `[0.5, 0.0, 0.0]`: `EVAL_OK`,
+  `policy_mode=both`, deterministic reward mean `0.5099`, stochastic reward
+  mean `-2.3354`, and no action/reward/obs NaN flags.
+- Default deterministic compatibility smoke without fixed command: `EVAL_OK`,
+  `fixed_command=false`, 4 env x 100 steps, and no action/reward/obs NaN flags.
+
+Alpha sign audit result: `SIGN_OK_BUT_COLLAPSE_RISK`. No direct sign bug was
+found relative to Brax-style SAC, but the observed log-probability range keeps
+downward pressure on alpha, and the `exp(log_alpha)` temperature-loss form
+weakens updates as alpha approaches zero.

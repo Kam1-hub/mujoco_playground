@@ -26,6 +26,7 @@ Required reports:
 - `16_env1024_3m_r3_results.md`
 - `17_render_helper_smoke.md`
 - `18_fixed_command_render_review.md`
+- `19_alpha_entropy_and_fixed_eval_gate.md`
 
 Repo-root continuation handoff:
 
