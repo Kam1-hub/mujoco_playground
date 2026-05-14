@@ -90,6 +90,10 @@ Status: updated on 2026-05-14 after alpha/entropy ablation planning.
 - No-training action mapping tools are committed:
   `scripts/inspect_g1_action_mapping.py` and
   `scripts/summarize_sac_action_diag.py`.
+- Action joint mapping diagnostic is recorded in
+  `reports/sac_integration/13_action_joint_mapping_diagnostic.md`; it maps the
+  500k deterministic top action dimensions mainly to right ankle roll/pitch,
+  waist pitch, right knee, and hip roll.
 - The next alpha/entropy ablation plan is recorded in
   `reports/sac_integration/12_alpha_entropy_ablation_plan.md`.
 - The first fresh 100k ablation training command still needs explicit user

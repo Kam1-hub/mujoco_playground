@@ -19,6 +19,7 @@ Required reports:
 - `10_action_distribution_diagnostics.md`
 - `11_actor_drift_train_diagnostic.md`
 - `12_alpha_entropy_ablation_plan.md`
+- `13_action_joint_mapping_diagnostic.md`
 
 Repo-root continuation handoff:
 

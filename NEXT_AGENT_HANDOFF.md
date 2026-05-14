@@ -171,6 +171,7 @@ Current validated ladder:
 - Fresh 100k train-time actor drift diagnostic: PASS.
 - Fresh 250k train-time actor drift diagnostic: PASS.
 - Alpha/entropy ablation plan: READY_NOT_RUN.
+- Action joint mapping diagnostic: PASS.
 
 Still not validated:
 
@@ -495,6 +496,9 @@ Both-mode eval diagnostic:
 - The ablation training has not been run. It requires explicit user approval in
   the current execution environment because the external execution reviewer
   rejected a new 100k training run after prior read-only instructions.
+- Action joint mapping now links the 500k deterministic top action dimensions
+  mainly to right ankle roll/pitch, waist pitch, right knee, and hip roll. See
+  `reports/sac_integration/13_action_joint_mapping_diagnostic.md`.
 - 1M replay can be around 2.5-2.7 GB raw before overhead.
 - SPS can vary due JIT compile and warmup.
 - No PPO comparison has been run.
