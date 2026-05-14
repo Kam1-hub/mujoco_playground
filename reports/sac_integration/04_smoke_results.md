@@ -1,7 +1,78 @@
 # Smoke Results
 
 Status: updated on 2026-05-15 after the fresh env1024 R3 100k
-zero-command phase-freeze diagnostic.
+feet-air-time command-mask diagnostic.
+
+## 2026-05-15 Fresh Env1024 R3 100k Feet-Air-Time Command-Mask Diagnostic
+
+- Scope: short reward/prior diagnostic using
+  `--env_feet_air_time_command_mask True`; no 250k, 5M, 10M, render, code,
+  reward, `action_scale`, Kp, PPO/RSL, or checkpoint schema change was made for
+  this report update.
+- Related code commit: `d353fe6 Add SAC feet air time command mask override`.
+- Isolation: this gate did not combine the command mask with push-disable or
+  zero-command phase-freeze.
+- Status: `TRAIN_OK`.
+- Checkpoint:
+  `./logs/sac_lift_gpu_100k_env1024_r3_feet_air_time_mask/sac_lift_step_99328.pkl`
+- Checkpoint readiness: PASS.
+- Env steps: `99328`.
+- Gradient steps: `1552`.
+- Wall time: `77.6672s`.
+- SPS: `1278.8924`.
+- Actor loss: `-5.8315`.
+- Critic loss: `0.1118`.
+- Q / target Q: `5.0715 / 5.0114`.
+- Reward mean: `-0.1165`.
+- Done fraction: `0.01953`.
+- Discount mean: `0.98047`.
+- Alpha / log alpha / effective alpha:
+  `0.04279 / -3.15146 / 0.04279`.
+
+Actor drift summary:
+
+| Metric | Final |
+|---|---:|
+| actor policy mean abs mean | 0.12316 |
+| actor policy mean abs max | 1.11455 |
+| actor log_std mean/min/max | -0.14503 / -0.54318 / 0.06541 |
+| actor policy std mean | 0.86674 |
+| sampled action abs mean | 0.52025 |
+| sampled action saturation 0.95 | 0.03718 |
+| deterministic action abs mean | 0.11887 |
+| deterministic action saturation 0.95 | 0.0 |
+
+Small fixed-command and stand smokes inherited
+`feet_air_time_command_mask=true`:
+
+| Command | Mode | Reward | Action Abs | tracking_lin_vel | tracking_ang_vel | ang_vel_xy | orientation | feet_phase | feet_air_time | feet_slip | stand_still | termination |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| `[0.5,0,0]` | deterministic | -3.6505 | 0.0999 | 10.2344 | 20.3590 | -46.8961 | -37.7849 | 25.5653 | -1.4700 | -16.7857 | 0.0 | -100 |
+| `[0.5,0,0]` | stochastic | -6.4587 | 0.5190 | 10.6768 | 3.5048 | -140.3279 | -57.9756 | 20.7195 | -2.1400 | -9.5508 | 0.0 | -100 |
+| `[1.0,0,0]` | deterministic | -3.8335 | 0.1000 | 4.1466 | 20.5456 | -49.2255 | -39.2348 | 25.7549 | -1.3400 | -16.1351 | 0.0 | -100 |
+| `[1.0,0,0]` | stochastic | -6.5072 | 0.5192 | 4.2529 | 2.8092 | -139.6565 | -57.1087 | 21.3788 | -2.3800 | -9.4494 | 0.0 | -100 |
+| `[0,0,0]` | deterministic | -6.5074 | 0.1002 | 8.6266 | 20.5424 | -46.8852 | -37.9999 | 25.6276 | 0.0 | -16.3734 | -143.5669 | -100 |
+| `[0,0,0]` | stochastic | -10.8848 | 0.5189 | 11.1323 | 2.7537 | -136.7390 | -56.5973 | 20.7464 | 0.0 | -9.5355 | -229.1816 | -100 |
+
+All three eval JSON sanity checks passed with `EVAL_OK`, inherited
+`{"feet_air_time_command_mask": true, "impl":"jax"}`, and no
+action/reward/obs NaN flags.
+
+Conclusion:
+
+- Feet-air-time command mask is runtime-valid, and the mask works: stand eval
+  reports `reward/feet_air_time=0.0`.
+- The gate failed because `reward/termination=-100` remains saturated for
+  `fwd0.5`, `fwd1.0`, and stand.
+- `fwd0.5` tracking is similar or slightly higher than push-disable and
+  phase-freeze, but `fwd1.0` is worse than both.
+- Stand did not improve; `stand_still` remains strongly negative.
+- This weakens the zero-command `feet_air_time` conflict as a standalone fix.
+- Do not continue to 250k, 5M, or 10M from this result.
+- Next targeted work should be component-level termination/contact analysis.
+
+See `reports/sac_integration/23_feet_air_time_mask_diagnostic.md` for the
+focused record.
 
 ## 2026-05-15 Fresh Env1024 R3 100k Zero-Command Phase-Freeze Diagnostic
 

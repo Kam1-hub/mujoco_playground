@@ -30,6 +30,7 @@ Required reports:
 - `20_feet_slip_scale_zero_diagnostic.md`
 - `21_push_disable_diagnostic.md`
 - `22_phase_freeze_diagnostic.md`
+- `23_feet_air_time_mask_diagnostic.md`
 
 Repo-root continuation handoff:
 

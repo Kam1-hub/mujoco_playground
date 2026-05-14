@@ -1,7 +1,7 @@
 # Next Actions
 
 Status: updated on 2026-05-15 after the fresh env1024 R3 100k
-zero-command phase-freeze diagnostic.
+feet-air-time command-mask diagnostic.
 
 ## Immediate State
 
@@ -279,6 +279,18 @@ zero-command phase-freeze diagnostic.
   `fwd1.0=5.4434` deterministic `tracking_lin_vel`), but
   `reward/termination=-100` remained saturated for `fwd0.5`, `fwd1.0`, and
   stand. Stand did not improve; deterministic `stand_still=-140.0983`.
+- Default-off feet-air-time command-mask controls are committed at
+  `d353fe6 Add SAC feet air time command mask override`. Fresh env1024 R3 100k
+  with `--env_feet_air_time_command_mask True` passed runtime and checkpoint
+  gates. Checkpoint:
+  `./logs/sac_lift_gpu_100k_env1024_r3_feet_air_time_mask/sac_lift_step_99328.pkl`.
+- Feet-air-time command-mask fixed-command and stand eval inherited
+  `feet_air_time_command_mask=true` and returned `EVAL_OK` with NaN flags false.
+  The mask works: stand eval reports `reward/feet_air_time=0.0`. The gate still
+  failed because `reward/termination=-100` remained saturated for `fwd0.5`,
+  `fwd1.0`, and stand. `fwd1.0` deterministic tracking was weaker than
+  push-disable and phase-freeze (`4.1466` vs `5.2440` and `5.4434`), and stand
+  did not improve (`stand_still=-143.5669`).
 
 ## Current Recommendation
 
@@ -296,8 +308,10 @@ zero-command phase-freeze diagnostic.
   inherited eval, but tracking and termination remained weak. The push-disable
   gate improved tracking somewhat but left `reward/termination=-100`
   saturated. The phase-freeze gate was runtime-valid but also left termination
-  saturated and did not improve stand. Design isolated default-off
-  `feet_air_time` command-mask ablation next. Keep
+  saturated and did not improve stand. The feet-air-time command-mask gate
+  correctly zeroed `reward/feet_air_time` on stand but also failed termination
+  and did not improve stand. Move to component-level termination/contact
+  analysis next. Keep
   `alpha_floor=0.03` only as a secondary alpha/entropy diagnostic. Do not patch
   alpha sign blindly; the sign audit found no direct Brax-style sign bug.
 - A fixed-command `fwd1.0` render/video review is useful to inspect whether the
@@ -583,20 +597,21 @@ CPU, stop and report the CUDA/JAX blocker.
 
 The bounded 1024-env 3M R3 result, fixed-forward eval gate, two short
 fixed-alpha diagnostics, the `foot_velocity` feet-slip gate, the
-`feet_slip_scale=0` gate, the push-disable gate, and the zero-command
-phase-freeze gate have now been executed and recorded. Do not automatically run
-250k, 5M, or 10M. The next useful step is a targeted isolated `feet_air_time`
-command-mask design, with alpha-floor only as a secondary diagnostic:
+`feet_slip_scale=0` gate, the push-disable gate, the zero-command phase-freeze
+gate, and the feet-air-time command-mask gate have now been executed and
+recorded. Do not automatically run 250k, 5M, or 10M. The next useful step is
+component-level termination/contact analysis, with alpha-floor only as a
+secondary diagnostic:
 
-1. Reward/prior path: design an isolated default-off `feet_air_time`
-   command-mask ablation. Push-disable and phase freeze improved or matched
-   forward tracking somewhat, but neither removed `termination=-100`; phase
-   freeze also failed to improve stand.
+1. Reward/prior path: inspect termination and contact-related components. The
+   feet-air-time mask works on stand (`reward/feet_air_time=0.0`) but still
+   leaves `termination=-100` saturated, so the standalone zero-command
+   `feet_air_time` hypothesis is weakened.
 2. Fixed-command path: inspect or render `fwd1.0` if visual evidence is needed,
    because deterministic `tracking_lin_vel` collapsed from `183.95` at
    `fwd0.5` to `25.94` at `fwd1.0`.
 3. Reward/prior follow-up: do not touch broader reward terms until the
-   `feet_air_time` prior interaction is understood.
+   termination/contact source is understood.
 4. Entropy path: keep `alpha_floor=0.03` as a secondary diagnostic; do not keep
    increasing fixed alpha blindly.
 5. Training path: only after that review, decide whether a carefully gated

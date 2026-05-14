@@ -18,8 +18,9 @@ domain randomization, or fine-tuning as part of the current validation phase.
 
 - Path: `/home/admin/projects/mujoco_playground/g1_sac_dev`
 - Branch: `sac-integration`
-- Latest recorded diagnostic state: fresh env1024 R3 100k zero-command
-  phase-freeze diagnostic after the push-disable, `feet_slip_scale=0`,
+- Latest recorded diagnostic state: fresh env1024 R3 100k feet-air-time
+  command-mask diagnostic after the zero-command phase-freeze, push-disable,
+  `feet_slip_scale=0`,
   `foot_velocity`, `fixed_alpha=0.03`, and `fixed_alpha=0.05` gates,
   fixed-command forward eval gate, fixed-command eval support, alpha sign audit,
   fixed-command 3M render helper smoke, deterministic 3M render helper smoke,
@@ -281,6 +282,17 @@ Current validated ladder:
   `tracking_lin_vel`), but `reward/termination=-100` remained saturated for
   `fwd0.5`, `fwd1.0`, and stand; stand did not improve
   (`stand_still=-140.0983` deterministic). Do not extend this variant to
+  250k/5M/10M.
+- Fresh env1024 R3 100k feet-air-time command-mask diagnostic: PASS
+  runtime/checkpoint with failed stability gate.
+  `--env_feet_air_time_command_mask True` returned `TRAIN_OK`, checkpoint
+  `./logs/sac_lift_gpu_100k_env1024_r3_feet_air_time_mask/sac_lift_step_99328.pkl`,
+  readiness PASS, and fixed-command/stand eval `EVAL_OK` with
+  `feet_air_time_command_mask=true` inherited. The mask works: stand eval
+  reports `reward/feet_air_time=0.0`. However `reward/termination=-100`
+  remained saturated for `fwd0.5`, `fwd1.0`, and stand; `fwd1.0` tracking was
+  weaker than push-disable and phase-freeze, and stand did not improve
+  (`stand_still=-143.5669` deterministic). Do not extend this variant to
   250k/5M/10M.
 - Action joint mapping diagnostic: PASS.
 
@@ -967,10 +979,13 @@ checks and improved deterministic tracking somewhat, but `reward/termination`
 remains saturated for both fixed-forward commands and both policy modes. The
 zero-command phase-freeze gate also passed runtime/checkpoint checks and
 inherited eval, but it did not remove termination saturation and did not
-improve stand. Next recommended work is isolated default-off `feet_air_time`
-command-mask design; `alpha_floor=0.03` is only a secondary diagnostic. Do not
-run fixed-alpha, foot-velocity, feet-slip-scale-zero, push-disable, or
-phase-freeze 250k, 5M, or 10M from these results. A
+improve stand. The feet-air-time command-mask gate also passed runtime,
+checkpoint, and inherited eval checks; it correctly zeroed
+`reward/feet_air_time` on stand, but termination remained saturated and stand
+did not improve. Next recommended work is component-level termination/contact
+analysis; `alpha_floor=0.03` is only a secondary diagnostic. Do not run
+fixed-alpha, foot-velocity, feet-slip-scale-zero, push-disable, phase-freeze,
+or feet-air-time-mask 250k, 5M, or 10M from these results. A
 fixed-command `fwd1.0` render/video review is useful, and remaining command
 coverage for `[0,0.3,0]`, `[0,0,0.5]`, and `[0,0,0]` remains useful, but
 neither should justify 5M/10M without resolving forward tracking weakness and

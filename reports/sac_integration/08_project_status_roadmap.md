@@ -1,6 +1,6 @@
 # G1 SAC Integration Status And Roadmap
 
-Status: updated on 2026-05-15 after the fresh env1024 R3 100k zero-command phase-freeze diagnostic.
+Status: updated on 2026-05-15 after the fresh env1024 R3 100k feet-air-time command-mask diagnostic.
 
 ## 1. Mission
 
@@ -200,7 +200,8 @@ Validation ladder:
 36. Fresh env1024 R3 100k `--env_feet_slip_scale 0.0` diagnostic
 37. Fresh env1024 R3 100k `--env_push_enable False` diagnostic
 38. Fresh env1024 R3 100k `--env_zero_command_phase_freeze True` diagnostic
-39. 10M-scale training
+39. Fresh env1024 R3 100k `--env_feet_air_time_command_mask True` diagnostic
+40. 10M-scale training
 
 Status:
 
@@ -255,7 +256,15 @@ Status:
   false. Forward tracking was similar to push-disable, but
   `reward/termination=-100` remained saturated for `fwd0.5`, `fwd1.0`, and
   stand; stand did not improve.
-- Step 39 remains `NOT VALIDATED` and requires reward/prior targeted audit,
+- Step 39 passed runtime/checkpoint gates but failed the stability gate:
+  fresh env1024 R3 100k `--env_feet_air_time_command_mask True` returned
+  `TRAIN_OK`, checkpoint readiness PASS, and inherited fixed-command/stand eval
+  with `feet_air_time_command_mask=true` returned `EVAL_OK` with NaN flags
+  false. Stand eval correctly reported `reward/feet_air_time=0.0`, but
+  `reward/termination=-100` remained saturated for `fwd0.5`, `fwd1.0`, and
+  stand; `fwd1.0` tracking was worse than push-disable and phase-freeze, and
+  stand did not improve.
+- Step 40 remains `NOT VALIDATED` and requires reward/prior targeted audit,
   resource plan, and stop conditions.
 
 ### Phase 6: Reports, Commits, Migration Handoff
@@ -1467,4 +1476,4 @@ keep `alpha_floor=0.03` only as a secondary diagnostic.
 
 ## 28. Current Position In One Sentence
 
-SAC Route B is implemented; CPU tiny smoke, WSL2 GPU preflight, Route B GPU 10k smoke, normalizer-ready checkpoint validation, bounded deterministic eval smoke, 50k sanity/eval, 100k sanity/eval, 250k sanity/eval, 500k sanity/eval, both-mode eval diagnostic, full action diagnostic, fresh 100k/250k train-time actor drift diagnostics, fresh 100k alpha/entropy ablation diagnostics, the A1/A3/A4 multi-seed eval-only ablation diagnostic, bounded fresh 250k/500k/750k A4 extensions, fresh 100k actor-regularization R1, fresh 100k actor-regularization R2/R3, bounded R3 250k, the 512/1024/2048 high-parallel capacity benchmark, bounded 1024-env 1M R3, bounded 1024-env 3M R3, fixed-command render support, fixed-command eval support, alpha sign audit, fixed-command forward eval gate, fresh env1024 R3 100k `fixed_alpha=0.03`/`0.05` diagnostics, fresh env1024 R3 100k `foot_velocity` feet-slip diagnostic, fresh env1024 R3 100k `feet_slip_scale=0` diagnostic, fresh env1024 R3 100k push-disable diagnostic, and fresh env1024 R3 100k zero-command phase-freeze diagnostic have passed their bounded runtime gates; 3M provides the first strong deterministic-policy improvement signal but also severe alpha/std collapse, stochastic degradation, and weak `[1,0,0]` forward tracking; fixed-alpha, feet-slip, push-disable, and phase-freeze short gates did not solve 100k fixed-forward/stand termination; 5M/10M, full eval benchmarking, domain randomization, and fine-tuning remain `NOT VALIDATED`.
+SAC Route B is implemented; CPU tiny smoke, WSL2 GPU preflight, Route B GPU 10k smoke, normalizer-ready checkpoint validation, bounded deterministic eval smoke, 50k sanity/eval, 100k sanity/eval, 250k sanity/eval, 500k sanity/eval, both-mode eval diagnostic, full action diagnostic, fresh 100k/250k train-time actor drift diagnostics, fresh 100k alpha/entropy ablation diagnostics, the A1/A3/A4 multi-seed eval-only ablation diagnostic, bounded fresh 250k/500k/750k A4 extensions, fresh 100k actor-regularization R1, fresh 100k actor-regularization R2/R3, bounded R3 250k, the 512/1024/2048 high-parallel capacity benchmark, bounded 1024-env 1M R3, bounded 1024-env 3M R3, fixed-command render support, fixed-command eval support, alpha sign audit, fixed-command forward eval gate, fresh env1024 R3 100k `fixed_alpha=0.03`/`0.05` diagnostics, fresh env1024 R3 100k `foot_velocity` feet-slip diagnostic, fresh env1024 R3 100k `feet_slip_scale=0` diagnostic, fresh env1024 R3 100k push-disable diagnostic, fresh env1024 R3 100k zero-command phase-freeze diagnostic, and fresh env1024 R3 100k feet-air-time command-mask diagnostic have passed their bounded runtime gates; 3M provides the first strong deterministic-policy improvement signal but also severe alpha/std collapse, stochastic degradation, and weak `[1,0,0]` forward tracking; fixed-alpha, feet-slip, push-disable, phase-freeze, and feet-air-time command-mask short gates did not solve 100k fixed-forward/stand termination; 5M/10M, full eval benchmarking, domain randomization, and fine-tuning remain `NOT VALIDATED`.
