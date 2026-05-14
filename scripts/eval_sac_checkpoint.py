@@ -141,6 +141,11 @@ def _eval_env_overrides(config: Mapping[str, Any], impl: str) -> dict[str, Any]:
   env_push_enable = config.get("env_push_enable")
   if env_push_enable is not None:
     overrides["push_config.enable"] = _str_to_bool(env_push_enable)
+  env_zero_command_phase_freeze = config.get("env_zero_command_phase_freeze")
+  if env_zero_command_phase_freeze is not None:
+    overrides["zero_command_phase_freeze"] = _str_to_bool(
+        env_zero_command_phase_freeze
+    )
   return overrides
 
 

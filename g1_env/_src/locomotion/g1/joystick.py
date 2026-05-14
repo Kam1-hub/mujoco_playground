@@ -99,6 +99,7 @@ def default_config() -> config_dict.ConfigDict:
           b=[0.9, 0.25, 0.5],
       ),
       feet_slip_mode="body_velocity",
+      zero_command_phase_freeze=False,
       lin_vel_x=[-1.0, 1.0],
       lin_vel_y=[-0.5, 0.5],
       ang_vel_yaw=[-1.0, 1.0],
@@ -399,12 +400,12 @@ class Joystick(g1_base.G1Env):
     state.info["push_step"] += 1
     phase_tp1 = state.info["phase"] + state.info["phase_dt"]
     state.info["phase"] = jp.fmod(phase_tp1 + jp.pi, 2 * jp.pi) - jp.pi
-    # NOTE(kevin): Enable this to make the policy stand still at 0 command.
-    # state.info["phase"] = jp.where(
-    #     jp.linalg.norm(state.info["command"]) > 0.01,
-    #     state.info["phase"],
-    #     jp.ones(2) * jp.pi,
-    # )
+    if self._config.zero_command_phase_freeze:
+      state.info["phase"] = jp.where(
+          jp.linalg.norm(state.info["command"]) > 0.01,
+          state.info["phase"],
+          jp.ones(2) * jp.pi,
+      )
     state.info["last_last_act"] = state.info["last_act"]
     state.info["last_act"] = action
     state.info["rng"], cmd_rng = jax.random.split(state.info["rng"])

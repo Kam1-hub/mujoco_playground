@@ -180,6 +180,11 @@ def train(config: Any) -> dict[str, Any]:
   env_push_enable = config.get("env_push_enable", None)
   if env_push_enable is not None:
     env_overrides["push_config.enable"] = bool(env_push_enable)
+  env_zero_command_phase_freeze = config.get("env_zero_command_phase_freeze", None)
+  if env_zero_command_phase_freeze is not None:
+    env_overrides["zero_command_phase_freeze"] = bool(
+        env_zero_command_phase_freeze
+    )
   env = registry.load(
       config.env_name,
       config=env_cfg,
