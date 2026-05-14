@@ -29,6 +29,7 @@ Required reports:
 - `19_alpha_entropy_and_fixed_eval_gate.md`
 - `20_feet_slip_scale_zero_diagnostic.md`
 - `21_push_disable_diagnostic.md`
+- `22_phase_freeze_diagnostic.md`
 
 Repo-root continuation handoff:
 

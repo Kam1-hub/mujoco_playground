@@ -10,7 +10,7 @@ continue without relying on chat history.
 - Path: `/home/admin/projects/mujoco_playground/g1_sac_dev`
 - Branch: `sac-integration`
 - Current diagnostic/report baseline before this report update:
-  `cea95a7 Add SAC push disable env override`
+  `297f046 Add SAC zero-command phase freeze override`
 - Remote: `origin https://github.com/Kam1-hub/mujoco_playground.git`
 - External menagerie commit: `1b86ece576591213e2b666ebf59508454200ca97`
 
@@ -64,6 +64,7 @@ Runtime artifacts are local and ignored. Do not commit `logs/`, `.venv/`,
 | Fresh env1024 R3 100k foot-velocity feet-slip diagnostic | PASS_RUNTIME_WEAK_FIXED_COMMAND | `./logs/sac_lift_gpu_100k_env1024_r3_feet_slip_foot_velocity/sac_lift_step_99328.pkl`, `--env_feet_slip_mode foot_velocity`, `TRAIN_OK`, readiness PASS, but small fixed-command smoke was still weak |
 | Fresh env1024 R3 100k feet-slip scale zero diagnostic | PASS_RUNTIME_WEAK_FIXED_COMMAND | `./logs/sac_lift_gpu_100k_env1024_r3_feet_slip_scale_0/sac_lift_step_99328.pkl`, `--env_feet_slip_scale 0.0`, `TRAIN_OK`, readiness PASS, inherited eval after `442d297` reports `reward/feet_slip=0.0`, but fixed-command smoke remains weak |
 | Fresh env1024 R3 100k push-disable diagnostic | PASS_RUNTIME_WEAK_FIXED_COMMAND | `./logs/sac_lift_gpu_100k_env1024_r3_push_disable/sac_lift_step_99328.pkl`, `--env_push_enable False`, `TRAIN_OK`, readiness PASS, inherited eval reports `push_config.enable=false`, deterministic tracking improves versus prior 100k gates, but `reward/termination=-100` remains saturated |
+| Fresh env1024 R3 100k zero-command phase-freeze diagnostic | PASS_RUNTIME_WEAK_FIXED_COMMAND | `./logs/sac_lift_gpu_100k_env1024_r3_phase_freeze/sac_lift_step_99328.pkl`, `--env_zero_command_phase_freeze True`, `TRAIN_OK`, readiness PASS, inherited eval reports `zero_command_phase_freeze=true`, forward tracking similar to push-disable, but `reward/termination=-100` remains saturated for fwd0.5, fwd1.0, and stand |
 | 10M training | NOT VALIDATED | Blocked by fixed-forward weakness and stochastic collapse; requires alpha/entropy decision review, resource plan, and stop conditions |
 
 ## Completed Outcomes
@@ -243,6 +244,17 @@ Runtime artifacts are local and ignored. Do not commit `logs/`, `.venv/`,
   `reward/termination=-100` remained saturated in both fixed-forward commands
   and both policy modes. This does not justify extending the variant to 250k,
   5M, or 10M.
+- Validated fresh env1024 R3 100k `--env_zero_command_phase_freeze True`
+  diagnostic. The run produced checkpoint
+  `./logs/sac_lift_gpu_100k_env1024_r3_phase_freeze/sac_lift_step_99328.pkl`,
+  returned `TRAIN_OK`, and passed checkpoint readiness. Inherited
+  fixed-command/stand eval confirmed `zero_command_phase_freeze=true` and
+  returned `EVAL_OK` with NaN flags false. Forward tracking was similar to the
+  push-disable gate (`fwd0.5 tracking_lin_vel=9.9911`,
+  `fwd1.0 tracking_lin_vel=5.4434` deterministic), but
+  `reward/termination=-100` remained saturated for `fwd0.5`, `fwd1.0`, and
+  stand. Stand did not improve; deterministic `stand_still=-140.0983`. This
+  does not justify extending the variant to 250k, 5M, or 10M.
 
 ### Full Action Diagnostic Summary
 
@@ -1093,14 +1105,17 @@ The next recommended step is no longer another fixed-alpha increase. Both
 fixed-forward smoke, and `0.05` added a critic-loss watch item. The
 `feet_slip_scale=0` gate removed the penalty in inherited eval but still left
 weak tracking and high termination. The push-disable gate improved
-fixed-forward tracking somewhat, but termination remained saturated. Prioritize:
+fixed-forward tracking somewhat, but termination remained saturated. The
+zero-command phase-freeze gate was runtime-valid but also left termination
+saturated and did not improve stand. Prioritize:
 
-1. phase freeze / `feet_air_time` command-mask ablation design, because
-   perturbation removal was not sufficient to solve fixed-forward termination;
+1. isolated default-off `feet_air_time` command-mask ablation design, because
+   perturbation removal and zero-command phase freeze were not sufficient to
+   solve fixed-forward/stand termination;
 2. optional fixed-command `fwd1.0` render/video to distinguish upright shuffle
    from partial forward locomotion;
-3. keep reward/action scale/Kp unchanged until the phase / `feet_air_time`
-   prior interaction is understood;
+3. keep reward/action scale/Kp unchanged until the `feet_air_time` prior
+   interaction is understood;
 4. `alpha_floor=0.03` only as a secondary alpha/entropy diagnostic, not as the
    main path;
 5. remaining command coverage for `[0,0.3,0]`, `[0,0,0.5]`, and `[0,0,0]`

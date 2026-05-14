@@ -1,7 +1,76 @@
 # Smoke Results
 
 Status: updated on 2026-05-15 after the fresh env1024 R3 100k
-push-disable diagnostic.
+zero-command phase-freeze diagnostic.
+
+## 2026-05-15 Fresh Env1024 R3 100k Zero-Command Phase-Freeze Diagnostic
+
+- Scope: short reward/prior diagnostic using
+  `--env_zero_command_phase_freeze True`; no 250k, 5M, 10M, render, code,
+  reward, `action_scale`, Kp, PPO/RSL, or checkpoint schema change was made for
+  this report update.
+- Related code commit: `297f046 Add SAC zero-command phase freeze override`.
+- Isolation: this gate did not combine phase freeze with push-disable.
+- Status: `TRAIN_OK`.
+- Checkpoint:
+  `./logs/sac_lift_gpu_100k_env1024_r3_phase_freeze/sac_lift_step_99328.pkl`
+- Checkpoint readiness: PASS.
+- Env steps: `99328`.
+- Gradient steps: `1552`.
+- Wall time: `77.1315s`.
+- SPS: `1287.7740`.
+- Actor loss: `-5.6766`.
+- Critic loss: `0.1277`.
+- Q / target Q: `4.8994 / 4.8731`.
+- Reward mean: `-0.12105`.
+- Done fraction: `0.01953`.
+- Discount mean: `0.98047`.
+- Alpha / log alpha / effective alpha:
+  `0.04279 / -3.15137 / 0.04279`.
+
+Actor drift summary:
+
+| Metric | Final |
+|---|---:|
+| actor policy mean abs mean | 0.13041 |
+| actor policy mean abs max | 1.38412 |
+| actor log_std mean/min/max | -0.14604 / -0.65995 / 0.06970 |
+| actor policy std mean | 0.86613 |
+| sampled action abs mean | 0.52296 |
+| sampled action saturation 0.95 | 0.03704 |
+| deterministic action abs mean | 0.12426 |
+| deterministic action saturation 0.95 | 0.0 |
+
+Small fixed-command and stand smokes inherited
+`zero_command_phase_freeze=true`:
+
+| Command | Mode | Reward | Action Abs | tracking_lin_vel | tracking_ang_vel | ang_vel_xy | orientation | feet_phase | feet_air_time | feet_slip | stand_still | termination |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| `[0.5,0,0]` | deterministic | -3.6287 | 0.1111 | 9.9911 | 25.8440 | -48.2413 | -37.7401 | 24.4461 | -1.2200 | -16.6528 | 0.0 | -100 |
+| `[0.5,0,0]` | stochastic | -6.4417 | 0.5202 | 9.2433 | 3.6729 | -136.7063 | -54.7383 | 19.5672 | -2.2300 | -9.6859 | 0.0 | -100 |
+| `[1.0,0,0]` | deterministic | -3.7182 | 0.1119 | 5.4434 | 24.9592 | -47.3144 | -37.1584 | 24.5605 | -1.2100 | -16.8150 | 0.0 | -100 |
+| `[1.0,0,0]` | stochastic | -6.4997 | 0.5202 | 3.5212 | 3.9904 | -133.9037 | -54.7134 | 19.7433 | -2.3300 | -9.9311 | 0.0 | -100 |
+| `[0,0,0]` | deterministic | -6.3323 | 0.1080 | 7.6393 | 24.9028 | -47.1275 | -36.0732 | 30.3374 | -1.3700 | -16.5943 | -140.0983 | -100 |
+| `[0,0,0]` | stochastic | -10.9066 | 0.5205 | 10.4273 | 3.4705 | -137.5564 | -54.0306 | 24.0718 | -2.3100 | -9.9143 | -230.4297 | -100 |
+
+All three eval JSON sanity checks passed with `EVAL_OK`, inherited
+`{"impl":"jax", "zero_command_phase_freeze": true}`, and no action/reward/obs
+NaN flags.
+
+Conclusion:
+
+- Zero-command phase freeze is runtime-valid, but the gate failed.
+- Forward tracking is similar to push-disable and not enough; `fwd0.5` and
+  `fwd1.0` still terminate with `termination=-100`.
+- Stand did not improve: `stand_still` is strongly negative and termination is
+  saturated.
+- This weakens phase freeze as a standalone fix.
+- Do not continue to 250k, 5M, or 10M from this result.
+- Next targeted design should be an isolated default-off `feet_air_time`
+  command-mask ablation.
+
+See `reports/sac_integration/22_phase_freeze_diagnostic.md` for the focused
+record.
 
 ## 2026-05-15 Fresh Env1024 R3 100k Push-Disable Diagnostic
 

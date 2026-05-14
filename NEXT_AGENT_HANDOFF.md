@@ -18,9 +18,9 @@ domain randomization, or fine-tuning as part of the current validation phase.
 
 - Path: `/home/admin/projects/mujoco_playground/g1_sac_dev`
 - Branch: `sac-integration`
-- Latest recorded diagnostic state: fresh env1024 R3 100k push-disable
-  diagnostic after the `feet_slip_scale=0`, `foot_velocity`,
-  `fixed_alpha=0.03`, and `fixed_alpha=0.05` gates,
+- Latest recorded diagnostic state: fresh env1024 R3 100k zero-command
+  phase-freeze diagnostic after the push-disable, `feet_slip_scale=0`,
+  `foot_velocity`, `fixed_alpha=0.03`, and `fixed_alpha=0.05` gates,
   fixed-command forward eval gate, fixed-command eval support, alpha sign audit,
   fixed-command 3M render helper smoke, deterministic 3M render helper smoke,
   bounded 1024-env 3M R3 run, high-parallel 512/1024/2048 capacity benchmark,
@@ -264,6 +264,24 @@ Current validated ladder:
   deterministic reward was `-3.8258`, `tracking_lin_vel` remained low, and
   `termination=-100` remained present. Do not extend fixed-alpha variants to
   250k/5M/10M from these results.
+- Fresh env1024 R3 100k feet-slip and push-disable diagnostics: PASS
+  runtime/checkpoint with weak fixed-command smoke. `foot_velocity`,
+  `feet_slip_scale=0`, and `--env_push_enable False` all returned
+  `TRAIN_OK` and readiness PASS. `feet_slip_scale=0` confirmed inherited eval
+  with `reward/feet_slip=0.0`; push-disable improved deterministic
+  `tracking_lin_vel` (`fwd0.5=9.9375`, `fwd1.0=5.2440`), but
+  `reward/termination=-100` remained saturated.
+- Fresh env1024 R3 100k zero-command phase-freeze diagnostic: PASS
+  runtime/checkpoint with failed stability gate. `--env_zero_command_phase_freeze True`
+  returned `TRAIN_OK`, checkpoint
+  `./logs/sac_lift_gpu_100k_env1024_r3_phase_freeze/sac_lift_step_99328.pkl`,
+  readiness PASS, and fixed-command/stand eval `EVAL_OK` with
+  `zero_command_phase_freeze=true` inherited. Forward tracking was similar to
+  push-disable (`fwd0.5=9.9911`, `fwd1.0=5.4434` deterministic
+  `tracking_lin_vel`), but `reward/termination=-100` remained saturated for
+  `fwd0.5`, `fwd1.0`, and stand; stand did not improve
+  (`stand_still=-140.0983` deterministic). Do not extend this variant to
+  250k/5M/10M.
 - Action joint mapping diagnostic: PASS.
 
 Still not validated:
@@ -848,8 +866,8 @@ Both-mode eval diagnostic:
 1. Do read-only status checks.
 2. Read this file and `reports/sac_integration/09_phase_summary_and_risks.md`.
 3. Review `reports/sac_integration/19_alpha_entropy_and_fixed_eval_gate.md`.
-4. Plan phase freeze / `feet_air_time` command-mask prior ablation before any
-   longer run.
+4. Plan an isolated default-off `feet_air_time` command-mask prior ablation
+   before any longer run.
 5. Do not draft or execute 10M automatically.
 
 Do not start long training automatically. Do not modify reward, action scale,
@@ -946,11 +964,13 @@ after eval override inheritance in `442d297`, correctly reports
 `reward/feet_slip=0.0`; however `fwd1.0` still has low tracking and
 `termination=-100`. The default-off push-disable gate passed runtime/checkpoint
 checks and improved deterministic tracking somewhat, but `reward/termination`
-remains saturated for both fixed-forward commands and both policy modes. Next
-recommended work is phase / `feet_air_time` prior ablation design;
-`alpha_floor=0.03` is only a secondary diagnostic. Do not run fixed-alpha,
-foot-velocity, feet-slip-scale-zero, or push-disable 250k, 5M, or 10M from
-these results. A
+remains saturated for both fixed-forward commands and both policy modes. The
+zero-command phase-freeze gate also passed runtime/checkpoint checks and
+inherited eval, but it did not remove termination saturation and did not
+improve stand. Next recommended work is isolated default-off `feet_air_time`
+command-mask design; `alpha_floor=0.03` is only a secondary diagnostic. Do not
+run fixed-alpha, foot-velocity, feet-slip-scale-zero, push-disable, or
+phase-freeze 250k, 5M, or 10M from these results. A
 fixed-command `fwd1.0` render/video review is useful, and remaining command
 coverage for `[0,0.3,0]`, `[0,0,0.5]`, and `[0,0,0]` remains useful, but
 neither should justify 5M/10M without resolving forward tracking weakness and
