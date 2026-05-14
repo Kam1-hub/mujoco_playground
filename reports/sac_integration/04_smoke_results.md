@@ -1,7 +1,59 @@
 # Smoke Results
 
-Status: updated on 2026-05-14 after the bounded fresh 750k A4 alpha/entropy
-bridge.
+Status: updated on 2026-05-14 after the fresh 100k actor-regularization R1
+ablation.
+
+## 2026-05-14 Fresh 100k Actor-Regularization R1
+
+- Scope: fresh 100k regularization ablation using A4 alpha settings plus
+  `deterministic_action_l2_coef=0.01` and `actor_mean_l2_coef=0.001`.
+- Status: `TRAIN_OK`
+- Checkpoint:
+  `./logs/sac_lift_gpu_100k_actor_reg_te0p25_alr1e4_l2_0p01_mean_0p001_s1/sac_lift_step_99968.pkl`
+- Checkpoint readiness: PASS; `deterministic_eval_ready=true`; normalizers
+  present.
+- 4 env x 200 seed 0 action diagnostic eval: PASS / `EVAL_OK`, JSON
+  `./logs/sac_eval_actor_reg_100k/eval_R1_seed0_4x200_actiondiag.json`.
+- 5-seed 16 env x 1000 eval: PASS, five JSONs in
+  `./logs/sac_eval_actor_reg_100k_multiseed/`.
+- All evals returned `EVAL_OK`; all action/reward/obs NaN flags were false.
+- No code, reward, `action_scale`, Kp, PPO, RSL, domain randomization, or
+  fine-tuning changes were made during the run.
+- No traceback, OOM, fatal CUDA, env, checkpoint, or eval failure was observed.
+
+Training summary:
+
+| env_steps | gradient_steps | wall_time | sps | actor_loss | critic_loss | alpha | log_alpha | q | target_q |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 99968 | 1548 | 71.0452 | 1407.1039 | -5.7620 | 0.06915 | 0.042852 | -3.149996 | 4.9464 | 4.9560 |
+
+Actor drift and regularization summary:
+
+| Metric | Final | Interval |
+|---|---:|---:|
+| actor mean abs | 0.23127 | 0.16341 |
+| deterministic action abs | 0.21378 | 0.15691 |
+| log_std mean | -0.15577 | -0.13456 |
+| std mean | 0.85809 | 0.87862 |
+| deterministic action L2 | 0.07827 | 0.04244 |
+| actor mean L2 | 0.10289 | 0.04958 |
+| actor regularization loss | 0.000886 | 0.000474 |
+
+Eval summary:
+
+| Eval | Mode | Reward Avg/Mean | Reward SD | Action Abs | Sat 0.95 | NaN |
+|---|---|---:|---:|---:|---:|---|
+| 4x200 seed0 | deterministic | -4.1646 | 0.4782 | 0.1652 | 0.0 | false |
+| 4x200 seed0 | stochastic | -6.3677 | 0.4307 | 0.5296 | 0.04487 | false |
+| 5-seed 16x1000 | deterministic | -4.3587 | 0.3786 | 0.17245 | 0.00000043 | false |
+| 5-seed 16x1000 | stochastic | -6.6210 | 0.4996 | 0.52716 | 0.04406 | false |
+
+Interpretation: R1 is runtime clean, but it does not reduce train-time actor
+mean or deterministic action magnitude versus the A4 100k baseline. The final
+regularization contribution `0.000886` is tiny relative to actor loss, so this
+coefficient set appears too weak. Do not extend R1 to 250k as-is; next action
+should be a decision review or stronger bounded coefficient sweep, not
+250k/750k/1M.
 
 ## 2026-05-14 Fresh 750k A4 Alpha/Entropy Bridge
 

@@ -1,7 +1,7 @@
 # G1 SAC Integration Status And Roadmap
 
-Status: updated on 2026-05-14 after the bounded fresh 750k A4 alpha/entropy
-bridge.
+Status: updated on 2026-05-14 after the fresh 100k actor-regularization R1
+ablation.
 
 ## 1. Mission
 
@@ -186,12 +186,13 @@ Validation ladder:
 21. Bounded fresh 250k A4 alpha/entropy extension
 22. Bounded fresh 500k A4 alpha/entropy extension
 23. Bounded fresh 750k A4 alpha/entropy bridge
-24. 1M training
+24. Fresh 100k actor regularization R1
+25. 1M training
 
 Status:
 
-- Steps 1 through 23 are complete.
-- Step 24 remains `NOT VALIDATED` and requires separate user confirmation and
+- Steps 1 through 24 are complete.
+- Step 25 remains `NOT VALIDATED` and requires separate user confirmation and
   an explicit resource/stop-condition plan.
 
 ### Phase 6: Reports, Commits, Migration Handoff
@@ -216,6 +217,7 @@ Current GitHub branch:
 Key commits:
 
 ```text
+208eef2 Add SAC actor regularization diagnostics
 202c6a9 Add SAC actor drift train diagnostics
 8ff4f1d Add SAC action distribution eval diagnostics
 9cb5112 Record SAC both-mode eval diagnostics
@@ -1097,6 +1099,47 @@ improvement. Actor mean/action drift increased, entropy/std narrowed, critic
 loss rose, and deterministic plus stochastic 5-seed eval rewards worsened
 versus A4 500k. This blocks any automatic 1M or longer run.
 
-## 19. Current Position In One Sentence
+## 19. Fresh 100k Actor-Regularization R1
 
-SAC Route B is implemented; CPU tiny smoke, WSL2 GPU preflight, Route B GPU 10k smoke, normalizer-ready checkpoint validation, bounded deterministic eval smoke, 50k sanity/eval, 100k sanity/eval, 250k sanity/eval, 500k sanity/eval, both-mode eval diagnostic, full action diagnostic, fresh 100k/250k train-time actor drift diagnostics, fresh 100k alpha/entropy ablation diagnostics, the A1/A3/A4 multi-seed eval-only ablation diagnostic, and the bounded fresh 250k, 500k, and 750k A4 extensions have passed; 1M, full eval benchmarking, domain randomization, and fine-tuning remain `NOT VALIDATED`, and 750k evidence argues against automatic longer training.
+Status: `TRAIN_OK`
+
+```text
+checkpoint: ./logs/sac_lift_gpu_100k_actor_reg_te0p25_alr1e4_l2_0p01_mean_0p001_s1/sac_lift_step_99968.pkl
+checkpoint readiness: PASS
+env_steps: 99968
+gradient_steps: 1548
+wall_time: 71.0452
+sps: 1407.1039
+alpha: 0.042852
+log_alpha: -3.149996
+critic_loss: 0.06915
+q: 4.9464
+target_q: 4.9560
+```
+
+Regularization:
+
+```text
+deterministic_action_l2_coef: 0.01
+actor_mean_l2_coef: 0.001
+actor_regularization_loss final / interval: 0.000886 / 0.000474
+```
+
+Eval evidence:
+
+```text
+4x200 JSON: ./logs/sac_eval_actor_reg_100k/eval_R1_seed0_4x200_actiondiag.json
+5-seed JSON dir: ./logs/sac_eval_actor_reg_100k_multiseed/
+deterministic 5-seed reward avg: -4.3587
+stochastic 5-seed reward avg: -6.6210
+action/reward/obs NaN: false
+```
+
+Interpretation: R1 is runtime clean, but it does not reduce train-time actor
+mean or deterministic action magnitude versus A4 100k. The regularization
+contribution is tiny relative to actor loss, so R1 should not be extended to
+250k as-is.
+
+## 20. Current Position In One Sentence
+
+SAC Route B is implemented; CPU tiny smoke, WSL2 GPU preflight, Route B GPU 10k smoke, normalizer-ready checkpoint validation, bounded deterministic eval smoke, 50k sanity/eval, 100k sanity/eval, 250k sanity/eval, 500k sanity/eval, both-mode eval diagnostic, full action diagnostic, fresh 100k/250k train-time actor drift diagnostics, fresh 100k alpha/entropy ablation diagnostics, the A1/A3/A4 multi-seed eval-only ablation diagnostic, bounded fresh 250k/500k/750k A4 extensions, and fresh 100k actor-regularization R1 have passed runtime gates; 1M, full eval benchmarking, domain randomization, and fine-tuning remain `NOT VALIDATED`, 750k evidence argues against automatic longer training, and R1 appears too weak to extend to 250k as-is.

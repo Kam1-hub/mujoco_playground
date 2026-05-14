@@ -9,8 +9,8 @@ continue without relying on chat history.
 
 - Path: `/home/admin/projects/mujoco_playground/g1_sac_dev`
 - Branch: `sac-integration`
-- Current train-time actor drift diagnostic code baseline before this report
-  update: `202c6a9 Add SAC actor drift train diagnostics`
+- Current actor-regularization diagnostic code baseline before this report
+  update: `208eef2 Add SAC actor regularization diagnostics`
 - Remote: `origin https://github.com/Kam1-hub/mujoco_playground.git`
 - External menagerie commit: `1b86ece576591213e2b666ebf59508454200ca97`
 
@@ -48,6 +48,7 @@ Runtime artifacts are local and ignored. Do not commit `logs/`, `.venv/`,
 | Bounded fresh 250k A4 alpha/entropy extension | PASS | `./logs/sac_lift_gpu_250k_alpha_ablate_te0p25_alr1e4_s1/sac_lift_step_249984.pkl` |
 | Bounded fresh 500k A4 alpha/entropy extension | PASS | `./logs/sac_lift_gpu_500k_alpha_ablate_te0p25_alr1e4_s1/sac_lift_step_499968.pkl` |
 | Bounded fresh 750k A4 alpha/entropy bridge | PASS_RUNTIME_UNCLEAN_TREND | `./logs/sac_lift_gpu_750k_alpha_ablate_te0p25_alr1e4_s1/sac_lift_step_749952.pkl` |
+| Fresh 100k actor-regularization R1 | PASS_RUNTIME_WEAK_EFFECT | `./logs/sac_lift_gpu_100k_actor_reg_te0p25_alr1e4_l2_0p01_mean_0p001_s1/sac_lift_step_99968.pkl` |
 | 1M training | NOT VALIDATED | Requires explicit user confirmation and resource/stop plan |
 
 ## Completed Outcomes
@@ -108,6 +109,13 @@ Runtime artifacts are local and ignored. Do not commit `logs/`, `.venv/`,
   passed 5-seed 16 env x 1000 eval. Runtime remained stable, but actor drift,
   deterministic eval, stochastic eval, and critic loss worsened versus A4
   500k, so the result blocks any automatic 1M or longer run.
+- Validated fresh 100k actor-regularization R1 with A4 alpha settings,
+  `deterministic_action_l2_coef=0.01`, and `actor_mean_l2_coef=0.001`. The run
+  produced checkpoint
+  `./logs/sac_lift_gpu_100k_actor_reg_te0p25_alr1e4_l2_0p01_mean_0p001_s1/sac_lift_step_99968.pkl`,
+  passed checkpoint readiness, passed 4 env x 200 action diagnostic eval, and
+  passed 5-seed 16 env x 1000 eval. R1 was runtime-clean but too weak to
+  reduce train-time actor mean / deterministic action drift versus A4 100k.
 
 ### Full Action Diagnostic Summary
 
@@ -777,6 +785,11 @@ It is not yet reasonable to claim:
   critic loss rose to `0.1441`, deterministic 5-seed eval worsened to
   `-5.7314`, and stochastic 5-seed eval worsened to `-6.3802`. This blocks any
   automatic 1M or longer run.
+- Fresh 100k actor-regularization R1 passed runtime/checkpoint/eval gates, but
+  actor mean abs worsened versus A4 100k (`0.20693 -> 0.23127`),
+  deterministic action abs worsened (`0.19314 -> 0.21378`), stochastic
+  5-seed reward worsened (`-6.4935 -> -6.6210`), and the final regularization
+  contribution was only `0.000886`. Do not extend R1 to 250k as-is.
 - Eval reward is still low and should be treated as a smoke signal, not a
   performance benchmark.
 - Truncation handling is currently synthesized as zero when absent. That passed
@@ -862,11 +875,13 @@ Stop immediately and report if any of these occur:
 
 Do not automatically jump to 1M or any longer run from this report update. The
 next recommended step is a decision review/design pass using the bounded A4
-750k evidence. The 750k bridge was runtime stable but not a clean improvement:
-actor drift, deterministic eval, stochastic eval, and critic loss worsened
-versus A4 500k. A later 1M review should consider whether alpha floor, target
-entropy, log-alpha dynamics, critic scale, or deterministic mean action drift
-need more analysis before a longer run. Consider 1M only with:
+750k evidence and fresh 100k R1 result. The 750k bridge was runtime stable but
+not a clean improvement: actor drift, deterministic eval, stochastic eval, and
+critic loss worsened versus A4 500k. R1 showed the first actor-regularization
+coefficients are too weak for train-time drift control. A later 1M review
+should consider whether alpha floor, target entropy, log-alpha dynamics, critic
+scale, stronger actor regularization, or deterministic mean action drift need
+more analysis before a longer run. Consider 1M only with:
 
 - explicit resource budget
 - fresh logdir and checkpoint path

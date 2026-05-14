@@ -18,8 +18,8 @@ domain randomization, or fine-tuning as part of the current validation phase.
 
 - Path: `/home/admin/projects/mujoco_playground/g1_sac_dev`
 - Branch: `sac-integration`
-- Latest recorded diagnostic state: bounded fresh 750k A4 alpha/entropy bridge
-  report; use `git log --oneline -5` for the exact commit hash.
+- Latest recorded diagnostic state: fresh 100k actor-regularization R1 report;
+  use `git log --oneline -5` for the exact commit hash.
 - Remote: `origin https://github.com/Kam1-hub/mujoco_playground.git`
 - Last known pushed branch: `sac-integration`
 
@@ -177,6 +177,8 @@ Current validated ladder:
 - Bounded fresh 500k A4 alpha/entropy extension: PASS.
 - Bounded fresh 750k A4 alpha/entropy bridge: PASS runtime/checkpoint/eval,
   but not a clean stability improvement.
+- Fresh 100k actor-regularization R1: PASS runtime/checkpoint/eval, but too
+  weak to control train-time drift.
 - Action joint mapping diagnostic: PASS.
 
 Still not validated:
@@ -302,6 +304,17 @@ All paths below are runtime artifacts and should remain ignored:
 - `./logs/sac_eval_alpha_ablate_750k_multiseed/`
   - Five 16 env x 1000 both-mode eval JSONs from the A4 750k bridge
     checkpoint.
+  - All returned `EVAL_OK`; all action/reward/obs NaN flags false.
+- `./logs/sac_lift_gpu_100k_actor_reg_te0p25_alr1e4_l2_0p01_mean_0p001_s1/sac_lift_step_99968.pkl`
+  - Fresh 100k actor-regularization R1 checkpoint.
+  - `target_entropy_coef=0.25`, `alpha_learning_rate=1e-4`,
+    `deterministic_action_l2_coef=0.01`, and `actor_mean_l2_coef=0.001`.
+  - Checkpoint readiness PASS; normalizers present.
+- `./logs/sac_eval_actor_reg_100k/eval_R1_seed0_4x200_actiondiag.json`
+  - Small 4 env x 200 both-mode action diagnostic eval from the R1 checkpoint.
+  - Status `EVAL_OK`; action/reward/obs NaN flags false.
+- `./logs/sac_eval_actor_reg_100k_multiseed/`
+  - Five 16 env x 1000 both-mode eval JSONs from the R1 checkpoint.
   - All returned `EVAL_OK`; all action/reward/obs NaN flags false.
 - `./logs/sac_lift_schema_dry_run/sac_lift_step_0.pkl`
   - Dry-run schema validation artifact, if still present.
@@ -655,6 +668,12 @@ Both-mode eval diagnostic:
   gates, but it is not a clean stability improvement. Actor mean/action drift,
   deterministic eval reward, stochastic eval reward, and critic loss worsened
   versus A4 500k.
+- Fresh 100k actor-regularization R1 has run and passed runtime/checkpoint/eval
+  gates. It did not reduce train-time actor mean or deterministic action
+  magnitude versus A4 100k: actor mean abs worsened `0.20693 -> 0.23127`,
+  deterministic action abs worsened `0.19314 -> 0.21378`, stochastic 5-seed
+  reward worsened `-6.4935 -> -6.6210`, and the final regularization
+  contribution was only `0.000886`.
 - Action joint mapping now links the 500k deterministic top action dimensions
   mainly to right ankle roll/pitch, waist pitch, right knee, and hip roll. See
   `reports/sac_integration/13_action_joint_mapping_diagnostic.md`.
@@ -668,8 +687,8 @@ Both-mode eval diagnostic:
 2. Read this file and `reports/sac_integration/09_phase_summary_and_risks.md`.
 3. Review `reports/sac_integration/12_alpha_entropy_ablation_plan.md`.
 4. If the user explicitly approves another bounded diagnostic, first do a
-   decision review/design pass using the A4 750k evidence and explicit stop
-   conditions.
+   decision review/design pass using the A4 750k and R1 evidence with explicit
+   stop conditions.
 5. Do not draft or execute 1M automatically.
 
 Do not start 1M automatically. Do not modify reward, action scale, Kp,
@@ -725,8 +744,8 @@ status checks: pwd, git status --short --branch, git log --oneline -5,
 git remote -v, and git check-ignore -v logs .venv
 g1_env/external_deps/mujoco_menagerie || true.
 
-Current HEAD should include the report commit for the bounded A4 750k bridge
-unless newer report commits exist. GPU 10k smoke, deterministic
+Current HEAD should include the report commit for the fresh 100k
+actor-regularization R1 result unless newer report commits exist. GPU 10k smoke, deterministic
 eval smoke, GPU 50k sanity/eval, GPU 100k sanity/eval, GPU 250k sanity/eval,
 GPU 500k sanity/eval, 100k/250k/500k both-mode eval diagnostic, and full action
 distribution / reward-component diagnostic have passed. Fresh 100k and fresh
@@ -740,11 +759,14 @@ but does not eliminate A4's own 100k-to-250k drift. Bounded fresh 500k A4 has
 also passed and mitigates the old 500k deterministic drift pattern, but
 Q/target_q and critic loss remain watch items. Bounded fresh 750k A4 also
 passed runtime/checkpoint/eval gates, but actor drift and eval quality worsened
-versus A4 500k. 1M is not validated.
+versus A4 500k. Fresh 100k actor-regularization R1 passed runtime/checkpoint/eval
+gates but was too weak to control train-time drift, so do not extend R1 to
+250k as-is. 1M is not validated.
 
 Do not run training, eval, preflight, installs, downloads, or git commits unless
 explicitly asked. Next recommended work is a main/user decision review or
-design pass using the A4 750k evidence. Do not start 1M without a separate
-resource/stop-condition plan and user confirmation. Do not change reward,
-action_scale, Kp, domain randomization, fine-tuning, PPO, or RSL.
+stronger bounded coefficient design using the A4 750k and R1 evidence. Do not
+start 1M without a separate resource/stop-condition plan and user confirmation.
+Do not change reward, action_scale, Kp, domain randomization, fine-tuning, PPO,
+or RSL.
 ```

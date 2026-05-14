@@ -724,3 +724,111 @@ Multi-seed 16 env x 1000 aggregate:
   stochastic 5-seed eval also worsened `-6.0434 -> -6.3802`.
 - This blocks any automatic 1M or longer run. Next action should be a decision
   review/design pass, not another longer training run.
+
+## Fresh 100k Actor Regularization R1
+
+### Context
+
+- Scope: fresh 100k actor-regularization ablation using A4 alpha settings plus
+  small action diagnostic eval and 5-seed eval-only follow-up.
+- Parameters: `target_entropy_coef=0.25`, `alpha_learning_rate=1e-4`,
+  `deterministic_action_l2_coef=0.01`, and `actor_mean_l2_coef=0.001`.
+- This was not a 250k, 500k, 750k, or 1M run.
+- No code changes were made during the run.
+- No reward, `action_scale`, Kp, PPO, RSL, domain randomization, or
+  fine-tuning changes were made.
+
+### Training Result
+
+- Status: `TRAIN_OK`
+- Checkpoint:
+  `./logs/sac_lift_gpu_100k_actor_reg_te0p25_alr1e4_l2_0p01_mean_0p001_s1/sac_lift_step_99968.pkl`
+- Checkpoint readiness: PASS
+- `deterministic_eval_ready`: `true`
+- `policy_normalizer` / `value_normalizer`: present
+- `env_steps`: `99968`
+- `gradient_steps`: `1548`
+- `wall_time`: `71.0452`
+- `sps`: `1407.1039`
+- `actor_loss`: `-5.7620`
+- `critic_loss`: `0.06915`
+- `alpha`: `0.042852`
+- `log_alpha`: `-3.149996`
+- `alpha_loss`: `1.074637`
+- `alpha_log_prob`: `-17.8277`
+- `alpha_error_log_prob_plus_target`: `-25.0777`
+- `alpha_error_neg_log_prob_minus_target`: `25.0777`
+- `alpha_grad_proxy_exp`: `1.074637`
+- `q`: `4.9464`
+- `target_q`: `4.9560`
+- `reward_mean`: `-0.12368`
+- `done_fraction`: `0.015625`
+- `discount_mean`: `0.984375`
+
+### Actor Drift Metrics
+
+| Metric | Final | Interval Avg |
+|---|---:|---:|
+| actor policy mean abs mean | 0.23127 | 0.16341 |
+| actor policy mean abs max | 1.86644 | 1.18543 |
+| actor log_std mean | -0.15577 | -0.13456 |
+| actor log_std min | -0.63851 | -0.59243 |
+| actor log_std max | 0.09566 | 0.23248 |
+| actor policy std mean | 0.85809 | 0.87862 |
+| sampled action abs mean | 0.53080 | 0.52514 |
+| sampled action saturation 0.95 | 0.04755 | 0.04483 |
+| deterministic action abs mean | 0.21378 | 0.15691 |
+| deterministic action saturation 0.95 | 0.000135 | 0.0000045 |
+
+Regularization metrics:
+
+| Metric | Final | Interval Avg |
+|---|---:|---:|
+| deterministic action L2 | 0.07827 | 0.04244 |
+| actor mean L2 | 0.10289 | 0.04958 |
+| actor regularization loss | 0.000886 | 0.000474 |
+| deterministic action L2 coef | 0.01 | 0.01 |
+| actor mean L2 coef | 0.001 | 0.001 |
+
+### Eval Summary
+
+- 4x200 JSON:
+  `./logs/sac_eval_actor_reg_100k/eval_R1_seed0_4x200_actiondiag.json`
+- 5-seed JSON directory:
+  `./logs/sac_eval_actor_reg_100k_multiseed/`
+- 4x200 eval status: PASS / `EVAL_OK`
+- Multi-seed eval status: PASS; five 16 env x 1000 JSON outputs.
+- All action/reward/obs NaN flags were false.
+
+4 env x 200 seed 0:
+
+| Mode | Reward Mean | Reward SD | Reward Min | Reward Max | Action Abs | Sat 0.95 | NaN |
+|---|---:|---:|---:|---:|---:|---:|---|
+| deterministic | -4.1646 | 0.4782 | -4.5261 | -3.3416 | 0.1652 | 0.0 | false |
+| stochastic | -6.3677 | 0.4307 | -6.9031 | -5.7952 | 0.5296 | 0.04487 | false |
+
+5-seed 16 env x 1000 aggregate:
+
+| Mode | Reward Avg | Reward SD | Reward Min Avg | Reward Max Avg | Action Abs | Sat 0.95 | Policy Mean Abs | LogStd Mean | Std Mean |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| deterministic | -4.3587 | 0.3786 | -7.8721 | -3.1496 | 0.17245 | 0.00000043 | 0.1850 | -0.1043 | 0.9028 |
+| stochastic | -6.6210 | 0.4996 | -10.4349 | -4.9821 | 0.52716 | 0.04406 | 0.2150 | -0.1545 | 0.8590 |
+
+### Interpretation And Next Action
+
+- R1 is runtime clean: training, checkpoint readiness, 4x200 eval, and 5-seed
+  eval all passed with no traceback, OOM, fatal CUDA, checkpoint, or eval
+  failure.
+- Compared with the A4 100k baseline, alpha is effectively unchanged
+  (`0.042848 -> 0.042852`), but train actor mean abs worsened
+  `0.20693 -> 0.23127` and train deterministic action abs worsened
+  `0.19314 -> 0.21378`.
+- Log_std/std are slightly worse than A4 100k.
+- Deterministic 5-seed reward is comparable/slightly worse:
+  `-4.3436 -> -4.3587`, within seed variance.
+- Stochastic 5-seed reward worsened: `-6.4935 -> -6.6210`.
+- The final regularization contribution `0.000886` is tiny relative to the
+  actor loss magnitude, so this coefficient set appears too weak for
+  train-time drift control.
+- Do not extend R1 to 250k as-is. Next action should be a decision review or
+  stronger bounded coefficient sweep, not 250k, 750k, or 1M.
