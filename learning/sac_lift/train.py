@@ -200,6 +200,13 @@ def train(config: Any) -> dict[str, Any]:
   env_reset_root_qvel_scale = config.get("env_reset_root_qvel_scale", None)
   if env_reset_root_qvel_scale is not None:
     env_overrides["reset_root_qvel_scale"] = float(env_reset_root_qvel_scale)
+  env_reward_action_rate_scale = config.get(
+      "env_reward_action_rate_scale", None
+  )
+  if env_reward_action_rate_scale is not None:
+    env_overrides["reward_config.scales.action_rate"] = float(
+        env_reward_action_rate_scale
+    )
   env = registry.load(
       config.env_name,
       config=env_cfg,

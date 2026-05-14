@@ -218,6 +218,11 @@ def _eval_env_overrides(config: Mapping[str, Any], impl: str) -> dict[str, Any]:
   env_reset_root_qvel_scale = config.get("env_reset_root_qvel_scale")
   if env_reset_root_qvel_scale is not None:
     overrides["reset_root_qvel_scale"] = float(env_reset_root_qvel_scale)
+  env_reward_action_rate_scale = config.get("env_reward_action_rate_scale")
+  if env_reward_action_rate_scale is not None:
+    overrides["reward_config.scales.action_rate"] = float(
+        env_reward_action_rate_scale
+    )
   return overrides
 
 
