@@ -28,6 +28,7 @@ Required reports:
 - `18_fixed_command_render_review.md`
 - `19_alpha_entropy_and_fixed_eval_gate.md`
 - `20_feet_slip_scale_zero_diagnostic.md`
+- `21_push_disable_diagnostic.md`
 
 Repo-root continuation handoff:
 

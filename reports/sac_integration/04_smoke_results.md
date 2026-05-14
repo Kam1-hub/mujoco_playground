@@ -1,7 +1,68 @@
 # Smoke Results
 
 Status: updated on 2026-05-15 after the fresh env1024 R3 100k
-`feet_slip_scale=0` diagnostic and eval override inheritance fix.
+push-disable diagnostic.
+
+## 2026-05-15 Fresh Env1024 R3 100k Push-Disable Diagnostic
+
+- Scope: short reward/prior diagnostic using `--env_push_enable False`;
+  no 250k, 5M, 10M, render, code, reward, `action_scale`, Kp, PPO/RSL, or
+  checkpoint schema change was made for this report update.
+- Related code commit: `cea95a7 Add SAC push disable env override`.
+- Status: `TRAIN_OK`.
+- Checkpoint:
+  `./logs/sac_lift_gpu_100k_env1024_r3_push_disable/sac_lift_step_99328.pkl`
+- Checkpoint readiness: PASS.
+- Env steps: `99328`.
+- Gradient steps: `1552`.
+- Wall time: `76.5224s`.
+- SPS: `1298.0258`.
+- Actor loss: `-5.8302`.
+- Critic loss: `0.0771`.
+- Q / target Q: `5.0656 / 5.0483`.
+- Reward mean: `-0.10694`.
+- Done fraction: `0.015625`.
+- Discount mean: `0.984375`.
+- Alpha / log alpha / effective alpha:
+  `0.04279 / -3.15139 / 0.04279`.
+
+Actor drift summary:
+
+| Metric | Final |
+|---|---:|
+| actor policy mean abs mean | 0.13060 |
+| actor policy mean abs max | 1.09176 |
+| actor log_std mean/min/max | -0.14840 / -0.54374 / 0.07622 |
+| actor policy std mean | 0.86383 |
+| sampled action abs mean | 0.52134 |
+| sampled action saturation 0.95 | 0.03704 |
+| deterministic action abs mean | 0.12580 |
+| deterministic action saturation 0.95 | 0.0 |
+
+Small fixed-command smoke inherited `push_config.enable=false`:
+
+| Command | Mode | Reward | Action Abs | tracking_lin_vel | ang_vel_xy | orientation | feet_slip | termination |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| `[0.5,0,0]` | deterministic | -3.6396 | 0.1080 | 9.9375 | -46.9416 | -37.7836 | -16.5546 | -100 |
+| `[0.5,0,0]` | stochastic | -6.1141 | 0.5187 | 9.3145 | -129.8872 | -51.0247 | -9.5412 | -100 |
+| `[1.0,0,0]` | deterministic | -3.7192 | 0.1086 | 5.2440 | -46.5780 | -36.9127 | -16.6252 | -100 |
+| `[1.0,0,0]` | stochastic | -5.6779 | 0.5183 | 3.6313 | -116.2568 | -41.2300 | -9.1818 | -100 |
+
+Both fixed-command eval JSON sanity checks passed with no action/reward/obs
+NaN flags.
+
+Conclusion:
+
+- Push-disable gives a real signal and improves deterministic fixed-forward
+  tracking relative to prior 100k gates, especially `fwd1.0`.
+- However, termination remains saturated at `-100` in both commands and both
+  policy modes.
+- Push-disable alone does not pass the fixed-forward stability gate and does
+  not justify 250k, 5M, or 10M.
+- Next targeted design should be phase / `feet_air_time` prior ablation.
+
+See `reports/sac_integration/21_push_disable_diagnostic.md` for the focused
+record.
 
 ## 2026-05-15 Fresh Env1024 R3 100k Feet-Slip Scale Zero Diagnostic
 
@@ -70,8 +131,9 @@ Conclusion:
   high in the `[1.0,0,0]` smoke.
 - Feet slip is not the sole blocker.
 - Do not continue to 250k, 5M, or 10M from this result.
-- Next targeted gate should be default-off push-disable if feasible; otherwise
-  design a phase / `feet_air_time` prior ablation.
+- The follow-up push-disable gate has now run; since termination remained
+  saturated, the next targeted design should be phase / `feet_air_time` prior
+  ablation.
 
 See `reports/sac_integration/20_feet_slip_scale_zero_diagnostic.md` for the
 focused record.

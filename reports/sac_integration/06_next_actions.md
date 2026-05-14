@@ -1,7 +1,7 @@
 # Next Actions
 
 Status: updated on 2026-05-15 after the fresh env1024 R3 100k
-`feet_slip_scale=0` diagnostic and eval override inheritance fix.
+push-disable diagnostic.
 
 ## Immediate State
 
@@ -259,6 +259,15 @@ Status: updated on 2026-05-15 after the fresh env1024 R3 100k
   `EVAL_OK` and NaN flags false, but fixed-forward tracking is still weak:
   `fwd1.0` deterministic reward `-3.4952`, `tracking_lin_vel=2.4967`, and
   `termination=-100`.
+- Default-off push-disable controls are committed at
+  `cea95a7 Add SAC push disable env override`. Fresh env1024 R3 100k with
+  `--env_push_enable False` passed runtime and checkpoint gates. Checkpoint:
+  `./logs/sac_lift_gpu_100k_env1024_r3_push_disable/sac_lift_step_99328.pkl`.
+- Push-disable fixed-command eval inherited `push_config.enable=false` and
+  returned `EVAL_OK` with NaN flags false. Deterministic tracking improved
+  versus prior 100k gates (`fwd0.5 tracking_lin_vel=9.9375`,
+  `fwd1.0 tracking_lin_vel=5.2440`), but `reward/termination=-100` remained
+  saturated for `fwd0.5` and `fwd1.0`, deterministic and stochastic.
 
 ## Current Recommendation
 
@@ -273,11 +282,11 @@ Status: updated on 2026-05-15 after the fresh env1024 R3 100k
   item. The `foot_velocity` feet-slip gate verified that branch but also
   failed to improve the 100k fixed-forward smoke. The
   `--env_feet_slip_scale 0.0` gate successfully removed the penalty in
-  inherited eval, but tracking and termination remained weak. Prefer a
-  default-off push-disable diagnostic next if feasible; otherwise design a
-  phase / `feet_air_time` prior ablation. Keep `alpha_floor=0.03` only as a
-  secondary alpha/entropy diagnostic. Do not patch alpha sign blindly; the sign
-  audit found no direct Brax-style sign bug.
+  inherited eval, but tracking and termination remained weak. The push-disable
+  gate improved tracking somewhat but left `reward/termination=-100`
+  saturated. Design phase / `feet_air_time` prior ablation next. Keep
+  `alpha_floor=0.03` only as a secondary alpha/entropy diagnostic. Do not patch
+  alpha sign blindly; the sign audit found no direct Brax-style sign bug.
 - A fixed-command `fwd1.0` render/video review is useful to inspect whether the
   policy is upright shuffling or producing partial locomotion, but it should
   not be used to justify 5M/10M by itself.
@@ -560,19 +569,20 @@ CPU, stop and report the CUDA/JAX blocker.
 ## Recommended Next Step
 
 The bounded 1024-env 3M R3 result, fixed-forward eval gate, two short
-fixed-alpha diagnostics, the `foot_velocity` feet-slip gate, and the
-`feet_slip_scale=0` gate have now been executed and recorded. Do not
-automatically run 5M or 10M. The next useful step is a targeted reward/prior
-ablation, with alpha-floor only as a secondary diagnostic:
+fixed-alpha diagnostics, the `foot_velocity` feet-slip gate, the
+`feet_slip_scale=0` gate, and the push-disable gate have now been executed and
+recorded. Do not automatically run 250k, 5M, or 10M. The next useful step is a
+targeted phase / `feet_air_time` prior ablation design, with alpha-floor only
+as a secondary diagnostic:
 
-1. Reward/prior path: run a default-off push-disable diagnostic first if
-   feasible, because removing `feet_slip` improved score accounting but did not
-   improve `tracking_lin_vel` or remove `termination=-100` in the 100k smokes.
+1. Reward/prior path: design a phase freeze / `feet_air_time` command-mask
+   ablation. Push-disable improved fixed-forward tracking somewhat, but did
+   not remove `termination=-100`.
 2. Fixed-command path: inspect or render `fwd1.0` if visual evidence is needed,
    because deterministic `tracking_lin_vel` collapsed from `183.95` at
    `fwd0.5` to `25.94` at `fwd1.0`.
-3. Reward/prior follow-up: if push-disable is still weak, design a phase /
-   `feet_air_time` prior ablation before touching broader reward terms.
+3. Reward/prior follow-up: do not touch broader reward terms until the phase /
+   `feet_air_time` prior interaction is understood.
 4. Entropy path: keep `alpha_floor=0.03` as a secondary diagnostic; do not keep
    increasing fixed alpha blindly.
 5. Training path: only after that review, decide whether a carefully gated

@@ -18,9 +18,9 @@ domain randomization, or fine-tuning as part of the current validation phase.
 
 - Path: `/home/admin/projects/mujoco_playground/g1_sac_dev`
 - Branch: `sac-integration`
-- Latest recorded diagnostic state: fresh env1024 R3 100k
-  `feet_slip_scale=0` diagnostic plus eval override inheritance after the
-  `foot_velocity`, `fixed_alpha=0.03`, and `fixed_alpha=0.05` gates,
+- Latest recorded diagnostic state: fresh env1024 R3 100k push-disable
+  diagnostic after the `feet_slip_scale=0`, `foot_velocity`,
+  `fixed_alpha=0.03`, and `fixed_alpha=0.05` gates,
   fixed-command forward eval gate, fixed-command eval support, alpha sign audit,
   fixed-command 3M render helper smoke, deterministic 3M render helper smoke,
   bounded 1024-env 3M R3 run, high-parallel 512/1024/2048 capacity benchmark,
@@ -834,14 +834,22 @@ Both-mode eval diagnostic:
   Inherited fixed-command eval confirms `reward/feet_slip=0.0` and NaN flags
   false, but fixed-forward behavior remains weak: `fwd1.0` deterministic
   reward `-3.4952`, `tracking_lin_vel=2.4967`, and `termination=-100`.
+- Fresh env1024 R3 100k `--env_push_enable False` has run and passed
+  runtime/checkpoint gates. Checkpoint:
+  `./logs/sac_lift_gpu_100k_env1024_r3_push_disable/sac_lift_step_99328.pkl`.
+  Inherited fixed-command eval confirms `push_config.enable=false` and NaN
+  flags false. Deterministic tracking improves versus prior 100k gates
+  (`fwd0.5 tracking_lin_vel=9.9375`, `fwd1.0 tracking_lin_vel=5.2440`), but
+  `reward/termination=-100` remains saturated for both fixed-forward commands
+  and both policy modes.
 
 ## Recommended Next Step
 
 1. Do read-only status checks.
 2. Read this file and `reports/sac_integration/09_phase_summary_and_risks.md`.
 3. Review `reports/sac_integration/19_alpha_entropy_and_fixed_eval_gate.md`.
-4. Plan the next short reward/prior gate, currently default-off push-disable if
-   feasible, before any longer run.
+4. Plan phase freeze / `feet_air_time` command-mask prior ablation before any
+   longer run.
 5. Do not draft or execute 10M automatically.
 
 Do not start long training automatically. Do not modify reward, action scale,
@@ -931,16 +939,18 @@ weak (`-3.2302` reward avg) and deterministic `tracking_lin_vel` collapsed from
 Do not run training, eval, preflight, installs, downloads, or git commits unless
 explicitly asked. The latest short gates show `fixed_alpha=0.03` and
 `fixed_alpha=0.05` preserve alpha but do not solve 100k fixed-forward
-tracking; `0.05` also introduced a critic-loss watch item. Next recommended
-tracking; `0.05` also introduced a critic-loss watch item. The
-`foot_velocity` feet-slip gate also passed runtime/checkpoint checks but did
-not solve fixed-command smoke. The `--env_feet_slip_scale 0.0` gate also
-passed and, after eval override inheritance in `442d297`, correctly reports
+tracking; `0.05` also introduced a critic-loss watch item. The `foot_velocity`
+feet-slip gate also passed runtime/checkpoint checks but did not solve
+fixed-command smoke. The `--env_feet_slip_scale 0.0` gate also passed and,
+after eval override inheritance in `442d297`, correctly reports
 `reward/feet_slip=0.0`; however `fwd1.0` still has low tracking and
-`termination=-100`. Next recommended work is default-off push-disable if
-feasible, with phase / `feet_air_time` prior ablation as the next design path;
+`termination=-100`. The default-off push-disable gate passed runtime/checkpoint
+checks and improved deterministic tracking somewhat, but `reward/termination`
+remains saturated for both fixed-forward commands and both policy modes. Next
+recommended work is phase / `feet_air_time` prior ablation design;
 `alpha_floor=0.03` is only a secondary diagnostic. Do not run fixed-alpha,
-foot-velocity, or feet-slip-scale-zero 250k, 5M, or 10M from these results. A
+foot-velocity, feet-slip-scale-zero, or push-disable 250k, 5M, or 10M from
+these results. A
 fixed-command `fwd1.0` render/video review is useful, and remaining command
 coverage for `[0,0.3,0]`, `[0,0,0.5]`, and `[0,0,0]` remains useful, but
 neither should justify 5M/10M without resolving forward tracking weakness and

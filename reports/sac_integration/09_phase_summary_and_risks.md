@@ -10,7 +10,7 @@ continue without relying on chat history.
 - Path: `/home/admin/projects/mujoco_playground/g1_sac_dev`
 - Branch: `sac-integration`
 - Current diagnostic/report baseline before this report update:
-  `442d297 Apply SAC eval env overrides from checkpoint`
+  `cea95a7 Add SAC push disable env override`
 - Remote: `origin https://github.com/Kam1-hub/mujoco_playground.git`
 - External menagerie commit: `1b86ece576591213e2b666ebf59508454200ca97`
 
@@ -63,6 +63,7 @@ Runtime artifacts are local and ignored. Do not commit `logs/`, `.venv/`,
 | Fresh env1024 R3 100k fixed-alpha 0.05 diagnostic | PASS_RUNTIME_WEAK_FIXED_COMMAND | `./logs/sac_lift_gpu_100k_env1024_r3_fixed_alpha_0p05/sac_lift_step_99328.pkl`, `fixed_alpha=0.05`, `TRAIN_OK`, readiness PASS, but small fixed-command smoke was still weak and critic loss crossed the prior watch threshold |
 | Fresh env1024 R3 100k foot-velocity feet-slip diagnostic | PASS_RUNTIME_WEAK_FIXED_COMMAND | `./logs/sac_lift_gpu_100k_env1024_r3_feet_slip_foot_velocity/sac_lift_step_99328.pkl`, `--env_feet_slip_mode foot_velocity`, `TRAIN_OK`, readiness PASS, but small fixed-command smoke was still weak |
 | Fresh env1024 R3 100k feet-slip scale zero diagnostic | PASS_RUNTIME_WEAK_FIXED_COMMAND | `./logs/sac_lift_gpu_100k_env1024_r3_feet_slip_scale_0/sac_lift_step_99328.pkl`, `--env_feet_slip_scale 0.0`, `TRAIN_OK`, readiness PASS, inherited eval after `442d297` reports `reward/feet_slip=0.0`, but fixed-command smoke remains weak |
+| Fresh env1024 R3 100k push-disable diagnostic | PASS_RUNTIME_WEAK_FIXED_COMMAND | `./logs/sac_lift_gpu_100k_env1024_r3_push_disable/sac_lift_step_99328.pkl`, `--env_push_enable False`, `TRAIN_OK`, readiness PASS, inherited eval reports `push_config.enable=false`, deterministic tracking improves versus prior 100k gates, but `reward/termination=-100` remains saturated |
 | 10M training | NOT VALIDATED | Blocked by fixed-forward weakness and stochastic collapse; requires alpha/entropy decision review, resource plan, and stop conditions |
 
 ## Completed Outcomes
@@ -232,6 +233,16 @@ Runtime artifacts are local and ignored. Do not commit `logs/`, `.venv/`,
   behavior remains weak: `fwd1.0` deterministic reward was `-3.4952`,
   `tracking_lin_vel=2.4967`, and `termination=-100`. This does not justify
   extending the variant to 250k, 5M, or 10M.
+- Validated fresh env1024 R3 100k `--env_push_enable False` diagnostic. The
+  run produced checkpoint
+  `./logs/sac_lift_gpu_100k_env1024_r3_push_disable/sac_lift_step_99328.pkl`,
+  returned `TRAIN_OK`, and passed checkpoint readiness. Inherited fixed-command
+  eval confirmed `push_config.enable=false` and returned `EVAL_OK` with NaN
+  flags false. Deterministic tracking improved versus prior 100k gates
+  (`fwd0.5 tracking_lin_vel=9.9375`, `fwd1.0 tracking_lin_vel=5.2440`), but
+  `reward/termination=-100` remained saturated in both fixed-forward commands
+  and both policy modes. This does not justify extending the variant to 250k,
+  5M, or 10M.
 
 ### Full Action Diagnostic Summary
 
@@ -1081,13 +1092,15 @@ The next recommended step is no longer another fixed-alpha increase. Both
 `fixed_alpha=0.03` and `fixed_alpha=0.05` preserved alpha but failed the 100k
 fixed-forward smoke, and `0.05` added a critic-loss watch item. The
 `feet_slip_scale=0` gate removed the penalty in inherited eval but still left
-weak tracking and high termination. Prioritize:
+weak tracking and high termination. The push-disable gate improved
+fixed-forward tracking somewhat, but termination remained saturated. Prioritize:
 
-1. default-off push-disable diagnostic if feasible, because feet-slip removal
-   was not sufficient to solve fixed-forward tracking;
+1. phase freeze / `feet_air_time` command-mask ablation design, because
+   perturbation removal was not sufficient to solve fixed-forward termination;
 2. optional fixed-command `fwd1.0` render/video to distinguish upright shuffle
    from partial forward locomotion;
-3. phase / `feet_air_time` prior ablation design if push-disable is still weak;
+3. keep reward/action scale/Kp unchanged until the phase / `feet_air_time`
+   prior interaction is understood;
 4. `alpha_floor=0.03` only as a secondary alpha/entropy diagnostic, not as the
    main path;
 5. remaining command coverage for `[0,0.3,0]`, `[0,0,0.5]`, and `[0,0,0]`
