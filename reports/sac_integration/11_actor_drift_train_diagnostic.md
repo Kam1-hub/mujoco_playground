@@ -888,3 +888,119 @@ Regularization components:
 - Next step should be a decision review before any 250k extension. If
   proceeding, bounded R3 250k is the likely candidate. Do not run 500k, 750k,
   or 1M from this result.
+
+## R3 250k Actor-Regularization Extension
+
+### Context
+
+- Scope: bounded R3 250k actor-regularization extension.
+- Parameters: `target_entropy_coef=0.25`, `alpha_learning_rate=1e-4`,
+  `deterministic_action_l2_coef=0.5`, `actor_mean_l2_coef=0.05`.
+- This was not a 500k, 750k, 1M, or policy-quality benchmark run.
+- No code, reward, `action_scale`, Kp, PPO, RSL, domain randomization, or
+  fine-tuning changes were made during the run.
+- Runtime artifacts are under ignored `logs/` and are not committed.
+
+### Gate Summary
+
+| Gate | Result | Evidence |
+|---|---:|---|
+| Train | TRAIN_OK | `./logs/sac_lift_gpu_250k_actor_reg_te0p25_alr1e4_l2_0p5_mean_0p05_s1/sac_lift_step_249984.pkl` |
+| Checkpoint readiness | PASS | `policy_normalizer` and `value_normalizer` present; `deterministic_eval_ready=true` |
+| 4x200 action diagnostic eval | PASS | `./logs/sac_eval_actor_reg_250k/eval_R3_seed0_4x200_actiondiag.json` |
+| 5-seed eval-only | PASS | five JSONs in `./logs/sac_eval_actor_reg_250k_multiseed/` |
+
+All evals returned `EVAL_OK`; all action/reward/obs NaN flags were false.
+
+### Training Metrics
+
+| Metric | Value |
+|---|---:|
+| env_steps | 249984 |
+| gradient_steps | 3892 |
+| wall_time | 145.91901159299596 |
+| sps | 1713.1694991004113 |
+| actor_loss | -9.006501197814941 |
+| critic_loss | 0.053617656230926514 |
+| alpha | 0.03449748829007149 |
+| log_alpha | -3.366868734359741 |
+| alpha_loss | 0.8964777588844299 |
+| alpha_log_prob | -18.73675537109375 |
+| alpha_error_log_prob_plus_target | -25.98675537109375 |
+| alpha_error_neg_log_prob_minus_target | 25.98675537109375 |
+| alpha_grad_proxy_exp | 0.8964778184890747 |
+| q | 8.382803916931152 |
+| target_q | 8.41272258758545 |
+| reward_mean | -0.1561974734067917 |
+| done_fraction | 0.03125 |
+| discount_mean | 0.96875 |
+
+### Actor And Regularization Metrics
+
+| Metric | Final | Interval |
+|---|---:|---:|
+| actor mean abs | 0.1630484462 | 0.1431587681 |
+| actor mean abs max | 2.566006899 | 1.469893875 |
+| log_std mean | -0.170873329 | -0.152855622 |
+| log_std min | -0.920496345 | -0.696546245 |
+| log_std max | 0.076489002 | 0.128931315 |
+| std mean | 0.844428778 | 0.861274787 |
+| sampled action abs | 0.526265562 | 0.519440021 |
+| sampled saturation 0.95 | 0.039466593 | 0.039706366 |
+| deterministic action abs | 0.155556202 | 0.136790473 |
+| deterministic saturation 0.95 | 0.000269397 | 0.000039316 |
+| deterministic action L2 | 0.043000270 | 0.036152087 |
+| actor mean L2 | 0.052856192 | 0.044359268 |
+| actor regularization loss | 0.024142943 | 0.020294007 |
+
+The regularization loss did not dominate actor loss magnitude.
+
+### Eval Summary
+
+Small 4 env x 200 seed 0 eval:
+
+| Mode | Reward Mean | Reward SD | Reward Min | Reward Max | Action Abs | Sat 0.95 |
+|---|---:|---:|---:|---:|---:|---:|
+| deterministic | -3.27499 | 0.28916 | -3.58751 | -2.81105 | 0.11736 | 0.0 |
+| stochastic | -5.86309 | 0.16949 | -6.00126 | -5.58357 | 0.51463 | 0.03552 |
+
+Five-seed 16 env x 1000 aggregate:
+
+| Mode | Reward Avg | Reward SD | Reward Min Avg | Reward Max Avg | Action Abs | Policy Mean Abs | LogStd Mean | Std Mean | Sat 0.95 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| deterministic | -3.7941 | 0.2941 | -6.9341 | -2.3477 | 0.1335 | 0.1393 | -0.1140 | 0.8935 | 0.0 |
+| stochastic | -5.9802 | 0.3177 | -9.4404 | -3.8405 | 0.5147 | 0.1546 | -0.1698 | 0.8452 | 0.0360 |
+
+Notable reward components:
+
+- Deterministic positives: `reward/feet_phase=29.13`,
+  `reward/tracking_ang_vel=15.85`, `reward/tracking_lin_vel=10.23`.
+- Deterministic negatives: `reward/termination=-100`,
+  `reward/ang_vel_xy=-47.88`, `reward/orientation=-33.60`.
+- Stochastic positives: `reward/feet_phase=24.67`,
+  `reward/tracking_lin_vel=8.35`, `reward/tracking_ang_vel=3.93`.
+- Stochastic negatives: `reward/ang_vel_xy=-120.69`,
+  `reward/termination=-100`, `reward/orientation=-41.61`.
+
+### Interpretation
+
+- R3 retained drift control at 250k.
+- Versus R3 100k, train mean abs moved `0.1506 -> 0.1630` and deterministic
+  action abs moved `0.1430 -> 0.1556`, while deterministic 5-seed reward
+  improved `-4.1681 -> -3.7941` and stochastic 5-seed reward improved
+  `-6.3983 -> -5.9802`.
+- Critic loss improved from the R3 100k watch item `0.1684` to `0.0536`; q
+  and target_q remained finite.
+- Versus A4 250k, R3 has lower action magnitude and better deterministic and
+  stochastic eval.
+- This is still a diagnostic/stability result, not a final G1 policy-quality
+  claim.
+
+### Warnings
+
+- Known non-fatal WSL2 CUDA driver version format warning.
+- Known non-fatal JAX cast overflow warning.
+- Initial sandboxed `uv` attempts hit the known `snap-confine` issue; commands
+  were rerun externally with unchanged parameters.
+- No traceback, NaN, OOM, fatal CUDA, env, replay, checkpoint, or eval failure
+  was observed.

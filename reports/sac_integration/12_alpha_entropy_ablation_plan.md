@@ -2,14 +2,14 @@
 
 Status: results recorded after fresh 100k A1/A3/A4 ablations, multi-seed
 eval-only diagnostics, the bounded fresh 250k and 500k A4 extensions, the
-bounded fresh 750k A4 bridge, and the fresh 100k actor-regularization R1
-ablation plus the fresh 100k R2/R3 actor-regularization coefficient sweep.
+bounded fresh 750k A4 bridge, the fresh 100k actor-regularization R1/R2/R3
+ablations, and the bounded R3 250k actor-regularization extension.
 
 This report records the controlled diagnostic plan, the validated fresh 100k
 A1/A3/A4 alpha/entropy ablation results, the follow-up multi-seed eval-only
 diagnostics, the bounded fresh 250k and 500k A4 extensions, the bounded fresh
 750k A4 bridge, and the default-off actor-regularization ablations through
-R2/R3.
+R3 250k.
 
 ## Context
 
@@ -803,6 +803,65 @@ Interpretation:
 - Next step should be a decision review before any 250k extension. If
   proceeding, a bounded R3 250k diagnostic is the likely candidate. Do not run
   500k, 750k, or 1M from this result.
+
+## R3 250k Actor-Regularization Extension Results
+
+Execution context:
+
+- Scope: bounded R3 250k extension using A4 alpha settings and stronger
+  actor-regularization coefficients.
+- Parameters: `target_entropy_coef=0.25`, `alpha_learning_rate=1e-4`,
+  `deterministic_action_l2_coef=0.5`, `actor_mean_l2_coef=0.05`.
+- This was not a 500k, 750k, 1M, or policy-quality benchmark run.
+- No code, reward, `action_scale`, Kp, PPO, RSL, domain randomization, or
+  fine-tuning changes were made.
+- Runtime artifacts are under ignored `logs/` and are not committed.
+
+Gate summary:
+
+| Gate | Result | Evidence |
+|---|---:|---|
+| Train | TRAIN_OK | `./logs/sac_lift_gpu_250k_actor_reg_te0p25_alr1e4_l2_0p5_mean_0p05_s1/sac_lift_step_249984.pkl` |
+| Checkpoint readiness | PASS | `policy_normalizer` and `value_normalizer` present; `deterministic_eval_ready=true` |
+| 4x200 action diagnostic eval | PASS | `./logs/sac_eval_actor_reg_250k/eval_R3_seed0_4x200_actiondiag.json` |
+| 5-seed eval-only | PASS | five JSONs in `./logs/sac_eval_actor_reg_250k_multiseed/` |
+
+Training metrics:
+
+| env_steps | gradient_steps | wall_time | sps | actor_loss | critic_loss | alpha | log_alpha | q | target_q |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 249984 | 3892 | 145.9190 | 1713.1695 | -9.0065 | 0.05362 | 0.034497 | -3.36687 | 8.3828 | 8.4127 |
+
+Actor and regularization metrics:
+
+| Metric | Final | Interval |
+|---|---:|---:|
+| actor mean abs | 0.163048 | 0.143159 |
+| deterministic action abs | 0.155556 | 0.136790 |
+| log_std mean | -0.170873 | -0.152856 |
+| std mean | 0.844429 | 0.861275 |
+| sampled action abs | 0.526266 | 0.519440 |
+| deterministic action L2 | 0.043000 | 0.036152 |
+| actor mean L2 | 0.052856 | 0.044359 |
+| actor regularization loss | 0.024143 | 0.020294 |
+
+Eval aggregates:
+
+| Mode | Reward Avg | Reward SD | Action Abs | Policy Mean Abs | LogStd Mean | Std Mean | Sat 0.95 | OK |
+|---|---:|---:|---:|---:|---:|---:|---:|---|
+| deterministic | -3.7941 | 0.2941 | 0.1335 | 0.1393 | -0.1140 | 0.8935 | 0.0 | true |
+| stochastic | -5.9802 | 0.3177 | 0.5147 | 0.1546 | -0.1698 | 0.8452 | 0.0360 | true |
+
+Interpretation:
+
+- R3 retained drift control at 250k.
+- Versus R3 100k, train mean abs moved only `0.1506 -> 0.1630`,
+  deterministic action abs moved `0.1430 -> 0.1556`, deterministic eval
+  improved `-4.1681 -> -3.7941`, stochastic eval improved
+  `-6.3983 -> -5.9802`, and critic loss improved `0.1684 -> 0.0536`.
+- Versus A4 250k, R3 has lower action magnitude and better eval.
+- This supports using R3 settings in the next capacity benchmark, but it is not
+  a final policy-quality claim.
 
 ## Stop Conditions
 

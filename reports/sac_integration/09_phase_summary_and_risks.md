@@ -50,6 +50,8 @@ Runtime artifacts are local and ignored. Do not commit `logs/`, `.venv/`,
 | Bounded fresh 750k A4 alpha/entropy bridge | PASS_RUNTIME_UNCLEAN_TREND | `./logs/sac_lift_gpu_750k_alpha_ablate_te0p25_alr1e4_s1/sac_lift_step_749952.pkl` |
 | Fresh 100k actor-regularization R1 | PASS_RUNTIME_WEAK_EFFECT | `./logs/sac_lift_gpu_100k_actor_reg_te0p25_alr1e4_l2_0p01_mean_0p001_s1/sac_lift_step_99968.pkl` |
 | Fresh 100k actor-regularization R2/R3 | PASS_RUNTIME_CANDIDATE_FOUND | `./logs/sac_eval_actor_reg_100k_multiseed/`, `15` JSON outputs including R1/R2/R3 |
+| Bounded R3 250k actor-regularization extension | PASS_RUNTIME_CANDIDATE_RETAINED | `./logs/sac_lift_gpu_250k_actor_reg_te0p25_alr1e4_l2_0p5_mean_0p05_s1/sac_lift_step_249984.pkl` |
+| High-parallel 512/1024/2048 capacity benchmark | PLANNED | `reports/sac_integration/13_high_parallel_capacity_plan.md` |
 | 1M training | NOT VALIDATED | Requires explicit user confirmation and resource/stop plan |
 
 ## Completed Outcomes
@@ -117,6 +119,19 @@ Runtime artifacts are local and ignored. Do not commit `logs/`, `.venv/`,
   passed checkpoint readiness, passed 4 env x 200 action diagnostic eval, and
   passed 5-seed 16 env x 1000 eval. R1 was runtime-clean but too weak to
   reduce train-time actor mean / deterministic action drift versus A4 100k.
+- Validated a bounded R3 250k actor-regularization extension. The run produced
+  checkpoint
+  `./logs/sac_lift_gpu_250k_actor_reg_te0p25_alr1e4_l2_0p5_mean_0p05_s1/sac_lift_step_249984.pkl`,
+  passed checkpoint readiness, passed 4 env x 200 action diagnostic eval, and
+  passed 5-seed 16 env x 1000 eval. R3 retained drift control at 250k:
+  train actor mean abs moved `0.1506 -> 0.1630`, deterministic action abs
+  moved `0.1430 -> 0.1556`, deterministic reward improved
+  `-4.1681 -> -3.7941`, stochastic reward improved `-6.3983 -> -5.9802`,
+  and critic loss improved `0.1684 -> 0.0536`.
+- Recorded the high-parallel capacity plan. The plan treats 128-env runs as
+  runtime/diagnostic evidence and recommends 512/1024/2048 env capacity tests
+  with coordinated `grad_updates_per_step=8/16/32` before any multi-million
+  quality claim.
 
 ### Full Action Diagnostic Summary
 
@@ -751,6 +766,11 @@ It is reasonable to claim:
 - Fresh 100k actor-regularization R2/R3 coefficient sweep passed runtime,
   checkpoint, 4x200 eval, and 5-seed eval gates. R3 is the best current 100k
   regularization candidate; R2 is a conservative backup.
+- Bounded R3 250k passed runtime, checkpoint readiness, 4x200 eval, and
+  5-seed eval gates. R3 retained actor drift control at 250k and improved
+  deterministic/stochastic eval versus R3 100k and A4 250k.
+- The earlier 128-env ladder is runtime/diagnostic evidence, not enough for G1
+  policy-quality conclusions. High-parallel capacity testing is now planned.
 - Runtime artifacts are ignored and have not been committed.
 
 It is not yet reasonable to claim:
@@ -800,6 +820,14 @@ It is not yet reasonable to claim:
   5-seed deterministic and stochastic rewards (`-4.1681` and `-6.3983`), but
   critic loss was higher than R2 (`0.1684` vs `0.1383`) and should be watched
   before any 250k extension.
+- Bounded R3 250k reduced that critic-loss concern and retained drift control,
+  but it still does not establish final policy quality for G1. Larger training
+  should first validate high env parallelism and replay/update ratios.
+- If `num_envs` is increased without coordinating `grad_updates_per_step`, the
+  sampled update-to-data ratio drops. Moving 128 to 1024 envs while keeping
+  `grad_updates_per_step=2` would reduce sample UTD by 8x.
+- 5M and 10M replay caps are unrealistic on 12GB VRAM in the current raw replay
+  layout. Long training must decouple `num_timesteps` from `max_replay_size`.
 - Eval reward is still low and should be treated as a smoke signal, not a
   performance benchmark.
 - Truncation handling is currently synthesized as zero when absent. That passed
@@ -881,18 +909,60 @@ Stop immediately and report if any of these occur:
 - Deterministic eval returns action/reward/obs NaN.
 - Git status shows unignored logs, checkpoints, `.venv`, or menagerie files.
 
+## High-Parallel Capacity Plan
+
+User feedback changed the interpretation of the earlier ladder: 10k through
+500k at 128 envs are runtime, checkpoint, eval, and diagnostic gates, not final
+policy-quality evidence for G1. G1 likely needs multi-million scale experience
+before useful gait quality is meaningful.
+
+The current loop inserts `num_envs` transitions per actor step and then runs
+`grad_updates_per_step` updates after warmup. Approximate sampled update-to-data
+ratio is:
+
+```text
+sample UTD ~= grad_updates_per_step * batch_size / num_envs
+```
+
+With `batch_size=256`, preserving the historical 128-env sampled UTD of about
+`4` requires:
+
+| num_envs | grad_updates_per_step |
+|---:|---:|
+| 512 | 8 |
+| 1024 | 16 |
+| 2048 | 32 |
+
+Immediate capacity benchmark plan:
+
+| Case | Timesteps | Replay cap | Logdir |
+|---|---:|---:|---|
+| 512 envs | 65536 | 262144 | `./logs/sac_capacity_env512_65k_r3_b256_g8_replay262k` |
+| 1024 envs | 65536 | 262144 | `./logs/sac_capacity_env1024_65k_r3_b256_g16_replay262k` |
+| 2048 envs | 65536 | 262144 | `./logs/sac_capacity_env2048_65k_r3_b256_g32_replay262k` |
+
+Replay raw storage estimate at about `2684` bytes per transition:
+
+| Replay size | Raw decimal | Raw binary |
+|---:|---:|---:|
+| 1M | 2.68 GB | 2.50 GiB |
+| 2M | 5.37 GB | 5.00 GiB |
+| 5M | 13.42 GB | 12.50 GiB |
+| 10M | 26.84 GB | 25.00 GiB |
+
+On 12GB VRAM, do not use `max_replay_size=num_timesteps` for 5M/10M runs by
+default. Longer runs should start with about a 1M replay cap, and only consider
+2M after explicit replay stress evidence.
+
 ## 1M Decision And Readiness Plan
 
 Do not automatically jump to 1M or any longer run from this report update. The
-next recommended step is a decision review/design pass using the bounded A4
-750k evidence and fresh 100k R1/R2/R3 results. The 750k bridge was runtime
-stable but not a clean improvement: actor drift, deterministic eval, stochastic
-eval, and critic loss worsened versus A4 500k. R1 was too weak for train-time
-drift control; R2/R3 showed material 100k improvement, with R3 the strongest
-candidate and critic loss the key watch item. A later 1M review should consider
-whether alpha floor, target entropy, log-alpha dynamics, critic scale, stronger
-actor regularization, or deterministic mean action drift need more analysis
-before a longer run. Consider 1M only with:
+next recommended step is the high-parallel capacity benchmark above. R3 250k is
+the current stability candidate, but env parallelism and off-policy ratio must
+be validated before any multi-million run. A later 1M review should consider
+capacity results, replay cap, alpha floor, target entropy, log-alpha dynamics,
+critic scale, stronger actor regularization, and deterministic mean action
+drift. Consider 1M only with:
 
 - explicit resource budget
 - fresh logdir and checkpoint path

@@ -1,7 +1,81 @@
 # Smoke Results
 
-Status: updated on 2026-05-14 after the fresh 100k actor-regularization R2/R3
-coefficient sweep.
+Status: updated on 2026-05-14 after the R3 250k actor-regularization extension
+and high-parallel capacity planning.
+
+## 2026-05-14 R3 250k Actor-Regularization Extension
+
+- Scope: bounded R3 250k extension using A4 alpha settings and the strongest
+  100k regularization coefficients; no 500k, 750k, 1M, or code change was
+  executed.
+- Parameters: `target_entropy_coef=0.25`, `alpha_learning_rate=1e-4`,
+  `deterministic_action_l2_coef=0.5`, `actor_mean_l2_coef=0.05`.
+- Status: `TRAIN_OK`
+- Checkpoint:
+  `./logs/sac_lift_gpu_250k_actor_reg_te0p25_alr1e4_l2_0p5_mean_0p05_s1/sac_lift_step_249984.pkl`
+- Checkpoint readiness: PASS; `policy_normalizer` and `value_normalizer`
+  present; `deterministic_eval_ready=true`.
+- 4 env x 200 action diagnostic eval: PASS / `EVAL_OK`, JSON
+  `./logs/sac_eval_actor_reg_250k/eval_R3_seed0_4x200_actiondiag.json`.
+- 5-seed 16 env x 1000 eval: PASS, five JSONs in
+  `./logs/sac_eval_actor_reg_250k_multiseed/`.
+- All evals returned `EVAL_OK`; all action/reward/obs NaN flags were false.
+- No traceback, OOM, fatal CUDA, env, replay, checkpoint, or eval failure was
+  observed.
+
+Training summary:
+
+| env_steps | gradient_steps | wall_time | sps | actor_loss | critic_loss | alpha | log_alpha | q | target_q |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 249984 | 3892 | 145.9190 | 1713.1695 | -9.0065 | 0.05362 | 0.034497 | -3.36687 | 8.3828 | 8.4127 |
+
+Actor and regularization summary:
+
+| Metric | Final | Interval |
+|---|---:|---:|
+| actor mean abs | 0.163048 | 0.143159 |
+| deterministic action abs | 0.155556 | 0.136790 |
+| log_std mean | -0.170873 | -0.152856 |
+| std mean | 0.844429 | 0.861275 |
+| sampled action abs | 0.526266 | 0.519440 |
+| deterministic action saturation 0.95 | 0.000269 | 0.000039 |
+| deterministic action L2 | 0.043000 | 0.036152 |
+| actor mean L2 | 0.052856 | 0.044359 |
+| actor regularization loss | 0.024143 | 0.020294 |
+
+Eval summary:
+
+| Eval | Mode | Reward Avg/Mean | Reward SD | Action Abs | Sat 0.95 | NaN |
+|---|---|---:|---:|---:|---:|---|
+| 4x200 seed0 | deterministic | -3.27499 | 0.28916 | 0.11736 | 0.0 | false |
+| 4x200 seed0 | stochastic | -5.86309 | 0.16949 | 0.51463 | 0.03552 | false |
+| 5-seed 16x1000 | deterministic | -3.7941 | 0.2941 | 0.1335 | 0.0 | false |
+| 5-seed 16x1000 | stochastic | -5.9802 | 0.3177 | 0.5147 | 0.0360 | false |
+
+Interpretation: R3 retained actor mean / deterministic action drift control at
+250k. Versus R3 100k, train mean abs rose only `0.1506 -> 0.1630`,
+deterministic action abs rose `0.1430 -> 0.1556`, deterministic 5-seed reward
+improved `-4.1681 -> -3.7941`, stochastic 5-seed reward improved
+`-6.3983 -> -5.9802`, and critic loss improved `0.1684 -> 0.0536`. Versus A4
+250k, R3 has lower action magnitude and better deterministic/stochastic eval.
+This supports R3 as the current stability candidate, but it is not a long-run
+policy-quality claim.
+
+## 2026-05-14 High-Parallel Capacity Plan
+
+- User noted that `num_envs=128` is likely too conservative and that G1 may
+  need multi-million or 10M-scale experience before useful gait quality appears.
+- The 10k through 500k ladder should be treated as runtime/diagnostic evidence,
+  not policy-quality evidence.
+- Current training loop means increasing `num_envs` without increasing
+  `grad_updates_per_step` lowers the sample update-to-data ratio.
+- With `batch_size=256`, preserving the 128-env baseline sampled UTD of about
+  `4` implies:
+  - `512 envs`: `grad_updates_per_step=8`
+  - `1024 envs`: `grad_updates_per_step=16`
+  - `2048 envs`: `grad_updates_per_step=32`
+- Recommended next step: run 65k capacity benchmarks at 512/1024/2048 envs
+  using R3 settings and `max_replay_size=262144`; do not go direct to 10M.
 
 ## 2026-05-14 Fresh 100k Actor-Regularization R2/R3 Sweep
 

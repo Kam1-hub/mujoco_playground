@@ -1,7 +1,7 @@
 # Next Actions
 
-Status: updated on 2026-05-14 after the fresh 100k actor-regularization R2/R3
-coefficient sweep.
+Status: updated on 2026-05-14 after the R3 250k actor-regularization extension
+and high-parallel capacity planning.
 
 ## Immediate State
 
@@ -165,6 +165,17 @@ coefficient sweep.
   `-4.1681`, and stochastic 5-seed reward `-6.3983`.
 - R3 has a critic-loss watch item (`0.1684` vs R2 `0.1383`); R2 remains a
   conservative backup.
+- Bounded R3 250k has passed with `TRAIN_OK`, checkpoint readiness PASS, 4 env
+  x 200 action diagnostic eval PASS, and 5-seed eval PASS.
+- R3 retained drift control at 250k: train actor mean abs
+  `0.1506 -> 0.1630`, deterministic action abs `0.1430 -> 0.1556`,
+  deterministic 5-seed reward `-4.1681 -> -3.7941`, stochastic 5-seed reward
+  `-6.3983 -> -5.9802`, and critic loss `0.1684 -> 0.0536`.
+- User flagged the previous 128-env ladder as likely too conservative for G1
+  policy-quality conclusions. Treat 10k through 500k as runtime/diagnostic
+  gates, not final learning-quality evidence.
+- High-parallel capacity planning is recorded in
+  `reports/sac_integration/13_high_parallel_capacity_plan.md`.
 
 ## Completed WSL2 GPU Validation
 
@@ -333,25 +344,21 @@ Do not run 1M or any longer training yet.
 
 Fresh 100k alpha/entropy ablation A1/A3/A4, the multi-seed eval-only
 follow-up, the bounded fresh 250k, 500k, and 750k A4 extensions, the fresh 100k
-actor-regularization R1 ablation, and the fresh 100k R2/R3 coefficient sweep
-are complete. A4 mitigated the old 500k drift pattern, but the 750k bridge
-worsened actor drift, deterministic eval, stochastic eval, and critic loss
-versus A4 500k. R1 passed runtime gates but was too weak to control train-time
-drift. R2/R3 showed material improvement at 100k, with R3 the strongest current
-candidate and R2 the conservative backup. The next step should be a decision
-review before any bounded 250k extension:
+actor-regularization R1 ablation, the fresh 100k R2/R3 coefficient sweep, and
+the bounded R3 250k extension are complete. R3 is now the strongest current
+stability candidate. The next bottleneck is not another 128-env quality run; it
+is high-parallel capacity and off-policy ratio validation on the 12GB GPU.
 
-1. Decide whether to stop A4 extension at 750k and focus on alpha/log_std or
-   deterministic action drift design.
-2. Treat actor drift, eval degradation, and critic loss as the main watch
-   items in any next plan.
-3. Do not extend R1 to 250k as-is.
-4. If regularization remains the path, decide whether to run a bounded R3 250k
-   diagnostic with critic-loss/Q stop conditions; keep R2 as backup.
-5. If the remaining drift or stochastic caveat is concerning, do further
-   alpha/entropy, deterministic-policy, or reward-component design first.
-6. Do not run 500k, 750k, or 1M automatically.
-7. Do not tune reward, `action_scale`, or Kp yet.
+1. Run a bounded high-parallel capacity benchmark with R3 settings:
+   512/1024/2048 envs, 65k steps, `batch_size=256`, replay cap `262144`, and
+   `grad_updates_per_step=8/16/32` to preserve approximate sampled UTD.
+2. Pick the highest stable and efficient env count, likely 1024 unless 2048 is
+   clearly faster and not memory-fragile.
+3. Only after capacity results, plan a multi-million ladder with `num_timesteps`
+   decoupled from `max_replay_size`.
+4. Do not use `max_replay_size=num_timesteps` for 5M or 10M runs on 12GB VRAM.
+5. Do not run 1M, 3M, or 10M directly from this report update.
+6. Do not tune reward, `action_scale`, or Kp yet.
 
 ## Completed Both-Mode Eval Diagnostic
 
@@ -445,27 +452,29 @@ CPU, stop and report the CUDA/JAX blocker.
 ## Recommended Next Step
 
 Do not automatically run 1M or any longer training. The next useful step is a
-decision review/design pass using the bounded A4 750k bridge and R1/R2/R3
-evidence: runtime remained clean, but A4 750k actor drift/eval worsened versus
-A4 500k; R1's small coefficients were too weak; and R3 is now the strongest
-100k regularization candidate with critic loss as the main watch item.
+capacity benchmark using R3 250k evidence and coordinated off-policy settings:
+512/1024/2048 envs, 65k steps, replay cap `262144`, and UTD-preserving update
+counts. This tests machine capacity and throughput before any multi-million
+claim.
 
 Recommended diagnostic questions:
 
-1. Should A4 be capped at 500k/750k while investigating alpha/log_std and
-   deterministic action drift?
-2. Should the next bounded test be a 250k R3 extension, or should R2 be used as
-   a more conservative backup because of R3's higher critic loss?
-3. Is another targeted diagnostic or design change more useful than a longer
-   run?
-4. What stop conditions would apply if any future extension is approved?
+1. Does 1024 envs train cleanly with `grad_updates_per_step=16` and acceptable
+   GPU memory/SPS?
+2. Does 2048 envs train cleanly with `grad_updates_per_step=32`, or is it
+   slower/memory-fragile?
+3. Does preserving approximate sampled UTD keep losses, alpha, Q, and actor
+   drift finite during high-parallel short runs?
+4. What replay cap should be used for the first 1M/3M/10M ladder after
+   capacity testing?
 
-Do not jump into 500k, 750k, or 1M from this report update.
+Do not jump into 1M, 3M, or 10M from this report update.
 
 ## Migration Reminders
 
-- Keep first SAC smoke defaults: `num_envs=128`, `max_replay_size=8192`,
-  `batch_size=256`, `grad_updates_per_step=2`.
+- Keep first SAC smoke defaults only for smoke reproduction. For capacity
+  testing, use R3 settings and coordinated env/update ratios from
+  `reports/sac_integration/13_high_parallel_capacity_plan.md`.
 - Record JAX backend/devices, MuJoCo version, Brax version, idle/final VRAM when
   available, SPS, losses, alpha, checkpoint path, and any full traceback.
 - Record actual `env_steps`; Route B may record `9984` for a `10000` target with
@@ -482,9 +491,9 @@ Do not jump into 500k, 750k, or 1M from this report update.
 
 ## Do Not Start Yet
 
-- 1M or longer training without separate user confirmation and a
-  resource/stop-condition plan
-- PPO-scale `num_envs=2048` or `8192` experiments as SAC smoke substitutes
+- 1M or longer training before capacity results and a resource/stop-condition
+  plan
+- PPO-scale `num_envs=8192` experiments as SAC smoke substitutes
 - domain randomization
 - reward, `action_scale`, or Kp tuning
 - world model

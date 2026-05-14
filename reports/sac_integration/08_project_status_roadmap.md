@@ -1,7 +1,7 @@
 # G1 SAC Integration Status And Roadmap
 
-Status: updated on 2026-05-14 after the fresh 100k actor-regularization R2/R3
-coefficient sweep.
+Status: updated on 2026-05-14 after the R3 250k actor-regularization extension
+and high-parallel capacity planning.
 
 ## 1. Mission
 
@@ -188,13 +188,16 @@ Validation ladder:
 23. Bounded fresh 750k A4 alpha/entropy bridge
 24. Fresh 100k actor regularization R1
 25. Fresh 100k actor regularization R2/R3 coefficient sweep
-26. 1M training
+26. Bounded R3 250k actor regularization extension
+27. High-parallel 512/1024/2048 capacity benchmark
+28. 1M training
 
 Status:
 
-- Steps 1 through 25 are complete.
-- Step 26 remains `NOT VALIDATED` and requires separate user confirmation and
-  an explicit resource/stop-condition plan.
+- Steps 1 through 26 are complete.
+- Step 27 is the next recommended benchmark.
+- Step 28 remains `NOT VALIDATED` and requires separate resource and
+  stop-condition planning after capacity results.
 
 ### Phase 6: Reports, Commits, Migration Handoff
 
@@ -1179,6 +1182,75 @@ but its higher critic loss versus R2 is a watch item. Next step is a decision
 review before any bounded R3 250k extension; do not run 500k, 750k, or 1M from
 this result.
 
-## 21. Current Position In One Sentence
+## 21. Bounded R3 250k Actor-Regularization Extension
 
-SAC Route B is implemented; CPU tiny smoke, WSL2 GPU preflight, Route B GPU 10k smoke, normalizer-ready checkpoint validation, bounded deterministic eval smoke, 50k sanity/eval, 100k sanity/eval, 250k sanity/eval, 500k sanity/eval, both-mode eval diagnostic, full action diagnostic, fresh 100k/250k train-time actor drift diagnostics, fresh 100k alpha/entropy ablation diagnostics, the A1/A3/A4 multi-seed eval-only ablation diagnostic, bounded fresh 250k/500k/750k A4 extensions, fresh 100k actor-regularization R1, and fresh 100k actor-regularization R2/R3 have passed runtime gates; 1M, full eval benchmarking, domain randomization, and fine-tuning remain `NOT VALIDATED`, 750k evidence argues against automatic longer training, R1 is too weak to extend, and R3 is the best current 100k regularization candidate pending a decision review.
+Status: `TRAIN_OK`
+
+```text
+checkpoint: ./logs/sac_lift_gpu_250k_actor_reg_te0p25_alr1e4_l2_0p5_mean_0p05_s1/sac_lift_step_249984.pkl
+checkpoint readiness: PASS
+env_steps: 249984
+gradient_steps: 3892
+wall_time: 145.91901159299596
+sps: 1713.1694991004113
+alpha: 0.03449748829007149
+log_alpha: -3.366868734359741
+critic_loss: 0.053617656230926514
+q: 8.382803916931152
+target_q: 8.41272258758545
+```
+
+Actor and regularization evidence:
+
+```text
+actor_policy_mean_abs_mean final / interval: 0.1630484462 / 0.1431587681
+deterministic_action_abs_mean final / interval: 0.155556202 / 0.136790473
+actor_log_std_mean final / interval: -0.170873329 / -0.152855622
+actor_policy_std_mean final / interval: 0.844428778 / 0.861274787
+actor_regularization_loss final / interval: 0.024142943 / 0.020294007
+```
+
+Eval evidence:
+
+```text
+4x200 JSON: ./logs/sac_eval_actor_reg_250k/eval_R3_seed0_4x200_actiondiag.json
+5-seed JSON dir: ./logs/sac_eval_actor_reg_250k_multiseed/
+deterministic 5-seed reward avg: -3.7941
+stochastic 5-seed reward avg: -5.9802
+action/reward/obs NaN: false
+```
+
+Interpretation: R3 retains drift control at 250k. Versus R3 100k, actor mean
+and deterministic action magnitude rose only moderately, deterministic and
+stochastic eval improved, and critic loss improved from `0.1684` to `0.0536`.
+Versus A4 250k, R3 has lower action magnitude and better eval. This supports
+R3 as the current stability candidate, but it is not a final policy-quality
+claim.
+
+## 22. High-Parallel Capacity Plan
+
+The 128-env ladder is now classified as runtime/diagnostic evidence, not a
+policy-quality benchmark for G1. The next step is a capacity benchmark that
+coordinates off-policy update pressure:
+
+| num_envs | batch_size | grad_updates_per_step | Replay cap | Logdir |
+|---:|---:|---:|---:|---|
+| 512 | 256 | 8 | 262144 | `./logs/sac_capacity_env512_65k_r3_b256_g8_replay262k` |
+| 1024 | 256 | 16 | 262144 | `./logs/sac_capacity_env1024_65k_r3_b256_g16_replay262k` |
+| 2048 | 256 | 32 | 262144 | `./logs/sac_capacity_env2048_65k_r3_b256_g32_replay262k` |
+
+This preserves approximate sampled UTD near the historical 128-env baseline:
+
+```text
+sample UTD ~= grad_updates_per_step * batch_size / num_envs ~= 4
+```
+
+For multi-million runs, do not use `max_replay_size=num_timesteps` by default.
+At about 2684 raw bytes per transition, 5M replay is already about 13.42GB
+decimal / 12.50GiB raw and 10M replay is about 26.84GB / 25.00GiB before
+overhead. Long runs should begin with about a 1M replay cap, increasing only
+after stress evidence.
+
+## 23. Current Position In One Sentence
+
+SAC Route B is implemented; CPU tiny smoke, WSL2 GPU preflight, Route B GPU 10k smoke, normalizer-ready checkpoint validation, bounded deterministic eval smoke, 50k sanity/eval, 100k sanity/eval, 250k sanity/eval, 500k sanity/eval, both-mode eval diagnostic, full action diagnostic, fresh 100k/250k train-time actor drift diagnostics, fresh 100k alpha/entropy ablation diagnostics, the A1/A3/A4 multi-seed eval-only ablation diagnostic, bounded fresh 250k/500k/750k A4 extensions, fresh 100k actor-regularization R1, fresh 100k actor-regularization R2/R3, and bounded R3 250k have passed runtime gates; 1M, full eval benchmarking, domain randomization, and fine-tuning remain `NOT VALIDATED`; the next step is the 512/1024/2048 high-parallel capacity benchmark before any multi-million quality claim.

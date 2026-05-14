@@ -18,8 +18,8 @@ domain randomization, or fine-tuning as part of the current validation phase.
 
 - Path: `/home/admin/projects/mujoco_playground/g1_sac_dev`
 - Branch: `sac-integration`
-- Latest recorded diagnostic state: fresh 100k actor-regularization R2/R3
-  coefficient sweep report;
+- Latest recorded diagnostic state: bounded R3 250k actor-regularization
+  extension plus high-parallel capacity plan;
   use `git log --oneline -5` for the exact commit hash.
 - Remote: `origin https://github.com/Kam1-hub/mujoco_playground.git`
 - Last known pushed branch: `sac-integration`
@@ -183,12 +183,19 @@ Current validated ladder:
 - Fresh 100k actor-regularization R2/R3 coefficient sweep: PASS
   runtime/checkpoint/eval; R3 is the best current 100k regularization
   candidate, with critic loss as a watch item.
+- Bounded R3 250k actor-regularization extension: PASS
+  runtime/checkpoint/eval; R3 retained drift control at 250k and improved
+  deterministic/stochastic eval versus R3 100k and A4 250k.
+- High-parallel capacity plan: recorded. Next benchmark should test
+  512/1024/2048 envs with coordinated update ratios before any multi-million
+  quality claim.
 - Action joint mapping diagnostic: PASS.
 
 Still not validated:
 
 - 1M training.
 - Full performance benchmark.
+- High-parallel 512/1024/2048 capacity benchmark.
 - PPO comparison.
 - Domain randomization.
 - Fine-tuning.
@@ -320,6 +327,18 @@ All paths below are runtime artifacts and should remain ignored:
 - `./logs/sac_eval_actor_reg_100k_multiseed/`
   - Fifteen 16 env x 1000 both-mode eval JSONs from the R1/R2/R3
     actor-regularization checkpoints.
+  - All returned `EVAL_OK`; all action/reward/obs NaN flags false.
+- `./logs/sac_lift_gpu_250k_actor_reg_te0p25_alr1e4_l2_0p5_mean_0p05_s1/sac_lift_step_249984.pkl`
+  - Bounded R3 250k actor-regularization checkpoint.
+  - `target_entropy_coef=0.25`, `alpha_learning_rate=1e-4`,
+    `deterministic_action_l2_coef=0.5`, and `actor_mean_l2_coef=0.05`.
+  - Checkpoint readiness PASS; normalizers present.
+- `./logs/sac_eval_actor_reg_250k/eval_R3_seed0_4x200_actiondiag.json`
+  - Small 4 env x 200 both-mode action diagnostic eval from the R3 250k
+    checkpoint.
+  - Status `EVAL_OK`; action/reward/obs NaN flags false.
+- `./logs/sac_eval_actor_reg_250k_multiseed/`
+  - Five 16 env x 1000 both-mode eval JSONs from the R3 250k checkpoint.
   - All returned `EVAL_OK`; all action/reward/obs NaN flags false.
 - `./logs/sac_lift_schema_dry_run/sac_lift_step_0.pkl`
   - Dry-run schema validation artifact, if still present.
@@ -686,10 +705,20 @@ Both-mode eval diagnostic:
   `-6.3983`. R3 is the strongest current 100k regularization candidate, but
   critic loss `0.1684` is higher than R2 `0.1383`, so watch critic loss/Q if
   extending.
+- Bounded R3 250k has run and passed runtime/checkpoint/eval gates. R3 retained
+  drift control: train actor mean abs `0.1506 -> 0.1630`, deterministic action
+  abs `0.1430 -> 0.1556`, deterministic 5-seed reward `-4.1681 -> -3.7941`,
+  stochastic 5-seed reward `-6.3983 -> -5.9802`, and critic loss improved
+  `0.1684 -> 0.0536`.
+- The earlier 128-env ladder is now runtime/diagnostic evidence, not a
+  policy-quality conclusion for G1. Next work should test 512/1024/2048 env
+  capacity while preserving approximate sampled update-to-data ratio.
 - Action joint mapping now links the 500k deterministic top action dimensions
   mainly to right ankle roll/pitch, waist pitch, right knee, and hip roll. See
   `reports/sac_integration/13_action_joint_mapping_diagnostic.md`.
-- 1M replay can be around 2.5-2.7 GB raw before overhead.
+- 1M replay can be around 2.5-2.7 GB raw before overhead. 5M/10M replay caps
+  are too large for 12GB VRAM in this raw layout, so long runs should decouple
+  `num_timesteps` from `max_replay_size`.
 - SPS can vary due JIT compile and warmup.
 - No PPO comparison has been run.
 
@@ -698,15 +727,14 @@ Both-mode eval diagnostic:
 1. Do read-only status checks.
 2. Read this file and `reports/sac_integration/09_phase_summary_and_risks.md`.
 3. Review `reports/sac_integration/12_alpha_entropy_ablation_plan.md`.
-4. If the user explicitly approves another bounded diagnostic, first do a
-   decision review/design pass using the A4 750k and R1/R2/R3 evidence with
-   explicit stop conditions.
-5. If proceeding after review, bounded R3 250k is the likely candidate; R2 is
-   the conservative backup.
-6. Do not draft or execute 500k, 750k, or 1M automatically.
+4. Run the high-parallel capacity benchmark next: 512/1024/2048 envs, 65k
+   steps, R3 settings, replay cap `262144`, and `grad_updates_per_step`
+   `8/16/32`.
+5. Pick the highest stable and efficient env count before planning 1M/3M/10M.
+6. Do not draft or execute 1M, 3M, or 10M automatically.
 
-Do not start 500k, 750k, or 1M automatically. Do not modify reward, action
-scale, Kp, domain randomization, fine-tuning, PPO, or RSL.
+Do not start long training automatically. Do not modify reward, action scale,
+Kp, domain randomization, fine-tuning, PPO, or RSL.
 
 ## Completed 100k Sanity Command
 
@@ -758,32 +786,23 @@ status checks: pwd, git status --short --branch, git log --oneline -5,
 git remote -v, and git check-ignore -v logs .venv
 g1_env/external_deps/mujoco_menagerie || true.
 
-Current HEAD should include the report commit for the fresh 100k
-actor-regularization R2/R3 coefficient sweep unless newer report commits exist. GPU 10k smoke, deterministic
-eval smoke, GPU 50k sanity/eval, GPU 100k sanity/eval, GPU 250k sanity/eval,
-GPU 500k sanity/eval, 100k/250k/500k both-mode eval diagnostic, and full action
-distribution / reward-component diagnostic have passed. Fresh 100k and fresh
-250k actor drift diagnostics have also passed. Fresh 100k alpha/entropy
-ablation A1/A3/A4 has passed runtime/checkpoint/eval gates, and the A1/A3/A4
-multi-seed eval-only follow-up has also passed. A4 is the best current 100k
-drift-control candidate, with the caveat that A1 slightly edges deterministic
-reward and A4 remains weaker on stochastic reward. Bounded fresh 250k A4
-extension has also passed and mitigates drift versus the fresh 250k baseline,
-but does not eliminate A4's own 100k-to-250k drift. Bounded fresh 500k A4 has
-also passed and mitigates the old 500k deterministic drift pattern, but
-Q/target_q and critic loss remain watch items. Bounded fresh 750k A4 also
-passed runtime/checkpoint/eval gates, but actor drift and eval quality worsened
-versus A4 500k. Fresh 100k actor-regularization R1 passed runtime/checkpoint/eval
-gates but was too weak to control train-time drift. Fresh 100k
-actor-regularization R2/R3 also passed runtime/checkpoint/eval gates; R3 is the
-best current 100k regularization candidate, with critic loss as a watch item.
+Current HEAD should include the report commit for the R3 250k
+actor-regularization extension and high-parallel capacity plan unless newer
+report commits exist. GPU 10k smoke, deterministic eval smoke, GPU 50k
+sanity/eval, GPU 100k sanity/eval, GPU 250k sanity/eval, GPU 500k sanity/eval,
+100k/250k/500k both-mode eval diagnostic, and full action distribution /
+reward-component diagnostic have passed. Fresh 100k and fresh 250k actor drift
+diagnostics have also passed. Fresh 100k alpha/entropy A1/A3/A4, A4 250k,
+A4 500k, and A4 750k have passed runtime gates, but A4 750k worsened drift and
+eval quality. Fresh 100k R1 was too weak; fresh 100k R2/R3 found R3 as the
+strongest candidate; bounded R3 250k has now passed and retained drift control.
 1M is not validated.
 
 Do not run training, eval, preflight, installs, downloads, or git commits unless
-explicitly asked. Next recommended work is a main/user decision review using
-the A4 750k and R1/R2/R3 evidence; if proceeding, bounded R3 250k is the likely
-candidate and R2 is the conservative backup. Do not start 500k, 750k, or 1M
-without a separate resource/stop-condition plan and user confirmation.
-Do not change reward, action_scale, Kp, domain randomization, fine-tuning, PPO,
-or RSL.
+explicitly asked. Next recommended work is the 512/1024/2048 high-parallel
+capacity benchmark using R3 settings and coordinated update ratios:
+`grad_updates_per_step=8/16/32` with `batch_size=256` and replay cap `262144`.
+Do not start 1M, 3M, or 10M without capacity results and a separate
+resource/stop-condition plan. Do not change reward, action_scale, Kp, domain
+randomization, fine-tuning, PPO, or RSL.
 ```
