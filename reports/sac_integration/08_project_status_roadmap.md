@@ -1,6 +1,6 @@
 # G1 SAC Integration Status And Roadmap
 
-Status: updated on 2026-05-14 after the bounded fresh 250k A4 alpha/entropy
+Status: updated on 2026-05-14 after the bounded fresh 500k A4 alpha/entropy
 extension.
 
 ## 1. Mission
@@ -184,12 +184,13 @@ Validation ladder:
 19. Fresh 100k alpha/entropy ablation diagnostics
 20. Fresh 100k alpha/entropy ablation multi-seed eval-only diagnostic
 21. Bounded fresh 250k A4 alpha/entropy extension
-22. 1M training
+22. Bounded fresh 500k A4 alpha/entropy extension
+23. 1M training
 
 Status:
 
-- Steps 1 through 21 are complete.
-- Step 22 remains `NOT VALIDATED` and requires separate user confirmation and
+- Steps 1 through 22 are complete.
+- Step 23 remains `NOT VALIDATED` and requires separate user confirmation and
   an explicit resource/stop-condition plan.
 
 ### Phase 6: Reports, Commits, Migration Handoff
@@ -1009,9 +1010,50 @@ action/reward/obs NaN: false/false/false
 ```
 
 Interpretation: drift amplifies in absolute level by fresh 250k. This is not a
-runtime failure. The next recommended step is a decision review, not automatic
-fresh 500k, 750k, or 1M.
+runtime failure. The next A4 500k extension has since completed; do not run
+750k or 1M automatically.
 
-## 17. Current Position In One Sentence
+## 17. Bounded Fresh 500k A4 Alpha/Entropy Extension
 
-SAC Route B is implemented; CPU tiny smoke, WSL2 GPU preflight, Route B GPU 10k smoke, normalizer-ready checkpoint validation, bounded deterministic eval smoke, 50k sanity/eval, 100k sanity/eval, 250k sanity/eval, 500k sanity/eval, both-mode eval diagnostic, full action diagnostic, fresh 100k/250k train-time actor drift diagnostics, fresh 100k alpha/entropy ablation diagnostics, the A1/A3/A4 multi-seed eval-only ablation diagnostic, and the bounded fresh 250k A4 extension have passed; fresh 500k A4, 750k, 1M, full eval benchmarking, domain randomization, and fine-tuning remain `NOT VALIDATED`.
+Status: `TRAIN_OK`
+
+```text
+checkpoint: ./logs/sac_lift_gpu_500k_alpha_ablate_te0p25_alr1e4_s1/sac_lift_step_499968.pkl
+checkpoint readiness: PASS
+env_steps: 499968
+gradient_steps: 7798
+wall_time: 271.9703
+sps: 1838.3185
+alpha: 0.02435
+log_alpha: -3.71524
+critic_loss: 0.0803
+q: 8.47294
+target_q: 8.41017
+```
+
+Actor drift evidence:
+
+```text
+actor_policy_mean_abs_mean final / interval: 0.29323 / 0.23339
+deterministic_action_abs_mean final / interval: 0.26540 / 0.21651
+actor_log_std_mean final / interval: -0.22279 / -0.17587
+actor_policy_std_mean final / interval: 0.80245 / 0.84132
+```
+
+Eval evidence:
+
+```text
+4x200 JSON: ./logs/sac_eval_alpha_ablate_500k/eval_A4_seed0_4x200_actiondiag.json
+5-seed JSON dir: ./logs/sac_eval_alpha_ablate_500k_multiseed/
+deterministic 5-seed reward avg: -4.4075
+stochastic 5-seed reward avg: -6.0434
+action/reward/obs NaN: false
+```
+
+Interpretation: A4 500k mitigates the old 500k deterministic drift pattern and
+passes runtime/checkpoint/eval gates. It does not authorize 750k or 1M; Q,
+target Q, and critic loss are the main watch items for any longer extension.
+
+## 18. Current Position In One Sentence
+
+SAC Route B is implemented; CPU tiny smoke, WSL2 GPU preflight, Route B GPU 10k smoke, normalizer-ready checkpoint validation, bounded deterministic eval smoke, 50k sanity/eval, 100k sanity/eval, 250k sanity/eval, 500k sanity/eval, both-mode eval diagnostic, full action diagnostic, fresh 100k/250k train-time actor drift diagnostics, fresh 100k alpha/entropy ablation diagnostics, the A1/A3/A4 multi-seed eval-only ablation diagnostic, and the bounded fresh 250k and 500k A4 extensions have passed; 750k, 1M, full eval benchmarking, domain randomization, and fine-tuning remain `NOT VALIDATED`.

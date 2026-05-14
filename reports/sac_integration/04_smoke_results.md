@@ -1,7 +1,56 @@
 # Smoke Results
 
-Status: updated on 2026-05-14 after the bounded fresh 250k A4 alpha/entropy
+Status: updated on 2026-05-14 after the bounded fresh 500k A4 alpha/entropy
 extension.
+
+## 2026-05-14 Fresh 500k A4 Alpha/Entropy Extension
+
+- Scope: bounded fresh 500k A4 extension only; not 750k or 1M.
+- Parameters: `target_entropy_coef=0.25`,
+  `alpha_learning_rate=1e-4`.
+- Status: `TRAIN_OK`
+- Checkpoint:
+  `./logs/sac_lift_gpu_500k_alpha_ablate_te0p25_alr1e4_s1/sac_lift_step_499968.pkl`
+- Checkpoint readiness: PASS; `deterministic_eval_ready=true`; normalizers
+  present.
+- 4 env x 200 seed 0 eval: PASS / `EVAL_OK`, JSON
+  `./logs/sac_eval_alpha_ablate_500k/eval_A4_seed0_4x200_actiondiag.json`
+- 5-seed 16 env x 1000 eval: PASS, five JSONs in
+  `./logs/sac_eval_alpha_ablate_500k_multiseed/`.
+- All evals returned `EVAL_OK`; all action/reward/obs NaN flags were false.
+- No code, reward, `action_scale`, Kp, PPO, RSL, domain randomization, or
+  fine-tuning changes were made.
+- No traceback, OOM, fatal CUDA, env, checkpoint, or eval failure was observed.
+
+Training summary:
+
+| env_steps | gradient_steps | wall_time | sps | actor_loss | critic_loss | alpha | log_alpha | q | target_q |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 499968 | 7798 | 271.9703 | 1838.3185 | -8.8341 | 0.0803 | 0.02435 | -3.71524 | 8.47294 | 8.41017 |
+
+Actor drift summary:
+
+| Metric | Final | Interval |
+|---|---:|---:|
+| actor mean abs | 0.29323 | 0.23339 |
+| deterministic action abs | 0.26540 | 0.21651 |
+| log_std mean | -0.22279 | -0.17587 |
+| std mean | 0.80245 | 0.84132 |
+
+Eval summary:
+
+| Eval | Mode | Reward Avg/Mean | Reward SD | Action Abs | Sat 0.95 | NaN |
+|---|---|---:|---:|---:|---:|---|
+| 4x200 seed0 | deterministic | -4.3446 | 0.4644 | 0.2304 | 0.0 | false |
+| 4x200 seed0 | stochastic | -6.2873 | 0.6175 | 0.5148 | 0.0342 | false |
+| 5-seed 16x1000 | deterministic | -4.4075 | 0.3493 | 0.2289 | 0.0000004 | false |
+| 5-seed 16x1000 | stochastic | -6.0434 | 0.5364 | 0.5152 | 0.0366 | false |
+
+Interpretation: A4 500k mitigates the old fresh 500k deterministic drift
+pattern on alpha (`0.02435` vs old `0.00801`), actor mean/action magnitude,
+log_std/std, and deterministic eval reward. It still drifts relative to A4
+250k, and Q/target_q plus critic loss remain watch items. This is a bounded
+diagnostic PASS, not authorization to run 750k or 1M.
 
 ## 2026-05-14 Fresh 250k A4 Alpha/Entropy Extension
 
@@ -52,7 +101,8 @@ mean abs is lower by `-0.07330`, deterministic action abs is lower by
 `-0.05875`, log_std is less negative by `+0.03434`, and std is higher by
 `+0.02802`. A4 does not eliminate drift relative to A4 100k, and Q/target_q
 are higher than earlier baselines, so they are watch items. This is promising
-drift-control evidence, not authorization to run fresh 500k, 750k, or 1M.
+drift-control evidence that justified the subsequent bounded A4 500k decision
+review. It did not authorize 750k or 1M.
 
 ## 2026-05-14 Alpha/Entropy Ablation Multi-Seed Eval-Only Diagnostic
 
@@ -86,10 +136,9 @@ Interpretation: A4 remains the best drift-control candidate because it has the
 lowest deterministic action magnitude and actor mean magnitude. It is not
 strictly best on deterministic reward: A1 is slightly better
 (`-4.3262` vs `-4.3436`), a small gap relative to seed variance. A4 stochastic
-reward is worse than A1 by about `0.0945` and essentially tied with A3. Do not
-run 750k or 1M from this result; the next decision is a bounded fresh 250k A4
-extension after confirmation, or further design if the stochastic caveat is
-blocking.
+reward is worse than A1 by about `0.0945` and essentially tied with A3. This
+result supported later bounded A4 extensions, but it did not authorize 750k or
+1M.
 
 ## 2026-05-14 Fresh 100k Alpha/Entropy Ablation Diagnostics
 

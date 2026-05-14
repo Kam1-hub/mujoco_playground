@@ -46,6 +46,7 @@ Runtime artifacts are local and ignored. Do not commit `logs/`, `.venv/`,
 | Fresh 100k alpha/entropy ablation A1/A3/A4 | PASS | `reports/sac_integration/12_alpha_entropy_ablation_plan.md` |
 | Fresh 100k alpha/entropy ablation multi-seed eval-only | PASS | `./logs/sac_eval_alpha_ablate_multiseed/`, `15` JSON outputs |
 | Bounded fresh 250k A4 alpha/entropy extension | PASS | `./logs/sac_lift_gpu_250k_alpha_ablate_te0p25_alr1e4_s1/sac_lift_step_249984.pkl` |
+| Bounded fresh 500k A4 alpha/entropy extension | PASS | `./logs/sac_lift_gpu_500k_alpha_ablate_te0p25_alr1e4_s1/sac_lift_step_499968.pkl` |
 | 1M training | NOT VALIDATED | Requires explicit user confirmation and resource/stop plan |
 
 ## Completed Outcomes
@@ -92,6 +93,13 @@ Runtime artifacts are local and ignored. Do not commit `logs/`, `.venv/`,
   passed checkpoint readiness, passed 4 env x 200 action diagnostic eval, and
   passed 5-seed 16 env x 1000 eval. A4 mitigated fresh 250k drift versus the
   baseline but did not eliminate drift relative to A4 100k.
+- Validated a bounded fresh 500k A4 alpha/entropy extension. The run produced
+  checkpoint
+  `./logs/sac_lift_gpu_500k_alpha_ablate_te0p25_alr1e4_s1/sac_lift_step_499968.pkl`,
+  passed checkpoint readiness, passed 4 env x 200 action diagnostic eval, and
+  passed 5-seed 16 env x 1000 eval. A4 mitigated the old fresh 500k
+  deterministic drift pattern but did not eliminate A4's own 250k-to-500k
+  drift.
 
 ### Full Action Diagnostic Summary
 
@@ -312,8 +320,58 @@ Interpretation:
   deterministic action abs `0.19314 -> 0.21220`, and log_std
   `-0.15183 -> -0.17093`.
 - Q/target_q are higher than earlier baselines and should be watched.
-- This is promising drift-control evidence, not authorization to run fresh
-  500k, 750k, or 1M.
+- This is promising drift-control evidence, and it justified a bounded A4 500k
+  decision review that has now completed.
+
+### Bounded Fresh 500k A4 Extension Summary
+
+The bounded fresh 500k A4 extension passed runtime, checkpoint, and eval gates:
+
+- Checkpoint:
+  `./logs/sac_lift_gpu_500k_alpha_ablate_te0p25_alr1e4_s1/sac_lift_step_499968.pkl`
+- Checkpoint readiness: PASS, `deterministic_eval_ready=true`, normalizers
+  present.
+- 4 env x 200 seed 0 eval: PASS,
+  `./logs/sac_eval_alpha_ablate_500k/eval_A4_seed0_4x200_actiondiag.json`.
+- 5-seed 16 env x 1000 eval: PASS, five JSON outputs in
+  `./logs/sac_eval_alpha_ablate_500k_multiseed/`.
+
+Training and drift metrics:
+
+| Metric | Value |
+|---|---:|
+| env_steps | 499968 |
+| gradient_steps | 7798 |
+| wall_time | 271.9703 |
+| sps | 1838.3185 |
+| alpha | 0.02435 |
+| log_alpha | -3.71524 |
+| actor mean abs | 0.29323 |
+| deterministic action abs | 0.26540 |
+| log_std mean | -0.22279 |
+| std mean | 0.80245 |
+| q | 8.47294 |
+| target_q | 8.41017 |
+| critic_loss | 0.0803 |
+
+Eval aggregate:
+
+| Mode | Reward Avg | Reward SD | Action Abs | Sat 0.95 | Policy Mean Abs | LogStd Mean | Std Mean |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| deterministic | -4.4075 | 0.3493 | 0.2289 | 0.0000004 | 0.2477 | -0.1909 | 0.8277 |
+| stochastic | -6.0434 | 0.5364 | 0.5152 | 0.0366 | 0.2704 | -0.2277 | 0.7984 |
+
+Interpretation:
+
+- Versus the old fresh 500k baseline, A4 improves alpha (`0.02435` vs
+  `0.00801`), actor mean / action magnitude, log_std/std, and deterministic
+  eval reward.
+- Versus A4 250k, drift continues: alpha `0.03455 -> 0.02435`, actor mean abs
+  `0.22572 -> 0.29323`, deterministic action abs `0.21220 -> 0.26540`, and
+  std `0.84424 -> 0.80245`.
+- Q/target_q are slightly lower than A4 250k but much higher than the old fresh
+  500k baseline. Critic loss rose to `0.0803`; this is finite and not a failure,
+  but it is the main watch item.
 
 ## Key Metrics
 
@@ -613,6 +671,8 @@ It is reasonable to claim:
   same degradation.
 - Fresh 100k and fresh 250k train-time diagnostics show actor mean drift is
   already visible by 100k and amplifies in absolute level by 250k.
+- Bounded A4 250k and 500k alpha/entropy extensions mitigate the corresponding
+  baseline drift patterns without eliminating A4's own longer-horizon drift.
 - Runtime artifacts are ignored and have not been committed.
 
 It is not yet reasonable to claim:
@@ -643,10 +703,9 @@ It is not yet reasonable to claim:
   healthier std. This is useful but not sufficient for 750k/1M because A1
   slightly edges deterministic reward and A4 remains weaker on stochastic
   reward.
-- Bounded fresh 250k A4 extension mitigated drift versus the fresh 250k
-  baseline, but did not eliminate A4's own 100k-to-250k drift. Its Q/target_q
-  values rose to `8.7442` / `8.7170`, so critic scale remains a watch item for
-  any next bounded extension.
+- Bounded fresh 250k and 500k A4 extensions mitigated the corresponding
+  baselines, but did not eliminate A4's own 100k-to-500k drift. Q/target_q and
+  critic loss remain watch items before any longer extension.
 - Eval reward is still low and should be treated as a smoke signal, not a
   performance benchmark.
 - Truncation handling is currently synthesized as zero when absent. That passed
@@ -730,13 +789,12 @@ Stop immediately and report if any of these occur:
 
 ## 1M Decision And Readiness Plan
 
-Do not automatically jump to fresh 500k, 750k, or 1M from this report update.
-The next recommended step is a decision review using the bounded A4 250k
-evidence: either plan a bounded A4 500k extension, do another targeted
-diagnostic, or hold for design. A later 1M review should consider whether
-alpha floor, target entropy, log-alpha dynamics, critic scale, or deterministic
-mean action drift need more analysis before a longer run. Consider 1M only
-with:
+Do not automatically jump to 750k or 1M from this report update. The next
+recommended step is a decision review using the bounded A4 500k evidence:
+either plan a bounded 750k bridge, do another targeted diagnostic, or hold for
+design. A later 1M review should consider whether alpha floor, target entropy,
+log-alpha dynamics, critic scale, or deterministic mean action drift need more
+analysis before a longer run. Consider 1M only with:
 
 - explicit resource budget
 - fresh logdir and checkpoint path

@@ -1,17 +1,19 @@
 # Alpha Entropy Ablation Plan
 
 Status: results recorded after fresh 100k A1/A3/A4 ablations, multi-seed
-eval-only diagnostics, and the bounded fresh 250k A4 extension.
+eval-only diagnostics, the bounded fresh 250k A4 extension, and the bounded
+fresh 500k A4 extension.
 
 This report records the controlled diagnostic plan, the validated fresh 100k
 A1/A3/A4 alpha/entropy ablation results, the follow-up multi-seed eval-only
-diagnostics, and the bounded fresh 250k A4 extension.
+diagnostics, the bounded fresh 250k A4 extension, and the bounded fresh 500k
+A4 extension.
 
 ## Context
 
 - Current branch: `sac-integration`
-- Current focus: stabilize deterministic SAC actor behavior before any fresh
-  500k, 750k, or 1M run.
+- Current focus: stabilize deterministic SAC actor behavior before any 750k or
+  1M run.
 - Fresh 100k and fresh 250k actor drift diagnostics passed runtime gates.
 - Both diagnostics show actor mean / deterministic action magnitude rising
   while alpha, log_std, and policy std decline.
@@ -112,11 +114,10 @@ Warnings:
 Next action:
 
 - Do not run 750k or 1M.
-- Fresh 250k A4 extension has now completed; use the result below for the next
-  bounded decision.
-- Do not run fresh 500k, 750k, or 1M automatically.
-- Recommended next step is a decision review: either a bounded A4 500k
-  extension plan, another targeted diagnostic, or hold for design.
+- Fresh 250k and fresh 500k A4 extensions have now completed; use the results
+  below for the next bounded decision.
+- Do not run 750k or 1M automatically.
+- Recommended next step is a decision review before any longer A4 extension.
 
 ## Multi-Seed 100k Ablation Eval-Only Results
 
@@ -258,10 +259,103 @@ Interpretation:
 - A4 does not eliminate drift relative to A4 100k.
 - Q/target_q are higher than earlier baselines and should be treated as a
   watch item.
-- This is promising drift-control evidence, not authorization to jump to
-  fresh 500k, 750k, or 1M.
-- Next action should be a decision review: either a bounded A4 500k extension
-  plan, another targeted diagnostic, or hold for design.
+- This result justified a bounded A4 500k decision review, which has now run;
+  see the result below.
+
+## Fresh 500k A4 Extension Results
+
+Execution context:
+
+- `CHECKPOINT A4-500K-EXTENSION` completed after the bounded fresh 250k A4
+  alpha/entropy extension and decision review.
+- Scope: bounded fresh 500k A4 extension only. This was not a 750k or 1M run.
+- Parameters: `target_entropy_coef=0.25`,
+  `alpha_learning_rate=1e-4`.
+- No code, reward, `action_scale`, Kp, PPO, RSL, domain randomization, or
+  fine-tuning changes were made.
+- Checkpoint:
+  `./logs/sac_lift_gpu_500k_alpha_ablate_te0p25_alr1e4_s1/sac_lift_step_499968.pkl`
+- Checkpoint readiness: PASS; `deterministic_eval_ready=true`; policy/value
+  normalizers present.
+- Small eval: `./logs/sac_eval_alpha_ablate_500k/eval_A4_seed0_4x200_actiondiag.json`
+  returned `EVAL_OK`.
+- Multi-seed eval: `./logs/sac_eval_alpha_ablate_500k_multiseed/` contains
+  five 16 env x 1000 JSON outputs.
+- All evals returned `EVAL_OK`; all action/reward/obs NaN flags were false.
+- No traceback, OOM, fatal CUDA, env, checkpoint, or eval failure was observed.
+
+Training metrics:
+
+| Metric | Value |
+|---|---:|
+| env_steps | 499968 |
+| gradient_steps | 7798 |
+| wall_time | 271.9703 |
+| sps | 1838.3185 |
+| actor_loss | -8.8341 |
+| critic_loss | 0.0803 |
+| alpha | 0.02435 |
+| log_alpha | -3.71524 |
+| alpha_loss | 0.58360 |
+| alpha_log_prob | -16.71769 |
+| alpha_error_log_prob_plus_target | -23.96769 |
+| alpha_error_neg_log_prob_minus_target | 23.96769 |
+| alpha_grad_proxy_exp | 0.58360 |
+| q | 8.47294 |
+| target_q | 8.41017 |
+| reward_mean | -0.13071 |
+| done_fraction | 0.02344 |
+| discount_mean | 0.97656 |
+
+Actor drift metrics:
+
+| Metric | Final | Interval Avg |
+|---|---:|---:|
+| actor policy mean abs mean | 0.29323 | 0.23339 |
+| actor policy mean abs max | 2.35011 | 1.84830 |
+| actor log_std mean | -0.22279 | -0.17587 |
+| actor log_std min | -0.57048 | -0.60559 |
+| actor log_std max | 0.10298 | 0.09101 |
+| actor policy std mean | 0.80245 | 0.84132 |
+| sampled action abs mean | 0.51804 | 0.52402 |
+| sampled saturation 0.95 | 0.03933 | 0.04252 |
+| deterministic action abs mean | 0.26540 | 0.21651 |
+| deterministic saturation 0.95 | 0.000539 | 0.000159 |
+
+Small eval, seed 0, 4 env x 200 steps:
+
+| Mode | reward_mean | reward_std | reward_min | reward_max | action_abs | saturation 0.95 | NaN |
+|---|---:|---:|---:|---:|---:|---:|---|
+| deterministic | -4.3446 | 0.4644 | -5.0165 | -3.7633 | 0.2304 | 0.0 | false |
+| stochastic | -6.2873 | 0.6175 | -7.3428 | -5.7918 | 0.5148 | 0.0342 | false |
+
+Multi-seed 16 env x 1000 aggregate:
+
+| Mode | Reward Avg | Reward SD | Reward Min Avg | Reward Max Avg | Action Abs | Sat 0.95 | Policy Mean Abs | LogStd Mean | Std Mean |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| deterministic | -4.4075 | 0.3493 | -8.9045 | -3.1749 | 0.2289 | 0.0000004 | 0.2477 | -0.1909 | 0.8277 |
+| stochastic | -6.0434 | 0.5364 | -10.5803 | -4.4890 | 0.5152 | 0.0366 | 0.2704 | -0.2277 | 0.7984 |
+
+Comparison:
+
+- Versus the old fresh 500k baseline, A4 500k mitigates drift on alpha
+  (`0.02435` vs `0.00801`), actor mean / action magnitude, log_std/std, and
+  deterministic eval reward (`-4.4075` 5-seed avg vs old 500k deterministic
+  around `-4.69` to `-4.82`).
+- Versus A4 250k, drift continues but remains controlled: alpha
+  `0.03455 -> 0.02435`, actor mean abs `0.22572 -> 0.29323`,
+  deterministic action abs `0.21220 -> 0.26540`, log_std
+  `-0.17093 -> -0.22279`, and std `0.84424 -> 0.80245`.
+- Q/target_q are slightly lower than A4 250k (`8.74/8.72 -> 8.47/8.41`) but
+  much higher than the old fresh 500k baseline (`3.35/3.32`). Critic loss rose
+  to `0.0803`. This is finite and not a failure, but it is the main watch item.
+
+Interpretation:
+
+- A4 continues mitigating the old 500k deterministic drift pattern and passes
+  runtime/checkpoint/eval gates.
+- Q/target_q and critic loss block any automatic jump to 750k or 1M.
+- Next action should be a decision review, not immediate longer training.
 
 ## Current Alpha And Entropy Mechanics
 
