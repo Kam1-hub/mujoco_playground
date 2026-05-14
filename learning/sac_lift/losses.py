@@ -17,7 +17,7 @@ def critic_loss(
     q_params: Any,
     target_q_params: Any,
     policy_params: Any,
-    log_alpha: jnp.ndarray,
+    alpha_effective: jnp.ndarray,
     policy_normalizer: normalizer.RunningStats,
     value_normalizer: normalizer.RunningStats,
     batch: Transition,
@@ -40,7 +40,7 @@ def critic_loss(
       sac_networks, policy_params, policy_next_obs, key
   )
   next_q = networks.q_values(sac_networks, target_q_params, next_value_obs, next_action)
-  next_v = jnp.min(next_q, axis=-1) - jnp.exp(log_alpha) * next_log_prob
+  next_v = jnp.min(next_q, axis=-1) - alpha_effective * next_log_prob
   target_q = jax.lax.stop_gradient(
       batch.reward * reward_scaling + batch.discount * discounting * next_v
   )
@@ -63,7 +63,7 @@ def critic_loss(
 def actor_loss(
     policy_params: Any,
     q_params: Any,
-    log_alpha: jnp.ndarray,
+    alpha_effective: jnp.ndarray,
     policy_normalizer: normalizer.RunningStats,
     value_normalizer: normalizer.RunningStats,
     batch: Transition,
@@ -85,7 +85,7 @@ def actor_loss(
   std = jnp.exp(log_std)
   q = networks.q_values(sac_networks, q_params, value_obs, action)
   min_q = jnp.min(q, axis=-1)
-  base_loss = jnp.mean(jnp.exp(log_alpha) * log_prob - min_q)
+  base_loss = jnp.mean(alpha_effective * log_prob - min_q)
   deterministic_action_l2 = jnp.mean(jnp.square(deterministic_action))
   actor_mean_l2 = jnp.mean(jnp.square(mean))
   deterministic_action_l2_coef_value = jnp.asarray(
@@ -124,6 +124,40 @@ def actor_loss(
   return loss, metrics
 
 
+def alpha_values(
+    log_alpha: jnp.ndarray,
+    fixed_alpha: float = 0.0,
+    alpha_floor: float = 0.0,
+) -> dict[str, jnp.ndarray]:
+  """Returns raw and effective temperature values for diagnostics."""
+  raw_alpha = jnp.exp(log_alpha)
+  fixed_alpha_value = jnp.asarray(fixed_alpha, dtype=raw_alpha.dtype)
+  alpha_floor_value = jnp.asarray(alpha_floor, dtype=raw_alpha.dtype)
+  use_fixed_alpha = fixed_alpha_value > 0.0
+  use_alpha_floor = alpha_floor_value > 0.0
+  floored_alpha = jnp.maximum(raw_alpha, alpha_floor_value)
+  effective_alpha = jnp.where(
+      use_fixed_alpha,
+      fixed_alpha_value,
+      jnp.where(use_alpha_floor, floored_alpha, raw_alpha),
+  )
+  alpha_floor_active = jnp.where(
+      jnp.logical_and(use_alpha_floor, raw_alpha < alpha_floor_value),
+      1.0,
+      0.0,
+  )
+  alpha_floor_active = jnp.where(use_fixed_alpha, 0.0, alpha_floor_active)
+  return {
+      "alpha_raw": raw_alpha,
+      "log_alpha_raw": log_alpha,
+      "alpha_effective": effective_alpha,
+      "log_alpha_effective": jnp.log(jnp.maximum(effective_alpha, 1e-12)),
+      "fixed_alpha": fixed_alpha_value,
+      "alpha_floor": alpha_floor_value,
+      "alpha_floor_active": alpha_floor_active.astype(raw_alpha.dtype),
+  }
+
+
 def alpha_loss(
     log_alpha: jnp.ndarray,
     policy_params: Any,
@@ -133,26 +167,35 @@ def alpha_loss(
     sac_networks: networks.SACNetworks,
     target_entropy: float,
     normalize_observations: bool,
+    fixed_alpha: float = 0.0,
+    alpha_floor: float = 0.0,
+    alpha_loss_type_id: int = 0,
 ) -> tuple[jnp.ndarray, dict[str, jnp.ndarray]]:
   policy_obs = normalizer.normalize(
       policy_normalizer, batch.policy_obs, normalize_observations
   )
   _, log_prob = networks.sample_action(sac_networks, policy_params, policy_obs, key)
-  alpha = jnp.exp(log_alpha)
+  alpha_metrics = alpha_values(log_alpha, fixed_alpha, alpha_floor)
+  alpha = alpha_metrics["alpha_raw"]
   target_entropy_value = jnp.asarray(target_entropy, dtype=log_prob.dtype)
   mean_log_prob = jnp.mean(log_prob)
   alpha_error = jnp.mean(log_prob + target_entropy_value)
   brax_error = jnp.mean(-log_prob - target_entropy_value)
-  loss = jnp.mean(
-      alpha * jax.lax.stop_gradient(-log_prob - target_entropy_value)
-  )
+  error = jax.lax.stop_gradient(-log_prob - target_entropy_value)
+  exp_alpha_loss = jnp.mean(alpha * error)
+  log_alpha_loss = jnp.mean(log_alpha * error)
+  alpha_loss_type_value = jnp.asarray(alpha_loss_type_id, dtype=jnp.int32)
+  loss = jnp.where(alpha_loss_type_value == 1, log_alpha_loss, exp_alpha_loss)
   return loss, {
       "alpha_loss": loss,
       "alpha": alpha,
       "log_alpha": log_alpha,
+      **alpha_metrics,
       "target_entropy": target_entropy_value,
       "alpha_log_prob": mean_log_prob,
       "alpha_error_log_prob_plus_target": alpha_error,
       "alpha_error_neg_log_prob_minus_target": brax_error,
       "alpha_grad_proxy_exp": alpha * brax_error,
+      "alpha_grad_proxy_log": brax_error,
+      "alpha_loss_type_id": alpha_loss_type_value,
   }

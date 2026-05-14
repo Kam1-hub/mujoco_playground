@@ -10,6 +10,13 @@ DEFAULT_VALUE_OBS_SIZE = 216
 DEFAULT_ACTION_SIZE = 29
 DEFAULT_DETERMINISTIC_ACTION_L2_COEF = 0.0
 DEFAULT_ACTOR_MEAN_L2_COEF = 0.0
+DEFAULT_FIXED_ALPHA = 0.0
+DEFAULT_ALPHA_FLOOR = 0.0
+DEFAULT_ALPHA_LOSS_TYPE = "exp_alpha"
+ALPHA_LOSS_TYPE_IDS = {
+    "exp_alpha": 0,
+    "log_alpha": 1,
+}
 
 
 def parse_hidden_sizes(value: Any, default: Sequence[int]) -> tuple[int, ...]:

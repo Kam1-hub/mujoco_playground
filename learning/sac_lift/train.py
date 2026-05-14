@@ -27,11 +27,20 @@ from learning.sac_lift.types import Transition
 DIAGNOSTIC_METRIC_NAMES = (
     "alpha",
     "log_alpha",
+    "alpha_raw",
+    "log_alpha_raw",
+    "alpha_effective",
+    "log_alpha_effective",
+    "alpha_floor",
+    "fixed_alpha",
+    "alpha_floor_active",
+    "alpha_loss_type_id",
     "alpha_log_prob",
     "target_entropy",
     "alpha_error_log_prob_plus_target",
     "alpha_error_neg_log_prob_minus_target",
     "alpha_grad_proxy_exp",
+    "alpha_grad_proxy_log",
     "reward_mean",
     "done_fraction",
     "discount_mean",
@@ -389,12 +398,21 @@ def _update(
   alpha_tx = optax.adam(config.alpha_learning_rate)
   alpha_key, critic_key, actor_key = jax.random.split(key, 3)
   target_entropy = -float(config.target_entropy_coef) * float(batch.action.shape[-1])
+  fixed_alpha = float(config.get("fixed_alpha", sac_config.DEFAULT_FIXED_ALPHA))
+  alpha_floor = float(config.get("alpha_floor", sac_config.DEFAULT_ALPHA_FLOOR))
+  alpha_loss_type = str(
+      config.get("alpha_loss_type", sac_config.DEFAULT_ALPHA_LOSS_TYPE)
+  )
+  alpha_loss_type_id = sac_config.ALPHA_LOSS_TYPE_IDS[alpha_loss_type]
+  alpha_effective = losses.alpha_values(
+      training_state.log_alpha, fixed_alpha, alpha_floor
+  )["alpha_effective"]
 
   (q_loss, q_metrics), q_grads = jax.value_and_grad(losses.critic_loss, has_aux=True)(
       training_state.q_params,
       training_state.target_q_params,
       training_state.policy_params,
-      training_state.log_alpha,
+      alpha_effective,
       training_state.policy_normalizer,
       training_state.value_normalizer,
       batch,
@@ -414,7 +432,7 @@ def _update(
   )(
       training_state.policy_params,
       q_params,
-      training_state.log_alpha,
+      alpha_effective,
       training_state.policy_normalizer,
       training_state.value_normalizer,
       batch,
@@ -434,9 +452,7 @@ def _update(
   )
   policy_params = optax.apply_updates(training_state.policy_params, policy_updates)
 
-  (alpha_loss, alpha_metrics), alpha_grads = jax.value_and_grad(
-      losses.alpha_loss, has_aux=True
-  )(
+  alpha_loss_args = (
       training_state.log_alpha,
       policy_params,
       training_state.policy_normalizer,
@@ -445,11 +461,22 @@ def _update(
       sac_networks,
       target_entropy,
       config.normalize_observations,
+      fixed_alpha,
+      alpha_floor,
+      alpha_loss_type_id,
   )
-  alpha_updates, alpha_opt_state = alpha_tx.update(
-      alpha_grads, training_state.alpha_opt_state, training_state.log_alpha
-  )
-  log_alpha = optax.apply_updates(training_state.log_alpha, alpha_updates)
+  if fixed_alpha > 0.0:
+    alpha_loss, alpha_metrics = losses.alpha_loss(*alpha_loss_args)
+    alpha_opt_state = training_state.alpha_opt_state
+    log_alpha = training_state.log_alpha
+  else:
+    (alpha_loss, alpha_metrics), alpha_grads = jax.value_and_grad(
+        losses.alpha_loss, has_aux=True
+    )(*alpha_loss_args)
+    alpha_updates, alpha_opt_state = alpha_tx.update(
+        alpha_grads, training_state.alpha_opt_state, training_state.log_alpha
+    )
+    log_alpha = optax.apply_updates(training_state.log_alpha, alpha_updates)
   target_q_params = jax.tree.map(
       lambda target, source: target * (1.0 - config.tau) + source * config.tau,
       training_state.target_q_params,

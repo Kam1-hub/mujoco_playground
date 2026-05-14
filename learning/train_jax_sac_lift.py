@@ -59,6 +59,13 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
   parser.add_argument("--target_entropy_coef", type=float, default=None)
   parser.add_argument("--deterministic_action_l2_coef", type=float, default=None)
   parser.add_argument("--actor_mean_l2_coef", type=float, default=None)
+  parser.add_argument("--fixed_alpha", type=float, default=None)
+  parser.add_argument("--alpha_floor", type=float, default=None)
+  parser.add_argument(
+      "--alpha_loss_type",
+      choices=tuple(sac_config.ALPHA_LOSS_TYPE_IDS),
+      default=None,
+  )
   parser.add_argument("--normalize_observations", type=_str_to_bool, default=None)
   parser.add_argument("--deterministic_eval", type=_str_to_bool, default=None)
   parser.add_argument("--logdir", default=None)
@@ -86,6 +93,12 @@ def _build_config(args: argparse.Namespace):
     )
   if "actor_mean_l2_coef" not in config:
     config.actor_mean_l2_coef = sac_config.DEFAULT_ACTOR_MEAN_L2_COEF
+  if "fixed_alpha" not in config:
+    config.fixed_alpha = sac_config.DEFAULT_FIXED_ALPHA
+  if "alpha_floor" not in config:
+    config.alpha_floor = sac_config.DEFAULT_ALPHA_FLOOR
+  if "alpha_loss_type" not in config:
+    config.alpha_loss_type = sac_config.DEFAULT_ALPHA_LOSS_TYPE
   for name in (
       "seed",
       "impl",
@@ -108,6 +121,9 @@ def _build_config(args: argparse.Namespace):
       "target_entropy_coef",
       "deterministic_action_l2_coef",
       "actor_mean_l2_coef",
+      "fixed_alpha",
+      "alpha_floor",
+      "alpha_loss_type",
       "normalize_observations",
       "deterministic_eval",
       "logdir",
