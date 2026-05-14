@@ -1,7 +1,7 @@
 # Next Actions
 
-Status: updated on 2026-05-14 after fresh 100k alpha/entropy ablation
-multi-seed eval-only diagnostics.
+Status: updated on 2026-05-14 after the bounded fresh 250k A4 alpha/entropy
+extension.
 
 ## Immediate State
 
@@ -111,6 +111,17 @@ multi-seed eval-only diagnostics.
   metrics, but A1 is slightly better on deterministic reward
   (`-4.3262` vs A4 `-4.3436`) and A4 stochastic reward is worse than A1 by
   about `0.0945`.
+- Bounded fresh 250k A4 alpha/entropy extension passed with `TRAIN_OK`,
+  checkpoint
+  `./logs/sac_lift_gpu_250k_alpha_ablate_te0p25_alr1e4_s1/sac_lift_step_249984.pkl`,
+  checkpoint readiness PASS, 4 env x 200 eval PASS, and 5-seed 16 env x 1000
+  eval PASS.
+- A4 250k mitigates drift versus the fresh 250k baseline: alpha higher by
+  `+0.01578`, actor mean abs lower by `-0.07330`, deterministic action abs
+  lower by `-0.05875`, log_std less negative by `+0.03434`, and std higher by
+  `+0.02802`.
+- A4 250k does not eliminate drift relative to A4 100k, and Q/target_q are
+  higher than earlier baselines (`q=8.7442`, `target_q=8.7170`).
 
 ## Completed WSL2 GPU Validation
 
@@ -277,16 +288,18 @@ or menagerie.
 
 Do not run 750k or 1M yet.
 
-Fresh 100k alpha/entropy ablation A1/A3/A4 and the multi-seed eval-only
-follow-up are complete. A4 is still the best drift-control candidate, but the
-next step should remain bounded:
+Fresh 100k alpha/entropy ablation A1/A3/A4, the multi-seed eval-only
+follow-up, and the bounded fresh 250k A4 extension are complete. A4 remains the
+best drift-control candidate, but the next step should be a decision review,
+not automatic longer training:
 
-1. Decide whether the A4 stochastic caveat is acceptable.
-2. If acceptable, plan a fresh 250k A4 extension only after user/main-agent
-   confirmation and with the same checkpoint/eval gates.
-3. If not acceptable, do further alpha/entropy or stochastic-policy design
-   before longer training.
-4. Do not run fresh 500k, 750k, or 1M.
+1. Decide whether the fresh 250k A4 mitigation is strong enough to justify a
+   bounded A4 500k extension plan.
+2. Treat the higher A4 250k Q/target_q values as a watch item in any next
+   plan.
+3. If the remaining drift or stochastic caveat is concerning, do further
+   alpha/entropy, deterministic-policy, or reward-component design first.
+4. Do not run fresh 500k, 750k, or 1M automatically.
 5. Do not tune reward, `action_scale`, or Kp yet.
 
 ## Completed Both-Mode Eval Diagnostic
@@ -381,16 +394,16 @@ CPU, stop and report the CUDA/JAX blocker.
 ## Recommended Next Step
 
 Do not automatically run fresh 500k, 750k, or 1M. The next useful step is a
-bounded A4 fresh 250k decision, with the multi-seed reward caveat explicitly
-considered.
+decision review for bounded A4 continuation, with the A4 250k mitigation,
+remaining 100k-to-250k drift, stochastic caveat, and Q/target_q watch item all
+explicitly considered.
 
 Recommended diagnostic questions:
 
-1. Is A4 strong enough for a fresh 250k extension despite A1's tiny
-   deterministic reward edge and A4's stochastic reward caveat?
-2. Should the 250k extension compare A4 only, or include A1 as a direct
-   slow-alpha comparator?
-3. What stop conditions would apply if a fresh 250k A4 extension is approved?
+1. Is A4 250k strong enough to justify planning a bounded A4 500k extension?
+2. Should the next step instead be another targeted diagnostic or a hold for
+   design?
+3. What stop conditions would apply if any bounded A4 extension is approved?
 
 Do not jump into fresh 500k, 750k, or 1M from this report update.
 

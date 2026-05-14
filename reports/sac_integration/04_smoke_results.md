@@ -1,7 +1,58 @@
 # Smoke Results
 
-Status: updated on 2026-05-14 after fresh 100k alpha/entropy ablation
-multi-seed eval-only diagnostics.
+Status: updated on 2026-05-14 after the bounded fresh 250k A4 alpha/entropy
+extension.
+
+## 2026-05-14 Fresh 250k A4 Alpha/Entropy Extension
+
+- Scope: bounded fresh 250k A4 extension only; not 500k, 750k, or 1M.
+- Parameters: `target_entropy_coef=0.25`,
+  `alpha_learning_rate=1e-4`.
+- Status: `TRAIN_OK`
+- Checkpoint:
+  `./logs/sac_lift_gpu_250k_alpha_ablate_te0p25_alr1e4_s1/sac_lift_step_249984.pkl`
+- Checkpoint readiness: PASS; `deterministic_eval_ready=true`; normalizers
+  present.
+- 4 env x 200 seed 0 eval: PASS / `EVAL_OK`, JSON
+  `./logs/sac_eval_alpha_ablate_250k/eval_A4_seed0_4x200_actiondiag.json`
+- 5-seed 16 env x 1000 eval: PASS, five JSONs in
+  `./logs/sac_eval_alpha_ablate_250k_multiseed/`.
+- All evals returned `EVAL_OK`; all action/reward/obs NaN flags were false.
+- No code, reward, `action_scale`, Kp, PPO, RSL, domain randomization, or
+  fine-tuning changes were made.
+- No traceback, OOM, fatal CUDA, env, checkpoint, or eval failure was observed.
+
+Training summary:
+
+| env_steps | gradient_steps | wall_time | sps | actor_loss | critic_loss | alpha | log_alpha | q | target_q |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 249984 | 3892 | 148.8921 | 1678.9605 | -9.3541 | 0.05245 | 0.03455 | -3.36536 | 8.7442 | 8.7170 |
+
+Actor drift summary:
+
+| Metric | Final | Interval |
+|---|---:|---:|
+| actor mean abs | 0.22572 | 0.19623 |
+| deterministic action abs | 0.21220 | 0.18468 |
+| log_std mean | -0.17093 | -0.15217 |
+| std mean | 0.84424 | 0.86181 |
+
+Eval summary:
+
+| Eval | Mode | Reward Avg/Mean | Reward SD | Action Abs | Sat 0.95 | NaN |
+|---|---|---:|---:|---:|---:|---|
+| 4x200 seed0 | deterministic | -4.0879 | n/a | 0.1739 | 0.0 | false |
+| 4x200 seed0 | stochastic | -5.9671 | n/a | 0.5213 | 0.03970 | false |
+| 5-seed 16x1000 | deterministic | -4.1561 | 0.4168 | 0.1861 | 0.000006 | false |
+| 5-seed 16x1000 | stochastic | -6.1400 | 0.4045 | 0.5213 | 0.04050 | false |
+
+Interpretation: A4 clearly mitigates 250k actor mean / deterministic action
+drift versus the fresh 250k baseline: alpha is higher by `+0.01578`, actor
+mean abs is lower by `-0.07330`, deterministic action abs is lower by
+`-0.05875`, log_std is less negative by `+0.03434`, and std is higher by
+`+0.02802`. A4 does not eliminate drift relative to A4 100k, and Q/target_q
+are higher than earlier baselines, so they are watch items. This is promising
+drift-control evidence, not authorization to run fresh 500k, 750k, or 1M.
 
 ## 2026-05-14 Alpha/Entropy Ablation Multi-Seed Eval-Only Diagnostic
 

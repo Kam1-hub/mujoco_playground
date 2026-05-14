@@ -45,6 +45,7 @@ Runtime artifacts are local and ignored. Do not commit `logs/`, `.venv/`,
 | Fresh 250k actor drift train diagnostic | PASS | `reports/sac_integration/11_actor_drift_train_diagnostic.md` |
 | Fresh 100k alpha/entropy ablation A1/A3/A4 | PASS | `reports/sac_integration/12_alpha_entropy_ablation_plan.md` |
 | Fresh 100k alpha/entropy ablation multi-seed eval-only | PASS | `./logs/sac_eval_alpha_ablate_multiseed/`, `15` JSON outputs |
+| Bounded fresh 250k A4 alpha/entropy extension | PASS | `./logs/sac_lift_gpu_250k_alpha_ablate_te0p25_alr1e4_s1/sac_lift_step_249984.pkl` |
 | 1M training | NOT VALIDATED | Requires explicit user confirmation and resource/stop plan |
 
 ## Completed Outcomes
@@ -85,6 +86,12 @@ Runtime artifacts are local and ignored. Do not commit `logs/`, `.venv/`,
   with action/reward/obs NaN flags false. A4 remained best on deterministic
   action magnitude and actor mean drift metrics, while A1 slightly edged
   deterministic reward and A4 retained a stochastic reward caveat.
+- Validated a bounded fresh 250k A4 alpha/entropy extension. The run produced
+  checkpoint
+  `./logs/sac_lift_gpu_250k_alpha_ablate_te0p25_alr1e4_s1/sac_lift_step_249984.pkl`,
+  passed checkpoint readiness, passed 4 env x 200 action diagnostic eval, and
+  passed 5-seed 16 env x 1000 eval. A4 mitigated fresh 250k drift versus the
+  baseline but did not eliminate drift relative to A4 100k.
 
 ### Full Action Diagnostic Summary
 
@@ -257,6 +264,56 @@ mean drift metrics. It is not strictly best on deterministic reward: A1 is
 slightly better (`-4.3262` vs `-4.3436`), and the gap is small relative to seed
 variance. A4 stochastic reward is worse than A1 by about `0.0945` and
 essentially tied with A3.
+
+### Bounded Fresh 250k A4 Extension Summary
+
+The bounded fresh 250k A4 extension passed runtime, checkpoint, and eval gates:
+
+- Checkpoint:
+  `./logs/sac_lift_gpu_250k_alpha_ablate_te0p25_alr1e4_s1/sac_lift_step_249984.pkl`
+- Checkpoint readiness: PASS, `deterministic_eval_ready=true`, normalizers
+  present.
+- 4 env x 200 seed 0 eval: PASS,
+  `./logs/sac_eval_alpha_ablate_250k/eval_A4_seed0_4x200_actiondiag.json`.
+- 5-seed 16 env x 1000 eval: PASS, five JSON outputs in
+  `./logs/sac_eval_alpha_ablate_250k_multiseed/`.
+
+Training and drift metrics:
+
+| Metric | Value |
+|---|---:|
+| env_steps | 249984 |
+| gradient_steps | 3892 |
+| wall_time | 148.8921 |
+| sps | 1678.9605 |
+| alpha | 0.03455 |
+| log_alpha | -3.36536 |
+| actor mean abs | 0.22572 |
+| deterministic action abs | 0.21220 |
+| log_std mean | -0.17093 |
+| std mean | 0.84424 |
+| q | 8.7442 |
+| target_q | 8.7170 |
+
+Eval aggregate:
+
+| Mode | Reward Avg | Reward SD | Action Abs | Sat 0.95 | Policy Mean Abs | LogStd Mean | Std Mean |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| deterministic | -4.1561 | 0.4168 | 0.1861 | 0.000006 | 0.1960 | -0.1183 | 0.8894 |
+| stochastic | -6.1400 | 0.4045 | 0.5213 | 0.04050 | 0.2254 | -0.1733 | 0.8422 |
+
+Interpretation:
+
+- Versus fresh 250k baseline, A4 improves alpha by `+0.01578`, actor mean abs
+  by `-0.07330`, deterministic action abs by `-0.05875`, log_std by
+  `+0.03434`, and std by `+0.02802`.
+- Versus A4 100k, drift still increases moderately: alpha
+  `0.04285 -> 0.03455`, actor mean abs `0.20693 -> 0.22572`,
+  deterministic action abs `0.19314 -> 0.21220`, and log_std
+  `-0.15183 -> -0.17093`.
+- Q/target_q are higher than earlier baselines and should be watched.
+- This is promising drift-control evidence, not authorization to run fresh
+  500k, 750k, or 1M.
 
 ## Key Metrics
 
@@ -586,6 +643,10 @@ It is not yet reasonable to claim:
   healthier std. This is useful but not sufficient for 750k/1M because A1
   slightly edges deterministic reward and A4 remains weaker on stochastic
   reward.
+- Bounded fresh 250k A4 extension mitigated drift versus the fresh 250k
+  baseline, but did not eliminate A4's own 100k-to-250k drift. Its Q/target_q
+  values rose to `8.7442` / `8.7170`, so critic scale remains a watch item for
+  any next bounded extension.
 - Eval reward is still low and should be treated as a smoke signal, not a
   performance benchmark.
 - Truncation handling is currently synthesized as zero when absent. That passed
@@ -670,12 +731,12 @@ Stop immediately and report if any of these occur:
 ## 1M Decision And Readiness Plan
 
 Do not automatically jump to fresh 500k, 750k, or 1M from this report update.
-The next recommended step is a bounded A4 follow-up decision: either a fresh
-250k A4 extension after user/main-agent confirmation, or further design if the
-stochastic reward caveat is considered blocking. A later 1M review should
-consider whether alpha floor, target entropy, log-alpha dynamics, or
-deterministic mean action drift need analysis before a longer run. Consider 1M
-only with:
+The next recommended step is a decision review using the bounded A4 250k
+evidence: either plan a bounded A4 500k extension, do another targeted
+diagnostic, or hold for design. A later 1M review should consider whether
+alpha floor, target entropy, log-alpha dynamics, critic scale, or deterministic
+mean action drift need more analysis before a longer run. Consider 1M only
+with:
 
 - explicit resource budget
 - fresh logdir and checkpoint path

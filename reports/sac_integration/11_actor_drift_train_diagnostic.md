@@ -385,11 +385,10 @@ Interval metrics:
 ### Updated Next Action
 
 - Do not run 750k or 1M.
-- Do not run a fresh 250k A4 extension automatically.
-- Multi-seed 100k ablation eval has completed; see below.
-- Recommended next step: decide whether to run a bounded fresh 250k A4
-  extension after user/main-agent confirmation, or do further design if the
-  stochastic caveat is blocking.
+- Fresh 250k A4 extension has completed; see below.
+- Do not run fresh 500k, 750k, or 1M automatically.
+- Recommended next step: decision review on bounded A4 500k extension planning
+  versus further targeted design or holding.
 
 ## Fresh 100k Alpha/Entropy Multi-Seed Eval Follow-Up
 
@@ -431,6 +430,114 @@ Interval metrics:
 - A3 remains the weakest candidate for drift/reward.
 - A4 is still the best drift-control candidate, but it should be described
   with the reward caveat.
-- Next action: do not run 750k or 1M. Decide whether to run a bounded fresh
-  250k A4 extension after confirmation, or do further design if the stochastic
-  caveat is concerning.
+- Fresh 250k A4 extension has completed; see below. Do not run fresh 500k,
+  750k, or 1M automatically.
+
+## Fresh 250k A4 Alpha/Entropy Extension
+
+### Context
+
+- Scope: bounded fresh 250k A4 extension using the current best
+  drift-control alpha/entropy candidate.
+- Parameters: `target_entropy_coef=0.25`,
+  `alpha_learning_rate=1e-4`.
+- This was not a fresh 500k, 750k, or 1M run.
+- No code changes were made during the run.
+- No reward, `action_scale`, Kp, PPO, RSL, domain randomization, or
+  fine-tuning changes were made.
+
+### Training Result
+
+- Status: `TRAIN_OK`
+- Checkpoint:
+  `./logs/sac_lift_gpu_250k_alpha_ablate_te0p25_alr1e4_s1/sac_lift_step_249984.pkl`
+- Checkpoint readiness: PASS
+- `deterministic_eval_ready`: `true`
+- `policy_normalizer` / `value_normalizer`: present
+- `env_steps`: `249984`
+- `gradient_steps`: `3892`
+- `wall_time`: `148.8921`
+- `sps`: `1678.9605`
+- `actor_loss`: `-9.3541`
+- `critic_loss`: `0.05245`
+- `alpha`: `0.03455`
+- `log_alpha`: `-3.36536`
+- `alpha_loss`: `0.87640`
+- `alpha_log_prob`: `-18.1164`
+- `alpha_error_log_prob_plus_target`: `-25.3664`
+- `alpha_grad_proxy_exp`: `0.87640`
+- `q`: `8.7442`
+- `target_q`: `8.7170`
+- `reward_mean`: `-0.13106`
+- `done_fraction`: `0.02344`
+- `discount_mean`: `0.97656`
+
+### Actor Drift Metrics
+
+| Metric | Final | Interval Avg |
+|---|---:|---:|
+| actor policy mean abs mean | 0.22572 | 0.19623 |
+| actor policy mean abs max | 1.93320 | n/a |
+| actor log_std mean | -0.17093 | -0.15217 |
+| actor log_std min | -0.66452 | n/a |
+| actor log_std max | 0.03127 | n/a |
+| actor policy std mean | 0.84424 | 0.86181 |
+| sampled action abs mean | 0.52981 | n/a |
+| sampled action saturation 0.95 | 0.04297 | n/a |
+| deterministic action abs mean | 0.21220 | 0.18468 |
+| deterministic action saturation 0.95 | 0.000269 | n/a |
+
+### Comparison
+
+Versus fresh 250k baseline:
+
+- Alpha is higher by `+0.01578`.
+- Actor mean abs is lower by `-0.07330`.
+- Deterministic action abs is lower by `-0.05875`.
+- Log_std is less negative by `+0.03434`.
+- Std is higher by `+0.02802`.
+
+Versus A4 100k:
+
+- Alpha declined moderately: `0.04285 -> 0.03455`.
+- Actor mean abs increased: `0.20693 -> 0.22572`.
+- Deterministic action abs increased: `0.19314 -> 0.21220`.
+- Log_std decreased: `-0.15183 -> -0.17093`.
+
+Interpretation: A4 clearly mitigates 250k actor mean / deterministic action
+drift versus the fresh 250k baseline, but it does not eliminate drift relative
+to A4 100k.
+
+### Eval Summary
+
+- Small eval JSON:
+  `./logs/sac_eval_alpha_ablate_250k/eval_A4_seed0_4x200_actiondiag.json`
+- Multi-seed JSON directory:
+  `./logs/sac_eval_alpha_ablate_250k_multiseed/`
+- Small eval status: PASS / `EVAL_OK`
+- Multi-seed eval status: PASS; five 16 env x 1000 JSON outputs.
+- All action/reward/obs NaN flags were false.
+
+Small eval, seed 0, 4 env x 200 steps:
+
+| Mode | Reward Mean | Action Abs | Sat 0.95 | NaN |
+|---|---:|---:|---:|---|
+| deterministic | -4.0879 | 0.1739 | 0.0 | false |
+| stochastic | -5.9671 | 0.5213 | 0.03970 | false |
+
+Multi-seed 16 env x 1000 aggregate:
+
+| Mode | Reward Avg | Reward SD | Reward Min Avg | Reward Max Avg | Action Abs | Sat 0.95 | Policy Mean Abs | LogStd Mean | Std Mean |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| deterministic | -4.1561 | 0.4168 | -7.7058 | -2.9907 | 0.1861 | 0.000006 | 0.1960 | -0.1183 | 0.8894 |
+| stochastic | -6.1400 | 0.4045 | -9.9431 | -4.8325 | 0.5213 | 0.04050 | 0.2254 | -0.1733 | 0.8422 |
+
+### Interpretation And Next Action
+
+- A4 is promising drift-control evidence at 250k.
+- Q/target_q are higher than earlier baselines and should be treated as a
+  watch item.
+- This result does not authorize a jump to fresh 500k, 750k, or 1M.
+- Next action should be a decision review: bounded A4 500k extension plan,
+  another targeted diagnostic, or hold for design. Do not tune reward,
+  `action_scale`, or Kp yet.
