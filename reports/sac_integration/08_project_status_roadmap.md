@@ -1,7 +1,7 @@
 # G1 SAC Integration Status And Roadmap
 
-Status: updated on 2026-05-14 after the fresh 100k actor-regularization R1
-ablation.
+Status: updated on 2026-05-14 after the fresh 100k actor-regularization R2/R3
+coefficient sweep.
 
 ## 1. Mission
 
@@ -187,12 +187,13 @@ Validation ladder:
 22. Bounded fresh 500k A4 alpha/entropy extension
 23. Bounded fresh 750k A4 alpha/entropy bridge
 24. Fresh 100k actor regularization R1
-25. 1M training
+25. Fresh 100k actor regularization R2/R3 coefficient sweep
+26. 1M training
 
 Status:
 
-- Steps 1 through 24 are complete.
-- Step 25 remains `NOT VALIDATED` and requires separate user confirmation and
+- Steps 1 through 25 are complete.
+- Step 26 remains `NOT VALIDATED` and requires separate user confirmation and
   an explicit resource/stop-condition plan.
 
 ### Phase 6: Reports, Commits, Migration Handoff
@@ -1140,6 +1141,44 @@ mean or deterministic action magnitude versus A4 100k. The regularization
 contribution is tiny relative to actor loss, so R1 should not be extended to
 250k as-is.
 
-## 20. Current Position In One Sentence
+## 20. Fresh 100k Actor-Regularization R2/R3 Coefficient Sweep
 
-SAC Route B is implemented; CPU tiny smoke, WSL2 GPU preflight, Route B GPU 10k smoke, normalizer-ready checkpoint validation, bounded deterministic eval smoke, 50k sanity/eval, 100k sanity/eval, 250k sanity/eval, 500k sanity/eval, both-mode eval diagnostic, full action diagnostic, fresh 100k/250k train-time actor drift diagnostics, fresh 100k alpha/entropy ablation diagnostics, the A1/A3/A4 multi-seed eval-only ablation diagnostic, bounded fresh 250k/500k/750k A4 extensions, and fresh 100k actor-regularization R1 have passed runtime gates; 1M, full eval benchmarking, domain randomization, and fine-tuning remain `NOT VALIDATED`, 750k evidence argues against automatic longer training, and R1 appears too weak to extend to 250k as-is.
+Status: `TRAIN_OK` for both R2 and R3.
+
+```text
+scope: fresh 100k coefficient sweep only
+alpha settings: target_entropy_coef=0.25, alpha_learning_rate=1e-4
+R2 coefs: deterministic_action_l2_coef=0.1, actor_mean_l2_coef=0.01
+R3 coefs: deterministic_action_l2_coef=0.5, actor_mean_l2_coef=0.05
+checkpoint readiness: PASS for both
+4x200 action diagnostic eval: PASS for both
+5-seed eval-only: PASS for both
+multiseed JSON dir: ./logs/sac_eval_actor_reg_100k_multiseed/
+multiseed JSON count: 15 total including R1/R2/R3
+action/reward/obs NaN: false
+```
+
+Training summary:
+
+| Variant | actor_loss | critic_loss | alpha | q | target_q | mean_abs | det_abs | log_std | std |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| R2 | -5.9766 | 0.1383 | 0.042841 | 5.2078 | 5.1507 | 0.2012 | 0.1887 | -0.1513 | 0.8618 |
+| R3 | -6.0585 | 0.1684 | 0.042818 | 5.3317 | 5.2599 | 0.1506 | 0.1430 | -0.1548 | 0.8589 |
+
+5-seed eval summary:
+
+| Variant | deterministic reward | stochastic reward | deterministic action abs | stochastic action abs |
+|---|---:|---:|---:|---:|
+| R2 | -4.2422 | -6.4680 | 0.1614 | 0.5247 |
+| R3 | -4.1681 | -6.3983 | 0.1348 | 0.5198 |
+
+Interpretation: R2 improves over A4 100k and R1 on drift metrics and eval
+reward. R3 improves more strongly and has the best 5-seed deterministic and
+stochastic rewards among R2/R3/A4 100k/R1. R3 is the stronger 100k candidate,
+but its higher critic loss versus R2 is a watch item. Next step is a decision
+review before any bounded R3 250k extension; do not run 500k, 750k, or 1M from
+this result.
+
+## 21. Current Position In One Sentence
+
+SAC Route B is implemented; CPU tiny smoke, WSL2 GPU preflight, Route B GPU 10k smoke, normalizer-ready checkpoint validation, bounded deterministic eval smoke, 50k sanity/eval, 100k sanity/eval, 250k sanity/eval, 500k sanity/eval, both-mode eval diagnostic, full action diagnostic, fresh 100k/250k train-time actor drift diagnostics, fresh 100k alpha/entropy ablation diagnostics, the A1/A3/A4 multi-seed eval-only ablation diagnostic, bounded fresh 250k/500k/750k A4 extensions, fresh 100k actor-regularization R1, and fresh 100k actor-regularization R2/R3 have passed runtime gates; 1M, full eval benchmarking, domain randomization, and fine-tuning remain `NOT VALIDATED`, 750k evidence argues against automatic longer training, R1 is too weak to extend, and R3 is the best current 100k regularization candidate pending a decision review.

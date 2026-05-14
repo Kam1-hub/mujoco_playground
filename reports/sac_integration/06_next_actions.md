@@ -1,7 +1,7 @@
 # Next Actions
 
-Status: updated on 2026-05-14 after the fresh 100k actor-regularization R1
-ablation.
+Status: updated on 2026-05-14 after the fresh 100k actor-regularization R2/R3
+coefficient sweep.
 
 ## Immediate State
 
@@ -154,6 +154,17 @@ ablation.
 - R1 regularization contribution was tiny (`0.000886`) relative to actor loss,
   so this coefficient set appears too weak and should not be extended to 250k
   as-is.
+- Fresh 100k actor-regularization R2/R3 coefficient sweep passed with
+  `TRAIN_OK`, checkpoint readiness PASS, 4 env x 200 eval PASS, and 5-seed
+  eval PASS.
+- R2 used `deterministic_action_l2_coef=0.1` and
+  `actor_mean_l2_coef=0.01`; R3 used `deterministic_action_l2_coef=0.5` and
+  `actor_mean_l2_coef=0.05`. Both used A4 alpha settings.
+- R3 is the best current 100k regularization candidate: train actor mean abs
+  `0.1506`, deterministic action abs `0.1430`, deterministic 5-seed reward
+  `-4.1681`, and stochastic 5-seed reward `-6.3983`.
+- R3 has a critic-loss watch item (`0.1684` vs R2 `0.1383`); R2 remains a
+  conservative backup.
 
 ## Completed WSL2 GPU Validation
 
@@ -321,23 +332,26 @@ or menagerie.
 Do not run 1M or any longer training yet.
 
 Fresh 100k alpha/entropy ablation A1/A3/A4, the multi-seed eval-only
-follow-up, the bounded fresh 250k, 500k, and 750k A4 extensions, and the fresh
-100k actor-regularization R1 ablation are complete. A4 mitigated the old 500k
-drift pattern, but the 750k bridge worsened actor drift, deterministic eval,
-stochastic eval, and critic loss versus A4 500k. R1 passed runtime gates but
-was too weak to control train-time drift. The next step should be a decision
-review or stronger bounded coefficient design, not automatic longer training:
+follow-up, the bounded fresh 250k, 500k, and 750k A4 extensions, the fresh 100k
+actor-regularization R1 ablation, and the fresh 100k R2/R3 coefficient sweep
+are complete. A4 mitigated the old 500k drift pattern, but the 750k bridge
+worsened actor drift, deterministic eval, stochastic eval, and critic loss
+versus A4 500k. R1 passed runtime gates but was too weak to control train-time
+drift. R2/R3 showed material improvement at 100k, with R3 the strongest current
+candidate and R2 the conservative backup. The next step should be a decision
+review before any bounded 250k extension:
 
 1. Decide whether to stop A4 extension at 750k and focus on alpha/log_std or
    deterministic action drift design.
 2. Treat actor drift, eval degradation, and critic loss as the main watch
    items in any next plan.
-3. Do not extend R1 to 250k as-is; if regularization remains the path, design a
-   stronger bounded coefficient sweep first.
-4. If the remaining drift or stochastic caveat is concerning, do further
+3. Do not extend R1 to 250k as-is.
+4. If regularization remains the path, decide whether to run a bounded R3 250k
+   diagnostic with critic-loss/Q stop conditions; keep R2 as backup.
+5. If the remaining drift or stochastic caveat is concerning, do further
    alpha/entropy, deterministic-policy, or reward-component design first.
-5. Do not run 1M automatically.
-6. Do not tune reward, `action_scale`, or Kp yet.
+6. Do not run 500k, 750k, or 1M automatically.
+7. Do not tune reward, `action_scale`, or Kp yet.
 
 ## Completed Both-Mode Eval Diagnostic
 
@@ -431,22 +445,22 @@ CPU, stop and report the CUDA/JAX blocker.
 ## Recommended Next Step
 
 Do not automatically run 1M or any longer training. The next useful step is a
-decision review/design pass using the bounded A4 750k bridge and R1 evidence:
-runtime remained clean, but A4 750k actor drift/eval worsened versus A4 500k,
-and R1's small regularization coefficients were too weak to reduce train-time
-drift.
+decision review/design pass using the bounded A4 750k bridge and R1/R2/R3
+evidence: runtime remained clean, but A4 750k actor drift/eval worsened versus
+A4 500k; R1's small coefficients were too weak; and R3 is now the strongest
+100k regularization candidate with critic loss as the main watch item.
 
 Recommended diagnostic questions:
 
 1. Should A4 be capped at 500k/750k while investigating alpha/log_std and
    deterministic action drift?
-2. Should the next bounded test be a stronger actor regularization coefficient
-   sweep rather than extending R1?
+2. Should the next bounded test be a 250k R3 extension, or should R2 be used as
+   a more conservative backup because of R3's higher critic loss?
 3. Is another targeted diagnostic or design change more useful than a longer
    run?
 4. What stop conditions would apply if any future extension is approved?
 
-Do not jump into 1M from this report update.
+Do not jump into 500k, 750k, or 1M from this report update.
 
 ## Migration Reminders
 

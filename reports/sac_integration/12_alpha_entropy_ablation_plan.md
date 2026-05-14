@@ -3,12 +3,13 @@
 Status: results recorded after fresh 100k A1/A3/A4 ablations, multi-seed
 eval-only diagnostics, the bounded fresh 250k and 500k A4 extensions, the
 bounded fresh 750k A4 bridge, and the fresh 100k actor-regularization R1
-ablation.
+ablation plus the fresh 100k R2/R3 actor-regularization coefficient sweep.
 
 This report records the controlled diagnostic plan, the validated fresh 100k
 A1/A3/A4 alpha/entropy ablation results, the follow-up multi-seed eval-only
 diagnostics, the bounded fresh 250k and 500k A4 extensions, the bounded fresh
-750k A4 bridge, and the first default-off actor-regularization ablation.
+750k A4 bridge, and the default-off actor-regularization ablations through
+R2/R3.
 
 ## Context
 
@@ -747,6 +748,61 @@ Interpretation:
   R1 coefficients appear too weak for train-time drift control.
 - Do not extend R1 to 250k as-is. Next action should be a decision review or
   stronger bounded coefficient sweep, not 250k, 750k, or 1M.
+
+## Fresh 100k Actor-Regularization R2/R3 Coefficient Sweep
+
+Execution context:
+
+- `CHECKPOINT ACTOR-REG-100K-R2R3` completed after R1 showed too-weak
+  regularization.
+- Scope: fresh 100k coefficient sweep only; no 250k, 500k, 750k, or 1M run was
+  executed.
+- Both variants used A4 alpha settings: `target_entropy_coef=0.25` and
+  `alpha_learning_rate=1e-4`.
+- R2: `deterministic_action_l2_coef=0.1`, `actor_mean_l2_coef=0.01`.
+- R3: `deterministic_action_l2_coef=0.5`, `actor_mean_l2_coef=0.05`.
+- Both variants passed training, checkpoint readiness, 4x200 action diagnostic
+  eval, and 5-seed eval-only gates.
+- Multi-seed JSON directory: `./logs/sac_eval_actor_reg_100k_multiseed/`,
+  with `15` total JSON outputs including R1/R2/R3.
+- All evals returned `EVAL_OK`; all action/reward/obs NaN flags were false.
+- No traceback, OOM, fatal CUDA, env, checkpoint, or eval failure was observed.
+- Runtime artifacts remain under ignored `logs/` and are not committed.
+
+Training metrics:
+
+| Variant | actor_loss | critic_loss | alpha | log_alpha | q | target_q | reward_mean | sps |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| R2 | -5.9766 | 0.1383 | 0.042841 | -3.1503 | 5.2078 | 5.1507 | -0.1561 | 1396.73 |
+| R3 | -6.0585 | 0.1684 | 0.042818 | -3.1508 | 5.3317 | 5.2599 | -0.1340 | 1414.64 |
+
+Actor and regularization metrics:
+
+| Variant | mean_abs | det_abs | log_std | std | reg_loss | det_l2 | mean_l2 |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| R2 | 0.2012 | 0.1887 | -0.1513 | 0.8618 | 0.00700 | 0.06218 | 0.07867 |
+| R3 | 0.1506 | 0.1430 | -0.1548 | 0.8589 | 0.02259 | 0.04015 | 0.05033 |
+
+5-seed eval aggregates:
+
+| Variant | Mode | Reward Avg | Reward SD | Action Abs | Policy Mean Abs | Log Std | Std | OK |
+|---|---|---:|---:|---:|---:|---:|---:|---|
+| R2 | deterministic | -4.2422 | 0.3848 | 0.1614 | 0.1720 | -0.0980 | 0.9084 | true |
+| R2 | stochastic | -6.4680 | 0.4782 | 0.5247 | 0.1943 | -0.1527 | 0.8605 | true |
+| R3 | deterministic | -4.1681 | 0.4120 | 0.1348 | 0.1438 | -0.1014 | 0.9058 | true |
+| R3 | stochastic | -6.3983 | 0.4580 | 0.5198 | 0.1483 | -0.1556 | 0.8582 | true |
+
+Interpretation:
+
+- R2 improves over A4 100k and R1 on drift metrics and eval reward.
+- R3 improves more strongly and has the best 5-seed deterministic and
+  stochastic rewards among R2/R3/A4 100k/R1.
+- R3 has higher critic loss than R2 (`0.1684` vs `0.1383`), so it is the
+  stronger candidate with a critic-loss watch item.
+- R2 remains a conservative backup.
+- Next step should be a decision review before any 250k extension. If
+  proceeding, a bounded R3 250k diagnostic is the likely candidate. Do not run
+  500k, 750k, or 1M from this result.
 
 ## Stop Conditions
 

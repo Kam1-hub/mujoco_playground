@@ -1,7 +1,48 @@
 # Smoke Results
 
-Status: updated on 2026-05-14 after the fresh 100k actor-regularization R1
-ablation.
+Status: updated on 2026-05-14 after the fresh 100k actor-regularization R2/R3
+coefficient sweep.
+
+## 2026-05-14 Fresh 100k Actor-Regularization R2/R3 Sweep
+
+- Scope: fresh 100k actor-regularization coefficient sweep using A4 alpha
+  settings only; no 250k, 500k, 750k, or 1M run was executed.
+- A4 alpha settings: `target_entropy_coef=0.25`,
+  `alpha_learning_rate=1e-4`.
+- R2: `deterministic_action_l2_coef=0.1`,
+  `actor_mean_l2_coef=0.01`.
+- R3: `deterministic_action_l2_coef=0.5`,
+  `actor_mean_l2_coef=0.05`.
+- Both variants: `TRAIN_OK`, checkpoint readiness PASS, 4 env x 200 action
+  diagnostic eval PASS, and 5-seed 16 env x 1000 eval PASS.
+- Multi-seed outputs: `./logs/sac_eval_actor_reg_100k_multiseed/`, `15`
+  total JSON files including R1/R2/R3.
+- All evals returned `EVAL_OK`; all action/reward/obs NaN flags were false.
+- No traceback, OOM, fatal CUDA, env, checkpoint, or eval failure was observed.
+- Runtime artifacts remain under ignored `logs/` and are not committed.
+
+Training and actor summary:
+
+| Variant | actor_loss | critic_loss | alpha | log_alpha | q | target_q | reward_mean | sps | mean_abs | det_abs | log_std | std | reg_loss |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| R2 | -5.9766 | 0.1383 | 0.042841 | -3.1503 | 5.2078 | 5.1507 | -0.1561 | 1396.73 | 0.2012 | 0.1887 | -0.1513 | 0.8618 | 0.00700 |
+| R3 | -6.0585 | 0.1684 | 0.042818 | -3.1508 | 5.3317 | 5.2599 | -0.1340 | 1414.64 | 0.1506 | 0.1430 | -0.1548 | 0.8589 | 0.02259 |
+
+5-seed eval aggregate:
+
+| Variant | Mode | Reward Avg | Reward SD | Action Abs | Policy Mean Abs | Log Std | Std | OK |
+|---|---|---:|---:|---:|---:|---:|---:|---|
+| R2 | deterministic | -4.2422 | 0.3848 | 0.1614 | 0.1720 | -0.0980 | 0.9084 | true |
+| R2 | stochastic | -6.4680 | 0.4782 | 0.5247 | 0.1943 | -0.1527 | 0.8605 | true |
+| R3 | deterministic | -4.1681 | 0.4120 | 0.1348 | 0.1438 | -0.1014 | 0.9058 | true |
+| R3 | stochastic | -6.3983 | 0.4580 | 0.5198 | 0.1483 | -0.1556 | 0.8582 | true |
+
+Interpretation: R2 improves over A4 100k and R1 on drift metrics and eval
+reward. R3 improves more strongly and has the best 5-seed deterministic and
+stochastic rewards among R2/R3/A4 100k/R1. R3 is now the stronger 100k
+regularization candidate, with critic loss `0.1684` as a watch item; R2 remains
+a conservative backup. Next step is a decision review before any bounded R3
+250k extension. Do not run 500k, 750k, or 1M from this result.
 
 ## 2026-05-14 Fresh 100k Actor-Regularization R1
 

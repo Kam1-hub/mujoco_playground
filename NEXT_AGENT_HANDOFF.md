@@ -18,7 +18,8 @@ domain randomization, or fine-tuning as part of the current validation phase.
 
 - Path: `/home/admin/projects/mujoco_playground/g1_sac_dev`
 - Branch: `sac-integration`
-- Latest recorded diagnostic state: fresh 100k actor-regularization R1 report;
+- Latest recorded diagnostic state: fresh 100k actor-regularization R2/R3
+  coefficient sweep report;
   use `git log --oneline -5` for the exact commit hash.
 - Remote: `origin https://github.com/Kam1-hub/mujoco_playground.git`
 - Last known pushed branch: `sac-integration`
@@ -179,6 +180,9 @@ Current validated ladder:
   but not a clean stability improvement.
 - Fresh 100k actor-regularization R1: PASS runtime/checkpoint/eval, but too
   weak to control train-time drift.
+- Fresh 100k actor-regularization R2/R3 coefficient sweep: PASS
+  runtime/checkpoint/eval; R3 is the best current 100k regularization
+  candidate, with critic loss as a watch item.
 - Action joint mapping diagnostic: PASS.
 
 Still not validated:
@@ -314,7 +318,8 @@ All paths below are runtime artifacts and should remain ignored:
   - Small 4 env x 200 both-mode action diagnostic eval from the R1 checkpoint.
   - Status `EVAL_OK`; action/reward/obs NaN flags false.
 - `./logs/sac_eval_actor_reg_100k_multiseed/`
-  - Five 16 env x 1000 both-mode eval JSONs from the R1 checkpoint.
+  - Fifteen 16 env x 1000 both-mode eval JSONs from the R1/R2/R3
+    actor-regularization checkpoints.
   - All returned `EVAL_OK`; all action/reward/obs NaN flags false.
 - `./logs/sac_lift_schema_dry_run/sac_lift_step_0.pkl`
   - Dry-run schema validation artifact, if still present.
@@ -674,6 +679,13 @@ Both-mode eval diagnostic:
   deterministic action abs worsened `0.19314 -> 0.21378`, stochastic 5-seed
   reward worsened `-6.4935 -> -6.6210`, and the final regularization
   contribution was only `0.000886`.
+- Fresh 100k actor-regularization R2/R3 coefficient sweep has run and passed
+  runtime/checkpoint/eval gates. R2 improved over A4 100k and R1. R3 improved
+  more strongly: actor mean abs `0.1506`, deterministic action abs `0.1430`,
+  deterministic 5-seed reward `-4.1681`, and stochastic 5-seed reward
+  `-6.3983`. R3 is the strongest current 100k regularization candidate, but
+  critic loss `0.1684` is higher than R2 `0.1383`, so watch critic loss/Q if
+  extending.
 - Action joint mapping now links the 500k deterministic top action dimensions
   mainly to right ankle roll/pitch, waist pitch, right knee, and hip roll. See
   `reports/sac_integration/13_action_joint_mapping_diagnostic.md`.
@@ -687,12 +699,14 @@ Both-mode eval diagnostic:
 2. Read this file and `reports/sac_integration/09_phase_summary_and_risks.md`.
 3. Review `reports/sac_integration/12_alpha_entropy_ablation_plan.md`.
 4. If the user explicitly approves another bounded diagnostic, first do a
-   decision review/design pass using the A4 750k and R1 evidence with explicit
-   stop conditions.
-5. Do not draft or execute 1M automatically.
+   decision review/design pass using the A4 750k and R1/R2/R3 evidence with
+   explicit stop conditions.
+5. If proceeding after review, bounded R3 250k is the likely candidate; R2 is
+   the conservative backup.
+6. Do not draft or execute 500k, 750k, or 1M automatically.
 
-Do not start 1M automatically. Do not modify reward, action scale, Kp,
-domain randomization, fine-tuning, PPO, or RSL.
+Do not start 500k, 750k, or 1M automatically. Do not modify reward, action
+scale, Kp, domain randomization, fine-tuning, PPO, or RSL.
 
 ## Completed 100k Sanity Command
 
@@ -745,7 +759,7 @@ git remote -v, and git check-ignore -v logs .venv
 g1_env/external_deps/mujoco_menagerie || true.
 
 Current HEAD should include the report commit for the fresh 100k
-actor-regularization R1 result unless newer report commits exist. GPU 10k smoke, deterministic
+actor-regularization R2/R3 coefficient sweep unless newer report commits exist. GPU 10k smoke, deterministic
 eval smoke, GPU 50k sanity/eval, GPU 100k sanity/eval, GPU 250k sanity/eval,
 GPU 500k sanity/eval, 100k/250k/500k both-mode eval diagnostic, and full action
 distribution / reward-component diagnostic have passed. Fresh 100k and fresh
@@ -760,13 +774,16 @@ also passed and mitigates the old 500k deterministic drift pattern, but
 Q/target_q and critic loss remain watch items. Bounded fresh 750k A4 also
 passed runtime/checkpoint/eval gates, but actor drift and eval quality worsened
 versus A4 500k. Fresh 100k actor-regularization R1 passed runtime/checkpoint/eval
-gates but was too weak to control train-time drift, so do not extend R1 to
-250k as-is. 1M is not validated.
+gates but was too weak to control train-time drift. Fresh 100k
+actor-regularization R2/R3 also passed runtime/checkpoint/eval gates; R3 is the
+best current 100k regularization candidate, with critic loss as a watch item.
+1M is not validated.
 
 Do not run training, eval, preflight, installs, downloads, or git commits unless
-explicitly asked. Next recommended work is a main/user decision review or
-stronger bounded coefficient design using the A4 750k and R1 evidence. Do not
-start 1M without a separate resource/stop-condition plan and user confirmation.
+explicitly asked. Next recommended work is a main/user decision review using
+the A4 750k and R1/R2/R3 evidence; if proceeding, bounded R3 250k is the likely
+candidate and R2 is the conservative backup. Do not start 500k, 750k, or 1M
+without a separate resource/stop-condition plan and user confirmation.
 Do not change reward, action_scale, Kp, domain randomization, fine-tuning, PPO,
 or RSL.
 ```
