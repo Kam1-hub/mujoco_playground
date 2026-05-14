@@ -1,6 +1,76 @@
 # Smoke Results
 
-Status: updated on 2026-05-15 after the fresh env1024 R3 100k `fixed_alpha=0.05` diagnostic.
+Status: updated on 2026-05-15 after the fresh env1024 R3 100k
+`foot_velocity` feet-slip diagnostic.
+
+## 2026-05-15 Fresh Env1024 R3 100k Foot-Velocity Feet-Slip Diagnostic
+
+- Scope: short reward/prior diagnostic using
+  `--env_feet_slip_mode foot_velocity`; no 250k, 5M, 10M, render, code,
+  reward, `action_scale`, Kp, PPO/RSL, or checkpoint schema change was made for
+  this report update.
+- Status: `TRAIN_OK`.
+- Checkpoint:
+  `./logs/sac_lift_gpu_100k_env1024_r3_feet_slip_foot_velocity/sac_lift_step_99328.pkl`
+- Checkpoint readiness: PASS.
+- Env steps: `99328`.
+- Gradient steps: `1312`.
+- Wall time: `76.923856s`.
+- SPS: `1291.250922`.
+- Actor loss: `-5.838199`.
+- Critic loss: `0.212098`.
+- Alpha / log alpha / effective alpha:
+  `0.0437877 / -3.128402 / 0.0437877`.
+- Alpha loss / log prob: `1.131955 / -18.600975`.
+- Q / target Q: `5.002037 / 4.936278`.
+- Reward mean: `-0.137834`.
+- Done fraction: `0.0234375`.
+- Discount mean: `0.9765625`.
+
+Actor drift summary:
+
+| Metric | Final | Interval |
+|---|---:|---:|
+| actor policy mean abs mean | 0.156449 | 0.123519 |
+| actor policy mean abs max | 1.581265 | 0.805393 |
+| actor log_std mean/min/max | -0.153987 / -0.618664 / 0.077566 | -0.133879 / -0.590094 / 0.242706 |
+| actor policy std mean | 0.859645 | 0.879421 |
+| sampled action abs mean | 0.525287 | 0.521194 |
+| sampled action saturation 0.95 | 0.040544 | 0.042598 |
+| deterministic action abs mean | 0.148552 | 0.120510 |
+| deterministic action saturation 0.95 | 0.0 | 0.000000205 |
+
+Small fixed-command smoke:
+
+| Command | Mode | Reward | Action Abs | tracking_lin_vel | tracking_ang_vel | feet_phase | ang_vel_xy | orientation | feet_slip | termination |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| `[0.5,0,0]` | deterministic | -3.8426 | 0.1207 | 8.2117 | 22.9958 | 21.9876 | -53.6817 | -38.4085 | -16.4004 | -100 |
+| `[0.5,0,0]` | stochastic | -6.1354 | 0.5196 | 6.7977 | 3.9696 | 20.0873 | -127.1200 | -47.7488 | -11.1095 | -100 |
+| `[1.0,0,0]` | deterministic | -3.8702 | 0.1189 | 2.1329 | 23.5737 | 22.2097 | -51.5326 | -37.5316 | -15.8610 | -100 |
+| `[1.0,0,0]` | stochastic | -6.1512 | 0.5188 | 2.8877 | 3.8520 | 20.0355 | -125.0816 | -48.3459 | -10.8939 | -100 |
+
+JSON outputs:
+
+- `./logs/sac_eval_feet_slip_100k_smoke/eval_fwd0p5_seed0_both_4x200_foot_velocity.json`
+- `./logs/sac_eval_feet_slip_100k_smoke/eval_fwd1p0_seed0_both_4x200_foot_velocity.json`
+
+Both eval outputs returned `EVAL_OK`, `policy_mode=both`,
+`fixed_command=true`, reward components present, and no action/reward/obs NaN
+flags.
+
+Conclusion:
+
+- Runtime, checkpoint readiness, and the alternate `foot_velocity` branch are
+  clean.
+- The 100k fixed-forward smoke remains weak. Both `fwd0.5` and `fwd1.0`
+  terminate in the 4x200 smoke and `tracking_lin_vel` remains low.
+- Do not continue to 250k, 5M, or 10M from this result.
+- Next short gate should remove the suspect penalty entirely with
+  `--env_feet_slip_scale 0.0`; push-disable is the next targeted alternative.
+
+Warnings: known non-fatal WSL2 CUDA driver warning, known non-fatal JAX cast
+overflow warning, and sandbox `snap-confine` rerun noise. No traceback, OOM,
+fatal CUDA error, NaN, checkpoint failure, or eval failure was observed.
 
 ## 2026-05-15 Fresh Env1024 R3 100k Fixed-Alpha 0.05 Diagnostic
 

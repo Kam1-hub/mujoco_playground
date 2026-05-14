@@ -347,6 +347,86 @@ Warnings:
 - No traceback, OOM, fatal CUDA error, NaN, checkpoint readiness failure, or
   eval failure was observed.
 
+## Fresh 100k Foot-Velocity Feet-Slip Diagnostic
+
+Gate name: fresh env1024 R3 100k feet-slip ablation diagnostic.
+
+- Variant: `--env_feet_slip_mode foot_velocity`.
+- Scope: short diagnostic training, checkpoint readiness, and small
+  fixed-command smoke already completed before this report update.
+- No 250k, 5M, 10M, render, code change, reward, `action_scale`, Kp, PPO/RSL,
+  or checkpoint schema change was made for this report update.
+- Training status: `TRAIN_OK`.
+- Checkpoint:
+  `./logs/sac_lift_gpu_100k_env1024_r3_feet_slip_foot_velocity/sac_lift_step_99328.pkl`
+- Checkpoint readiness: PASS.
+
+Training metrics:
+
+| env_steps | gradient_steps | wall_time | sps | actor_loss | critic_loss | q | target_q | reward_mean | done_fraction | discount_mean |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 99328 | 1312 | 76.923856s | 1291.250922 | -5.838199 | 0.212098 | 5.002037 | 4.936278 | -0.137834 | 0.0234375 | 0.9765625 |
+
+Alpha metrics:
+
+| alpha | log_alpha | alpha_effective | alpha_loss | alpha_log_prob |
+|---:|---:|---:|---:|---:|
+| 0.0437877 | -3.128402 | 0.0437877 | 1.131955 | -18.600975 |
+
+Actor drift metrics:
+
+| Metric | Final | Interval |
+|---|---:|---:|
+| actor policy mean abs mean | 0.156449 | 0.123519 |
+| actor policy mean abs max | 1.581265 | 0.805393 |
+| actor log_std mean | -0.153987 | -0.133879 |
+| actor log_std min | -0.618664 | -0.590094 |
+| actor log_std max | 0.077566 | 0.242706 |
+| actor policy std mean | 0.859645 | 0.879421 |
+| sampled action abs mean | 0.525287 | 0.521194 |
+| sampled action saturation 0.95 | 0.040544 | 0.042598 |
+| deterministic action abs mean | 0.148552 | 0.120510 |
+| deterministic action saturation 0.95 | 0.0 | 0.000000205 |
+
+Small fixed-command smoke:
+
+- `fwd0.5` JSON:
+  `./logs/sac_eval_feet_slip_100k_smoke/eval_fwd0p5_seed0_both_4x200_foot_velocity.json`
+- `fwd1.0` JSON:
+  `./logs/sac_eval_feet_slip_100k_smoke/eval_fwd1p0_seed0_both_4x200_foot_velocity.json`
+- Both outputs returned `EVAL_OK`, `policy_mode=both`, `fixed_command=true`,
+  reward components present, and action/reward/obs NaN flags false.
+
+| Command | Mode | Reward | Reward Std | Reward Min | Reward Max | Action Abs | Sat 0.95 | tracking_lin_vel | tracking_ang_vel | feet_phase | ang_vel_xy | orientation | feet_slip | termination | contact_force |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| `[0.5,0,0]` | deterministic | -3.8426 | 0.6623 | -4.4659 | -2.7300 | 0.1207 | 0.0 | 8.2117 | 22.9958 | 21.9876 | -53.6817 | -38.4085 | -16.4004 | -100 | -0.0552 |
+| `[0.5,0,0]` | stochastic | -6.1354 |  |  |  | 0.5196 | 0.0391 | 6.7977 | 3.9696 | 20.0873 | -127.1200 | -47.7488 | -11.1095 | -100 | -7.2483 |
+| `[1.0,0,0]` | deterministic | -3.8702 | 0.5219 | -4.4035 | -3.0062 | 0.1189 | 0.0 | 2.1329 | 23.5737 | 22.2097 | -51.5326 | -37.5316 | -15.8610 | -100 | -0.2628 |
+| `[1.0,0,0]` | stochastic | -6.1512 |  |  |  | 0.5188 | 0.0381 | 2.8877 | 3.8520 | 20.0355 | -125.0816 | -48.3459 | -10.8939 | -100 | -6.5928 |
+
+Interpretation:
+
+- Runtime, checkpoint readiness, and eval smoke are clean; the `foot_velocity`
+  feet-slip branch works.
+- This is not a runtime, checkpoint, or eval failure.
+- The 100k fixed-forward result did not materially improve versus the
+  fixed-alpha gates. Both `fwd0.5` and `fwd1.0` still terminate in the 4x200
+  smoke, deterministic `tracking_lin_vel` remains low, and stochastic
+  fixed-command smoke remains weak.
+- Do not run 250k, 5M, or 10M from this result.
+- Next short gate should remove the suspect feet-slip penalty entirely with
+  `--env_feet_slip_scale 0.0` while keeping the gate short. A push-disable
+  targeted ablation is the next alternative.
+
+Warnings:
+
+- Known non-fatal WSL2 CUDA driver warning.
+- Known non-fatal JAX cast overflow warning.
+- Sandbox `snap-confine` blocked some `uv` attempts; same commands were rerun
+  externally unchanged.
+- No traceback, OOM, fatal CUDA error, NaN, checkpoint readiness failure, or
+  eval failure was observed.
+
 ## Interpretation
 
 - Fixed-command eval support closes the gap between render-only command
@@ -363,6 +443,10 @@ Warnings:
 - Both fixed-alpha `0.03` and `0.05` verified the mechanism but failed to
   produce useful 100k fixed-forward tracking. Higher fixed alpha alone is not a
   credible next route.
+- The `foot_velocity` feet-slip variant verified the alternate reward branch
+  but also failed to improve 100k fixed-forward tracking. The remaining
+  question is whether the feet-slip penalty itself, push perturbations, or
+  another reward/prior interaction is blocking early fixed-command gait.
 
 ## Next Action
 
@@ -385,7 +469,10 @@ next alternative.
 
 The second fixed-alpha gate (`fixed_alpha=0.05`, fresh env1024 R3 100k) also
 preserved effective alpha but produced weak fixed-command smoke and a critic
-loss watch item. Do not extend fixed-alpha variants to 250k, 5M, or 10M from
-these results. The next main route should be reward/prior targeted audit or
-ablation. Treat `alpha_floor=0.03` as a secondary diagnostic rather than the
-primary path, and do not keep increasing fixed alpha blindly.
+loss watch item. The foot-velocity feet-slip gate verified the branch but still
+produced weak fixed-command smoke. Do not extend fixed-alpha or foot-velocity
+variants to 250k, 5M, or 10M from these results. The next main route should be
+a short feet-slip removal gate, for example `--env_feet_slip_scale 0.0`, with
+push-disable as the next targeted ablation. Treat `alpha_floor=0.03` as a
+secondary diagnostic rather than the primary path, and do not keep increasing
+fixed alpha blindly.

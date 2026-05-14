@@ -1,6 +1,7 @@
 # Next Actions
 
-Status: updated on 2026-05-15 after the fresh env1024 R3 100k `fixed_alpha=0.05` diagnostic.
+Status: updated on 2026-05-15 after the fresh env1024 R3 100k
+`foot_velocity` feet-slip diagnostic.
 
 ## Immediate State
 
@@ -239,6 +240,14 @@ Status: updated on 2026-05-15 after the fresh env1024 R3 100k `fixed_alpha=0.05`
   showed `fwd0.5` deterministic reward `-3.7355`, `fwd1.0` deterministic
   reward `-3.8258`, low `tracking_lin_vel`, and `termination=-100`.
   `critic_loss=0.3446` crossed the previous `0.3` watch threshold.
+- Default-preserving feet-slip ablation controls are committed. Fresh env1024
+  R3 100k with `--env_feet_slip_mode foot_velocity` passed runtime and
+  checkpoint gates. Checkpoint:
+  `./logs/sac_lift_gpu_100k_env1024_r3_feet_slip_foot_velocity/sac_lift_step_99328.pkl`.
+- The `foot_velocity` gate verified the alternate branch but did not solve
+  fixed-forward tracking. Small smoke showed `fwd0.5` deterministic reward
+  `-3.8426`, `fwd1.0` deterministic reward `-3.8702`, low
+  `tracking_lin_vel` (`8.2117` and `2.1329`), and `termination=-100`.
 
 ## Current Recommendation
 
@@ -250,7 +259,10 @@ Status: updated on 2026-05-15 after the fresh env1024 R3 100k `fixed_alpha=0.05`
 - Next main route should shift away from blindly increasing fixed alpha.
   `fixed_alpha=0.03` and `fixed_alpha=0.05` both preserve alpha but remain too
   weak for 100k fixed-forward tracking, and `0.05` adds a critic-loss watch
-  item. Prefer reward/prior targeted audit or ablation next; use
+  item. The `foot_velocity` feet-slip gate verified that branch but also
+  failed to improve the 100k fixed-forward smoke. Prefer a short
+  `--env_feet_slip_scale 0.0` gate next to remove the suspect penalty entirely;
+  use push-disable as the next targeted reward/prior ablation and
   `alpha_floor=0.03` only as a secondary alpha/entropy diagnostic. Do not patch
   alpha sign blindly; the sign audit found no direct Brax-style sign bug.
 - A fixed-command `fwd1.0` render/video review is useful to inspect whether the
@@ -534,20 +546,24 @@ CPU, stop and report the CUDA/JAX blocker.
 
 ## Recommended Next Step
 
-The bounded 1024-env 3M R3 result, fixed-forward eval gate, and two short
-fixed-alpha diagnostics have now been executed and recorded. Do not
-automatically run 5M or 10M. The next useful step is a targeted reward/prior
-audit or ablation decision, with alpha-floor only as a secondary diagnostic:
+The bounded 1024-env 3M R3 result, fixed-forward eval gate, two short
+fixed-alpha diagnostics, and the `foot_velocity` feet-slip gate have now been
+executed and recorded. Do not automatically run 5M or 10M. The next useful step
+is a targeted reward/prior ablation, with alpha-floor only as a secondary
+diagnostic:
 
-1. Reward/prior path: audit terms and priors that may conflict with
-   fixed-forward walking, because fixed alpha preserved temperature but did not
-   improve `tracking_lin_vel` or remove `termination=-100` in the 100k smokes.
+1. Reward/prior path: run a short `--env_feet_slip_scale 0.0` gate first,
+   because `foot_velocity` mode reduced the suspect formulation risk but did
+   not improve `tracking_lin_vel` or remove `termination=-100` in the 100k
+   smokes.
 2. Fixed-command path: inspect or render `fwd1.0` if visual evidence is needed,
    because deterministic `tracking_lin_vel` collapsed from `183.95` at
    `fwd0.5` to `25.94` at `fwd1.0`.
-3. Entropy path: keep `alpha_floor=0.03` as a secondary diagnostic; do not keep
+3. Reward/prior follow-up: if feet-slip removal is still weak, design a
+   push-disable gate before touching broader reward terms.
+4. Entropy path: keep `alpha_floor=0.03` as a secondary diagnostic; do not keep
    increasing fixed alpha blindly.
-4. Training path: only after that review, decide whether a carefully gated
+5. Training path: only after that review, decide whether a carefully gated
    longer run is justified.
 
 Any 10M plan must restate memory stop conditions, keep replay cap decoupled

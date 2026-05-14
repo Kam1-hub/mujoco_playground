@@ -18,13 +18,12 @@ domain randomization, or fine-tuning as part of the current validation phase.
 
 - Path: `/home/admin/projects/mujoco_playground/g1_sac_dev`
 - Branch: `sac-integration`
-- Latest recorded diagnostic state: fresh env1024 R3 100k `fixed_alpha=0.05`
-  diagnostic after the first `fixed_alpha=0.03` gate, fixed-command forward
-  eval gate, fixed-command eval
-  support, alpha sign audit, fixed-command 3M render helper smoke,
-  deterministic 3M render helper smoke, bounded 1024-env 3M R3 run,
-  high-parallel 512/1024/2048 capacity benchmark, and 1M follow-up; use
-  `git log --oneline -5` for the exact commit hash.
+- Latest recorded diagnostic state: fresh env1024 R3 100k `foot_velocity`
+  feet-slip diagnostic after `fixed_alpha=0.03` and `fixed_alpha=0.05` gates,
+  fixed-command forward eval gate, fixed-command eval support, alpha sign audit,
+  fixed-command 3M render helper smoke, deterministic 3M render helper smoke,
+  bounded 1024-env 3M R3 run, high-parallel 512/1024/2048 capacity benchmark,
+  and 1M follow-up; use `git log --oneline -5` for the exact commit hash.
 - Remote: `origin https://github.com/Kam1-hub/mujoco_playground.git`
 - Last known pushed branch: `sac-integration`
 
@@ -817,13 +816,20 @@ Both-mode eval diagnostic:
   `num_timesteps` from `max_replay_size`.
 - SPS can vary due JIT compile and warmup.
 - No PPO comparison has been run.
+- Fresh env1024 R3 100k `--env_feet_slip_mode foot_velocity` has run and
+  passed runtime/checkpoint gates. Checkpoint:
+  `./logs/sac_lift_gpu_100k_env1024_r3_feet_slip_foot_velocity/sac_lift_step_99328.pkl`.
+  The alternate feet-slip branch works, but fixed-command smoke remains weak:
+  `fwd0.5` deterministic reward `-3.8426`, `fwd1.0` deterministic reward
+  `-3.8702`, low `tracking_lin_vel`, and `termination=-100`.
 
 ## Recommended Next Step
 
 1. Do read-only status checks.
 2. Read this file and `reports/sac_integration/09_phase_summary_and_risks.md`.
-3. Review `reports/sac_integration/12_alpha_entropy_ablation_plan.md`.
-4. Review the bounded 1024-env 3M R3 result before any longer run.
+3. Review `reports/sac_integration/19_alpha_entropy_and_fixed_eval_gate.md`.
+4. Plan the next short reward/prior gate, currently
+   `--env_feet_slip_scale 0.0`, before any longer run.
 5. Do not draft or execute 10M automatically.
 
 Do not start long training automatically. Do not modify reward, action scale,
@@ -914,11 +920,15 @@ Do not run training, eval, preflight, installs, downloads, or git commits unless
 explicitly asked. The latest short gates show `fixed_alpha=0.03` and
 `fixed_alpha=0.05` preserve alpha but do not solve 100k fixed-forward
 tracking; `0.05` also introduced a critic-loss watch item. Next recommended
-work is reward/prior targeted audit or ablation, with `alpha_floor=0.03` only
-as a secondary diagnostic. Do not run fixed-alpha 250k, 5M, or 10M from these
-results. A fixed-command `fwd1.0` render/video review is useful, and remaining
-command coverage for `[0,0.3,0]`, `[0,0,0.5]`, and `[0,0,0]` remains useful,
-but neither should justify 5M/10M without resolving forward tracking weakness
-and stochastic collapse. Do not change reward, action_scale, Kp, domain
+tracking; `0.05` also introduced a critic-loss watch item. The
+`foot_velocity` feet-slip gate also passed runtime/checkpoint checks but did
+not solve fixed-command smoke. Next recommended work is a short
+`--env_feet_slip_scale 0.0` gate; push-disable is the next reward/prior
+alternative, and `alpha_floor=0.03` is only a secondary diagnostic. Do not run
+fixed-alpha or foot-velocity 250k, 5M, or 10M from these results. A
+fixed-command `fwd1.0` render/video review is useful, and remaining command
+coverage for `[0,0.3,0]`, `[0,0,0.5]`, and `[0,0,0]` remains useful, but
+neither should justify 5M/10M without resolving forward tracking weakness and
+stochastic collapse. Do not change reward, action_scale, Kp, domain
 randomization, fine-tuning, PPO, or RSL without a targeted audit/ablation plan.
 ```
