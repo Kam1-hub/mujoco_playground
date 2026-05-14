@@ -8,6 +8,8 @@ from typing import Any
 DEFAULT_POLICY_OBS_SIZE = 103
 DEFAULT_VALUE_OBS_SIZE = 216
 DEFAULT_ACTION_SIZE = 29
+DEFAULT_DETERMINISTIC_ACTION_L2_COEF = 0.0
+DEFAULT_ACTOR_MEAN_L2_COEF = 0.0
 
 
 def parse_hidden_sizes(value: Any, default: Sequence[int]) -> tuple[int, ...]:

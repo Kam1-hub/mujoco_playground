@@ -48,6 +48,11 @@ DIAGNOSTIC_METRIC_NAMES = (
     "sampled_action_saturation_fraction_095",
     "deterministic_action_abs_mean",
     "deterministic_action_saturation_fraction_095",
+    "deterministic_action_l2",
+    "actor_mean_l2",
+    "actor_regularization_loss",
+    "deterministic_action_l2_coef",
+    "actor_mean_l2_coef",
 )
 
 
@@ -416,6 +421,13 @@ def _update(
       actor_key,
       sac_networks,
       config.normalize_observations,
+      float(
+          config.get(
+              "deterministic_action_l2_coef",
+              sac_config.DEFAULT_DETERMINISTIC_ACTION_L2_COEF,
+          )
+      ),
+      float(config.get("actor_mean_l2_coef", sac_config.DEFAULT_ACTOR_MEAN_L2_COEF)),
   )
   policy_updates, policy_opt_state = policy_tx.update(
       actor_grads, training_state.policy_opt_state, training_state.policy_params

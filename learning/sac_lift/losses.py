@@ -70,6 +70,8 @@ def actor_loss(
     key: jax.Array,
     sac_networks: networks.SACNetworks,
     normalize_observations: bool,
+    deterministic_action_l2_coef: float = 0.0,
+    actor_mean_l2_coef: float = 0.0,
 ) -> tuple[jnp.ndarray, dict[str, jnp.ndarray]]:
   policy_obs = normalizer.normalize(
       policy_normalizer, batch.policy_obs, normalize_observations
@@ -83,11 +85,27 @@ def actor_loss(
   std = jnp.exp(log_std)
   q = networks.q_values(sac_networks, q_params, value_obs, action)
   min_q = jnp.min(q, axis=-1)
-  loss = jnp.mean(jnp.exp(log_alpha) * log_prob - min_q)
+  base_loss = jnp.mean(jnp.exp(log_alpha) * log_prob - min_q)
+  deterministic_action_l2 = jnp.mean(jnp.square(deterministic_action))
+  actor_mean_l2 = jnp.mean(jnp.square(mean))
+  deterministic_action_l2_coef_value = jnp.asarray(
+      deterministic_action_l2_coef, dtype=base_loss.dtype
+  )
+  actor_mean_l2_coef_value = jnp.asarray(actor_mean_l2_coef, dtype=base_loss.dtype)
+  actor_regularization_loss = (
+      deterministic_action_l2_coef_value * deterministic_action_l2
+      + actor_mean_l2_coef_value * actor_mean_l2
+  )
+  loss = base_loss + actor_regularization_loss
   metrics = {
       "actor_loss": loss,
       "policy_log_prob": jnp.mean(log_prob),
       "policy_q": jnp.mean(min_q),
+      "deterministic_action_l2": deterministic_action_l2,
+      "actor_mean_l2": actor_mean_l2,
+      "actor_regularization_loss": actor_regularization_loss,
+      "deterministic_action_l2_coef": deterministic_action_l2_coef_value,
+      "actor_mean_l2_coef": actor_mean_l2_coef_value,
       "actor_policy_mean_abs_mean": jnp.mean(jnp.abs(mean)),
       "actor_policy_mean_abs_max": jnp.max(jnp.abs(mean)),
       "actor_log_std_mean": jnp.mean(log_std),
