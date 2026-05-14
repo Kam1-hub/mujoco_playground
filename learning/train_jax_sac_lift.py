@@ -102,6 +102,15 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
           "preserve the env default."
       ),
   )
+  parser.add_argument(
+      "--env_feet_air_time_command_mask",
+      type=_str_to_bool,
+      default=None,
+      help=(
+          "Optional override for feet_air_time_command_mask. Leave unset to "
+          "preserve the env default."
+      ),
+  )
   parser.add_argument("--normalize_observations", type=_str_to_bool, default=None)
   parser.add_argument("--deterministic_eval", type=_str_to_bool, default=None)
   parser.add_argument("--logdir", default=None)
@@ -145,6 +154,10 @@ def _build_config(args: argparse.Namespace):
     config.env_zero_command_phase_freeze = (
         sac_config.DEFAULT_ENV_ZERO_COMMAND_PHASE_FREEZE
     )
+  if "env_feet_air_time_command_mask" not in config:
+    config.env_feet_air_time_command_mask = (
+        sac_config.DEFAULT_ENV_FEET_AIR_TIME_COMMAND_MASK
+    )
   for name in (
       "seed",
       "impl",
@@ -174,6 +187,7 @@ def _build_config(args: argparse.Namespace):
       "env_feet_slip_scale",
       "env_push_enable",
       "env_zero_command_phase_freeze",
+      "env_feet_air_time_command_mask",
       "normalize_observations",
       "deterministic_eval",
       "logdir",

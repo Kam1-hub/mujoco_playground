@@ -75,6 +75,7 @@ def lift_sac_config(
       env_feet_slip_scale=None,
       env_push_enable=None,
       env_zero_command_phase_freeze=None,
+      env_feet_air_time_command_mask=None,
       normalize_observations=True,
       deterministic_eval=True,
       num_envs=128,

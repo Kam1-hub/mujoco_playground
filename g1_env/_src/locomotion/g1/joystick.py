@@ -100,6 +100,7 @@ def default_config() -> config_dict.ConfigDict:
       ),
       feet_slip_mode="body_velocity",
       zero_command_phase_freeze=False,
+      feet_air_time_command_mask=False,
       lin_vel_x=[-1.0, 1.0],
       lin_vel_y=[-0.5, 0.5],
       ang_vel_yaw=[-1.0, 1.0],
@@ -781,10 +782,11 @@ class Joystick(g1_base.G1Env):
       threshold_min: float = 0.2,
       threshold_max: float = 0.5,
   ) -> jax.Array:
-    del commands  # Unused.
     air_time = (air_time - threshold_min) * first_contact
     air_time = jp.clip(air_time, max=threshold_max - threshold_min)
     reward = jp.sum(air_time)
+    if self._config.feet_air_time_command_mask:
+      reward *= jp.linalg.norm(commands) > 0.01
     return reward
 
   def _reward_feet_phase(

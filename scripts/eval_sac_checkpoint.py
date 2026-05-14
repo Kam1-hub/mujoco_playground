@@ -146,6 +146,11 @@ def _eval_env_overrides(config: Mapping[str, Any], impl: str) -> dict[str, Any]:
     overrides["zero_command_phase_freeze"] = _str_to_bool(
         env_zero_command_phase_freeze
     )
+  env_feet_air_time_command_mask = config.get("env_feet_air_time_command_mask")
+  if env_feet_air_time_command_mask is not None:
+    overrides["feet_air_time_command_mask"] = _str_to_bool(
+        env_feet_air_time_command_mask
+    )
   return overrides
 
 

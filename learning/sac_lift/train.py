@@ -185,6 +185,13 @@ def train(config: Any) -> dict[str, Any]:
     env_overrides["zero_command_phase_freeze"] = bool(
         env_zero_command_phase_freeze
     )
+  env_feet_air_time_command_mask = config.get(
+      "env_feet_air_time_command_mask", None
+  )
+  if env_feet_air_time_command_mask is not None:
+    env_overrides["feet_air_time_command_mask"] = bool(
+        env_feet_air_time_command_mask
+    )
   env = registry.load(
       config.env_name,
       config=env_cfg,
