@@ -35,6 +35,7 @@ Required reports:
 - `25_terminal_render_diagnostics.md`
 - `26_reset_calm_diagnostic.md`
 - `27_action_rate_diagnostic.md`
+- `28_angvelxy_diagnostic.md`
 
 Repo-root continuation handoff:
 

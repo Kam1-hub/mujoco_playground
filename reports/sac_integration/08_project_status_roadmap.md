@@ -1,6 +1,6 @@
 # G1 SAC Integration Status And Roadmap
 
-Status: updated on 2026-05-15 after the reset-calm action-rate 100k diagnostic.
+Status: updated on 2026-05-15 after the reset-calm AngVelXY 100k diagnostic.
 
 ## 1. Mission
 
@@ -205,7 +205,8 @@ Validation ladder:
 41. Short render terminal diagnostic sweep
 42. Fresh env1024 R3 100k reset-calm diagnostic
 43. Fresh env1024 R3 100k reset-calm action-rate diagnostic
-44. 10M-scale training
+44. Fresh env1024 R3 100k reset-calm AngVelXY diagnostic
+45. 10M-scale training
 
 Status:
 
@@ -300,7 +301,15 @@ Status:
   first done stayed around `68`, deterministic render first done stayed `68`,
   deterministic reward worsened slightly, and deterministic `fwd1.0`
   `tracking_lin_vel` weakened `16.2483 -> 13.4108`.
-- Step 44 remains `NOT VALIDATED` and requires reward/prior targeted audit,
+- Step 44 passed runtime/checkpoint/eval/render gates but failed the stability
+  gate: fresh env1024 R3 100k reset-calm plus
+  `--env_reward_ang_vel_xy_scale -0.5` returned `TRAIN_OK`, checkpoint
+  readiness PASS, and fixed-command eval/render diagnostics with no NaN flags.
+  Fall timing did not materially improve versus reset-calm: deterministic eval
+  first done stayed `68.5 / 68.75 / 68.5`, deterministic render first done
+  stayed `68 / 69 / 68`, all fixed commands still fell, and deterministic
+  rewards worsened materially versus reset-calm.
+- Step 45 remains `NOT VALIDATED` and requires reward/prior targeted audit,
   resource plan, and stop conditions.
 
 ### Phase 6: Reports, Commits, Migration Handoff
@@ -1548,6 +1557,48 @@ tracking weakened. This does not justify 250k, 5M, or 10M. The next target is
 explicit base/upright stability design around orientation, `ang_vel_xy`,
 `base_height`, alive, and possibly `lin_vel_z`.
 
-## 29. Current Position In One Sentence
+## 29. Fresh Env1024 R3 100k Reset-Calm AngVelXY Diagnostic
 
-SAC Route B is implemented; CPU tiny smoke, WSL2 GPU preflight, Route B GPU 10k smoke, normalizer-ready checkpoint validation, bounded deterministic eval smoke, 50k sanity/eval, 100k sanity/eval, 250k sanity/eval, 500k sanity/eval, both-mode eval diagnostic, full action diagnostic, fresh 100k/250k train-time actor drift diagnostics, fresh 100k alpha/entropy ablation diagnostics, the A1/A3/A4 multi-seed eval-only ablation diagnostic, bounded fresh 250k/500k/750k A4 extensions, fresh 100k actor-regularization R1, fresh 100k actor-regularization R2/R3, bounded R3 250k, the 512/1024/2048 high-parallel capacity benchmark, bounded 1024-env 1M R3, bounded 1024-env 3M R3, fixed-command render support, fixed-command eval support, alpha sign audit, fixed-command forward eval gate, fresh env1024 R3 100k `fixed_alpha=0.03`/`0.05` diagnostics, fresh env1024 R3 100k `foot_velocity` feet-slip diagnostic, fresh env1024 R3 100k `feet_slip_scale=0` diagnostic, fresh env1024 R3 100k push-disable diagnostic, fresh env1024 R3 100k zero-command phase-freeze diagnostic, fresh env1024 R3 100k feet-air-time command-mask diagnostic, eval-only termination/contact sweep, short render terminal sweep, fresh env1024 R3 100k reset-calm diagnostic, and fresh env1024 R3 100k reset-calm action-rate diagnostic have passed their bounded runtime or diagnostic gates; 3M provides the first strong deterministic-policy improvement signal but also severe alpha/std collapse, stochastic degradation, and weak `[1,0,0]` forward tracking; fixed-alpha, feet-slip, push-disable, phase-freeze, feet-air-time command-mask, reset-calm, and reset-calm action-rate short gates did not solve 100k fixed-forward/stand termination; reset-calm delayed early fall from about 51-52 to 68 control steps, while action-rate `-0.01` did not improve that timing, so early torso/base fall remains the immediate blocker; 5M/10M, full eval benchmarking, domain randomization, and fine-tuning remain `NOT VALIDATED`.
+Status: `TRAIN_OK`.
+
+- Variant: reset-calm plus `--env_reward_ang_vel_xy_scale -0.5`.
+- No action-rate override was included.
+- Checkpoint:
+  `./logs/sac_lift_gpu_100k_env1024_r3_reset_calm_angvelxy_m0p5/sac_lift_step_99328.pkl`.
+- Checkpoint readiness: PASS.
+- `env_steps`: `99328`.
+- `gradient_steps`: `1552`.
+- `wall_time`: `75.75s`.
+- `sps`: `1311.23`.
+- `actor_loss`: `-5.3756`.
+- `critic_loss`: `0.08565`.
+- `alpha / log_alpha`: `0.042784 / -3.15159`.
+- `reward_mean`: `-0.1733`.
+- `done_fraction`: `0.0078125`.
+
+Fixed-command deterministic eval remained fall-limited:
+
+- `fwd0.5`: reward `-3.5869`, first done `68.5`, fall `4/4`,
+  terminal `root_h=-0.1829`, `up_z=-0.0416`, `ang_xy=4.5852`.
+- `fwd1.0`: reward `-3.8951`, first done `68.75`, fall `4/4`,
+  terminal `root_h=-0.2017`, `up_z=-0.0420`, `ang_xy=4.4262`.
+- `stand`: reward `-6.2890`, first done `68.5`, fall `4/4`,
+  terminal `root_h=-0.1798`, `up_z=-0.0580`, `ang_xy=4.6635`.
+
+Render smokes returned `RENDER_OK` but still fell:
+
+- `fwd0.5`: first done `68`.
+- `fwd1.0`: first done `69`.
+- `stand`: first done `68`.
+
+Interpretation: stronger `ang_vel_xy` penalty at `-0.5` did not improve the
+reset-calm early-fall gate. Fall timing remained effectively unchanged, and
+deterministic rewards worsened versus reset-calm:
+`fwd0.5 -2.0443 -> -3.5869`,
+`fwd1.0 -2.3095 -> -3.8951`, and
+`stand -4.4102 -> -6.2890`. This does not justify 250k, 5M, or 10M. The
+project is paused/stopped per user instruction after recording this result.
+
+## 30. Current Position In One Sentence
+
+SAC Route B is implemented; CPU tiny smoke, WSL2 GPU preflight, Route B GPU 10k smoke, normalizer-ready checkpoint validation, bounded deterministic eval smoke, 50k sanity/eval, 100k sanity/eval, 250k sanity/eval, 500k sanity/eval, both-mode eval diagnostic, full action diagnostic, fresh 100k/250k train-time actor drift diagnostics, fresh 100k alpha/entropy ablation diagnostics, the A1/A3/A4 multi-seed eval-only ablation diagnostic, bounded fresh 250k/500k/750k A4 extensions, fresh 100k actor-regularization R1, fresh 100k actor-regularization R2/R3, bounded R3 250k, the 512/1024/2048 high-parallel capacity benchmark, bounded 1024-env 1M R3, bounded 1024-env 3M R3, fixed-command render support, fixed-command eval support, alpha sign audit, fixed-command forward eval gate, fresh env1024 R3 100k `fixed_alpha=0.03`/`0.05` diagnostics, fresh env1024 R3 100k `foot_velocity` feet-slip diagnostic, fresh env1024 R3 100k `feet_slip_scale=0` diagnostic, fresh env1024 R3 100k push-disable diagnostic, fresh env1024 R3 100k zero-command phase-freeze diagnostic, fresh env1024 R3 100k feet-air-time command-mask diagnostic, eval-only termination/contact sweep, short render terminal sweep, fresh env1024 R3 100k reset-calm diagnostic, fresh env1024 R3 100k reset-calm action-rate diagnostic, and fresh env1024 R3 100k reset-calm AngVelXY diagnostic have passed their bounded runtime or diagnostic gates; 3M provides the first strong deterministic-policy improvement signal but also severe alpha/std collapse, stochastic degradation, and weak `[1,0,0]` forward tracking; fixed-alpha, feet-slip, push-disable, phase-freeze, feet-air-time command-mask, reset-calm, reset-calm action-rate, and reset-calm AngVelXY short gates did not solve 100k fixed-forward/stand termination; reset-calm delayed early fall from about 51-52 to 68 control steps, while action-rate `-0.01` and `ang_vel_xy=-0.5` did not improve that timing; the project is paused/stopped per user instruction, and 5M/10M, full eval benchmarking, domain randomization, and fine-tuning remain `NOT VALIDATED`.

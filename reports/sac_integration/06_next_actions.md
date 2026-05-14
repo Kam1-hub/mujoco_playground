@@ -1,6 +1,6 @@
 # Next Actions
 
-Status: updated on 2026-05-15 after the reset-calm action-rate 100k diagnostic.
+Status: updated on 2026-05-15 after the reset-calm AngVelXY 100k diagnostic.
 
 ## Immediate State
 
@@ -258,6 +258,17 @@ Status: updated on 2026-05-15 after the reset-calm action-rate 100k diagnostic.
   `EVAL_OK` and NaN flags false, but fixed-forward tracking is still weak:
   `fwd1.0` deterministic reward `-3.4952`, `tracking_lin_vel=2.4967`, and
   `termination=-100`.
+- Fresh env1024 R3 100k reset-calm plus
+  `--env_reward_action_rate_scale -0.01` passed runtime/checkpoint/eval/render
+  checks but failed to improve early fall beyond the reset-calm baseline.
+- Fresh env1024 R3 100k reset-calm plus
+  `--env_reward_ang_vel_xy_scale -0.5` also passed runtime/checkpoint/eval/render
+  checks but failed to improve early fall. Deterministic first done stayed
+  around `68-69`, all fixed commands still fell, and deterministic rewards
+  worsened versus reset-calm.
+- Per user instruction, the project is paused/stopped after recording the
+  AngVelXY negative gate. No further training/eval/render should be started
+  automatically.
 - Default-off push-disable controls are committed at
   `cea95a7 Add SAC push disable env override`. Fresh env1024 R3 100k with
   `--env_push_enable False` passed runtime and checkpoint gates. Checkpoint:
@@ -342,13 +353,15 @@ Status: updated on 2026-05-15 after the reset-calm action-rate 100k diagnostic.
   immediate failure is early torso fall/upright instability, not illegal
   contact or NaN. The terminal render sweep confirms the same early
   torso/base failure visually and in render JSON: every variant falls around
-  `51-52` steps and no variant meaningfully improves survival. Move to
-  early-fall stabilization/curriculum design next: reset disturbance/warmup,
-  command warmup, and explicit base/upright stability terms such as
-  orientation, angular velocity, base-height, alive, and possibly `lin_vel_z`.
-  Treat the reset-calm action-rate gate as a negative smoothing reference. Keep
-  `alpha_floor=0.03` only as a secondary alpha/entropy diagnostic. Do not patch
-  alpha sign blindly; the sign audit found no direct Brax-style sign bug.
+  `51-52` steps and no variant meaningfully improves survival. Reset-calm
+  delayed the fall to around step `68`, but reset-calm action-rate and
+  reset-calm AngVelXY gates both failed to improve that timing. The project is
+  now paused/stopped per user instruction. If it is revisited, treat
+  reset disturbance/warmup, command warmup, base-height target audit,
+  alive/survival incentive, and explicit base/upright stability terms as design
+  topics only. Keep `alpha_floor=0.03` only as a secondary alpha/entropy
+  diagnostic. Do not patch alpha sign blindly; the sign audit found no direct
+  Brax-style sign bug.
 - Detailed video inspection may still help distinguish fall direction and
   posture collapse, but do not overclaim forward/backward direction from the
   terminal JSON alone and do not use render artifacts to justify 5M/10M by
@@ -639,11 +652,16 @@ sweep, the short render terminal sweep, and the reset-calm 100k gate have now
 been executed and recorded. The reset-calm plus `action_rate=-0.01` gate has
 also been executed and recorded; it did not materially improve first-fall
 timing and slightly worsened deterministic reward/tracking versus reset-calm.
-Do not automatically run 250k, 5M, or 10M. The next useful step is controlled
-base/upright stability design, with alpha-floor only as a secondary diagnostic:
+The reset-calm plus `ang_vel_xy=-0.5` gate has also been executed and recorded;
+it did not materially improve first-fall timing and worsened deterministic
+reward versus reset-calm. The project is now paused/stopped per user
+instruction. Do not automatically run 250k, 5M, or 10M. If the project is
+revisited later, the next useful step would be controlled base/upright
+stability design, with alpha-floor only as a secondary diagnostic:
 
-1. Stabilization path: design a narrow default-off ablation around orientation,
-   `ang_vel_xy`, base-height, alive, and possibly `lin_vel_z`.
+1. Stabilization path: do not continue the `ang_vel_xy=-0.5` route
+   automatically. Consider base-height target audit, alive/survival incentive,
+   command warmup, or related design topics before any new run.
 2. Termination path: reset-calm delayed fall from `51-52` to about `68` steps,
    so reset disturbance is a contributor, but all fixed-command cases still
    fall. The action-rate gate stayed around step `68`, so current evidence

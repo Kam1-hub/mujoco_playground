@@ -10,7 +10,7 @@ continue without relying on chat history.
 - Path: `/home/admin/projects/mujoco_playground/g1_sac_dev`
 - Branch: `sac-integration`
 - Current diagnostic/report baseline before this report update:
-  `5d61e3c Add SAC action rate reward scale override`
+  `d2b76bf Add SAC angular velocity reward override`
 - Remote: `origin https://github.com/Kam1-hub/mujoco_playground.git`
 - External menagerie commit: `1b86ece576591213e2b666ebf59508454200ca97`
 
@@ -70,6 +70,7 @@ Runtime artifacts are local and ignored. Do not commit `logs/`, `.venv/`,
 | Short render terminal diagnostic sweep | PASS_RENDER_FALL_DOMINATED | `./logs/sac_render_terminal_diag_100k/`, `9` matching JSON/MP4 pairs; push-disable, phase-freeze, and feet-air-time-mask checkpoints; deterministic fixed `fwd0.5`, `fwd1.0`, and stand; all terminate via fall at step `51-52`, with negative torso-up z, negative root height, high torso XY angular velocity, and no contact/NaN reason |
 | Fresh env1024 R3 100k reset-calm diagnostic | PASS_RUNTIME_PARTIAL_STABILITY_SIGNAL | `./logs/sac_lift_gpu_100k_env1024_r3_reset_calm/sac_lift_step_99328.pkl`, `--env_reset_joint_noise_scale 0.0 --env_reset_root_qvel_scale 0.0`, `TRAIN_OK`, readiness PASS, train `done_fraction=0.00391`, deterministic terminal renders delayed fall to step `68`, but fixed fwd0.5/fwd1.0/stand still terminate by fall with `reward/termination=-100` |
 | Fresh env1024 R3 100k reset-calm action-rate diagnostic | PASS_RUNTIME_NO_STABILITY_GAIN | `./logs/sac_lift_gpu_100k_env1024_r3_reset_calm_action_rate_m0p01/sac_lift_step_99328.pkl`, reset-calm plus `--env_reward_action_rate_scale -0.01`, `TRAIN_OK`, readiness PASS, fixed-command eval/render NaN flags false, but first fall remained around step `68`, deterministic reward worsened slightly versus reset-calm, and `fwd1.0` tracking weakened |
+| Fresh env1024 R3 100k reset-calm AngVelXY diagnostic | PASS_RUNTIME_NO_STABILITY_GAIN | `./logs/sac_lift_gpu_100k_env1024_r3_reset_calm_angvelxy_m0p5/sac_lift_step_99328.pkl`, reset-calm plus `--env_reward_ang_vel_xy_scale -0.5`, `TRAIN_OK`, readiness PASS, fixed-command eval/render NaN flags false, but first fall remained around `68-69`, all fixed commands fell, and deterministic reward worsened materially versus reset-calm |
 | 10M training | NOT VALIDATED | Blocked by fixed-forward weakness and stochastic collapse; requires alpha/entropy decision review, resource plan, and stop conditions |
 
 ## Completed Outcomes
@@ -303,6 +304,19 @@ Runtime artifacts are local and ignored. Do not commit `logs/`, `.venv/`,
   `fwd1.0` tracking weakened `16.2483 -> 13.4108`. This weakens small
   action-rate smoothing as the next standalone fix and points back to explicit
   base/upright stability design.
+- Validated fresh env1024 R3 100k reset-calm AngVelXY diagnostic. The run
+  retained reset-calm and added `--env_reward_ang_vel_xy_scale -0.5`, with no
+  action-rate override. It produced checkpoint
+  `./logs/sac_lift_gpu_100k_env1024_r3_reset_calm_angvelxy_m0p5/sac_lift_step_99328.pkl`,
+  returned `TRAIN_OK`, and passed checkpoint readiness. Fixed-command eval and
+  deterministic render smokes completed with no NaN, OOM, fatal CUDA,
+  checkpoint, eval, or render failure. The gate failed: deterministic eval
+  first done stayed `68.5 / 68.75 / 68.5`, render first done stayed
+  `68 / 69 / 68`, all fixed fwd0.5/fwd1.0/stand commands still fell, and
+  deterministic rewards worsened versus reset-calm
+  (`-2.0443 -> -3.5869`, `-2.3095 -> -3.8951`,
+  `-4.4102 -> -6.2890`). This blocks 250k, 5M, and 10M from the AngVelXY
+  route and marks the project paused/stopped per user instruction.
 
 ### Full Action Diagnostic Summary
 
@@ -1148,7 +1162,8 @@ and deterministic `tracking_lin_vel` collapses from `183.95` at `fwd0.5` to
 `25.94` at `fwd1.0`. Stochastic fixed-forward eval remains poor for both
 commands.
 
-The next recommended step is no longer another fixed-alpha increase. Both
+The project is paused/stopped per user instruction after recording the
+AngVelXY negative gate. Both
 `fixed_alpha=0.03` and `fixed_alpha=0.05` preserved alpha but failed the 100k
 fixed-forward smoke, and `0.05` added a critic-loss watch item. The
 `feet_slip_scale=0` gate removed the penalty in inherited eval but still left
@@ -1162,7 +1177,9 @@ identified the immediate failure as early torso/base fall around `51-52`
 steps, not illegal contact and not qpos/qvel NaN. Reset-calm delayed this to
 about step `68`, but reset-calm plus `action_rate=-0.01` did not materially
 improve fall timing and slightly worsened deterministic reward/tracking.
-Prioritize:
+Reset-calm plus `ang_vel_xy=-0.5` also did not materially improve fall timing
+and worsened deterministic rewards versus reset-calm. If this project is
+revisited later, treat the following as design topics only:
 
 1. early-fall stabilization/curriculum design around explicit base/upright
    terms: orientation, angular-velocity, base-height, alive, and possibly
@@ -1174,7 +1191,7 @@ Prioritize:
 4. `alpha_floor=0.03` only as a secondary alpha/entropy diagnostic, not as the
    main path;
 5. remaining command coverage for `[0,0.3,0]`, `[0,0,0.5]`, and `[0,0,0]`
-   after the forward weakness is recorded.
+   only after the fixed-forward weakness and early fall are addressed.
 
 Any 10M plan should include:
 

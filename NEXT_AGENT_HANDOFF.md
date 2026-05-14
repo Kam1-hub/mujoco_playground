@@ -19,7 +19,8 @@ domain randomization, or fine-tuning as part of the current validation phase.
 - Path: `/home/admin/projects/mujoco_playground/g1_sac_dev`
 - Branch: `sac-integration`
 - Latest recorded diagnostic state: fresh env1024 R3 100k reset-calm plus
-  action-rate diagnostic after the isolated reset-calm diagnostic, short render
+  AngVelXY diagnostic after the reset-calm action-rate diagnostic, isolated
+  reset-calm diagnostic, short render
   terminal diagnostic sweep, eval-only 100k termination/contact diagnostic
   sweep, fresh env1024 R3 100k feet-air-time command-mask diagnostic,
   zero-command phase-freeze, push-disable,
@@ -341,6 +342,15 @@ Current validated ladder:
   failed: deterministic first done stayed around step `68`, render first done
   stayed `68`, deterministic rewards worsened slightly versus reset-calm, and
   deterministic `fwd1.0` tracking weakened `16.2483 -> 13.4108`.
+- Fresh env1024 R3 100k reset-calm AngVelXY diagnostic: PASS
+  runtime/checkpoint/eval/render, but no stability gain. The run retained
+  reset-calm and added `--env_reward_ang_vel_xy_scale -0.5`, with no
+  action-rate override. Checkpoint:
+  `./logs/sac_lift_gpu_100k_env1024_r3_reset_calm_angvelxy_m0p5/sac_lift_step_99328.pkl`.
+  It returned `TRAIN_OK`, passed readiness, and fixed-command eval/render
+  smokes had no NaN/OOM/fatal CUDA/checkpoint/eval/render failure. The gate
+  failed: deterministic first done stayed around `68-69`, all fixed commands
+  still fell, and deterministic rewards worsened materially versus reset-calm.
 - Action joint mapping diagnostic: PASS.
 
 Still not validated:
@@ -931,12 +941,15 @@ Both-mode eval diagnostic:
 
 1. Do read-only status checks.
 2. Read this file and `reports/sac_integration/09_phase_summary_and_risks.md`.
-3. Review `reports/sac_integration/26_reset_calm_diagnostic.md` and
-   `reports/sac_integration/27_action_rate_diagnostic.md`.
-4. Plan a controlled base/upright stability design before any longer run.
-   Candidate areas: orientation, `ang_vel_xy`, base_height, alive, and
-   possibly `lin_vel_z`.
-5. Do not draft or execute 10M automatically.
+3. Review `reports/sac_integration/26_reset_calm_diagnostic.md`,
+   `reports/sac_integration/27_action_rate_diagnostic.md`, and
+   `reports/sac_integration/28_angvelxy_diagnostic.md`.
+4. The project is paused/stopped per user instruction after recording the
+   AngVelXY negative gate.
+5. If revisited later, do not continue the action-rate or AngVelXY routes
+   automatically. Treat base-height target audit, alive/survival incentive, or
+   command warmup as design topics only.
+6. Do not draft or execute 250k, 5M, or 10M automatically.
 
 Do not start long training automatically. Do not modify reward, action scale,
 Kp, domain randomization, fine-tuning, PPO, or RSL without an explicit targeted
@@ -1048,13 +1061,17 @@ a real contributor: deterministic render fall moved to step `68`, training
 `reward/termination=-100`. The reset-calm plus action-rate gate
 (`--env_reward_action_rate_scale -0.01`) also passed runtime, checkpoint,
 eval, and render checks, but it did not materially improve fall timing beyond step `68`
-and slightly worsened deterministic reward/tracking. Next recommended work is
-controlled base/upright stability design: orientation, `ang_vel_xy`,
-base_height, alive, and possibly `lin_vel_z`.
+and slightly worsened deterministic reward/tracking. The reset-calm plus
+AngVelXY gate (`--env_reward_ang_vel_xy_scale -0.5`) also passed runtime,
+checkpoint, eval, and render checks, but it did not materially improve fall
+timing beyond `68-69` and worsened deterministic rewards versus reset-calm.
+The project is paused/stopped after recording that negative gate; if revisited,
+consider base-height target audit, alive/survival incentive, or command warmup
+as design topics only.
 `alpha_floor=0.03` is only a secondary diagnostic. Do not run
 fixed-alpha, foot-velocity, feet-slip-scale-zero, push-disable, phase-freeze,
-feet-air-time-mask, reset-calm, or reset-calm action-rate 250k, 5M, or 10M
-from these results. Detailed video inspection may still help distinguish fall
+feet-air-time-mask, reset-calm, reset-calm action-rate, or reset-calm AngVelXY
+250k, 5M, or 10M from these results. Detailed video inspection may still help distinguish fall
 direction or posture collapse, but it should not justify 5M/10M without
 resolving early fall, forward tracking weakness, and stochastic collapse. Do
 not change reward, action_scale, Kp, domain randomization, fine-tuning, PPO, or

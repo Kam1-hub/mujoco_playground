@@ -1,6 +1,61 @@
 # Smoke Results
 
-Status: updated on 2026-05-15 after the reset-calm action-rate 100k diagnostic.
+Status: updated on 2026-05-15 after the reset-calm AngVelXY 100k diagnostic.
+
+## 2026-05-15 Fresh Env1024 R3 100k Reset-Calm AngVelXY Diagnostic
+
+- Scope: fresh env1024/R3/UTD-preserving 100k diagnostic using the reset-calm
+  baseline plus `--env_reward_ang_vel_xy_scale -0.5`.
+- Reset-calm overrides retained:
+  `--env_reset_joint_noise_scale 0.0 --env_reset_root_qvel_scale 0.0`.
+- Related code commit:
+  `d2b76bf Add SAC angular velocity reward override`.
+- Isolation: no action-rate override was included.
+- Status: `TRAIN_OK`.
+- Checkpoint:
+  `./logs/sac_lift_gpu_100k_env1024_r3_reset_calm_angvelxy_m0p5/sac_lift_step_99328.pkl`.
+- Checkpoint readiness: PASS.
+- Env steps: `99328`.
+- Gradient steps: `1552`.
+- Wall time: `75.75s`.
+- SPS: `1311.23`.
+- Actor loss: `-5.3756`.
+- Critic loss: `0.08565`.
+- Reward mean: `-0.1733`.
+- Done fraction: `0.0078125`.
+- Alpha / log alpha: `0.042784 / -3.15159`.
+
+Fixed-command deterministic eval summary:
+
+| Command | Reward | first done | reason | root_h | up_z | torso_ang_xy |
+|---|---:|---:|---|---:|---:|---:|
+| `[0.5,0,0]` | -3.5869 | 68.5 | fall 4/4 | -0.1829 | -0.0416 | 4.5852 |
+| `[1.0,0,0]` | -3.8951 | 68.75 | fall 4/4 | -0.2017 | -0.0420 | 4.4262 |
+| `[0,0,0]` | -6.2890 | 68.5 | fall 4/4 | -0.1798 | -0.0580 | 4.6635 |
+
+Render smokes:
+
+- `fwd0.5`: `RENDER_OK`, first done `68`, fall, MP4/JSON present.
+- `fwd1.0`: `RENDER_OK`, first done `69`, fall, MP4/JSON present.
+- `stand`: `RENDER_OK`, first done `68`, fall, MP4/JSON present.
+
+Conclusion:
+
+- The AngVelXY gate failed.
+- Fall timing did not materially improve over reset-calm: eval moved from
+  around `67.5` to `68.5 / 68.75 / 68.5`, and render stayed around `68-69`.
+- Deterministic rewards worsened versus reset-calm:
+  `fwd0.5 -2.0443 -> -3.5869`,
+  `fwd1.0 -2.3095 -> -3.8951`, and
+  `stand -4.4102 -> -6.2890`.
+- Stronger `ang_vel_xy` penalty increased the negative angular-velocity
+  component but did not prevent fall.
+- Do not continue to 250k, 5M, or 10M from this result.
+- Project work is paused/stopped per user instruction after recording this
+  negative gate.
+
+See `reports/sac_integration/28_angvelxy_diagnostic.md` for the focused
+record.
 
 ## 2026-05-15 Fresh Env1024 R3 100k Reset-Calm Action-Rate Diagnostic
 
