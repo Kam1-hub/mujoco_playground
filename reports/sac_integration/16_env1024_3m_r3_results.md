@@ -15,6 +15,25 @@ This is the first strong deterministic-policy improvement signal after the
 1024-env high-parallel move, but it is not enough to declare stable SAC
 integration because entropy-related collapse remains severe.
 
+## Render Follow-Up
+
+An eval-only render helper was added after this run to inspect the deterministic
+3M checkpoint visually:
+
+- Script: `scripts/render_sac_checkpoint.py`
+- Smoke output: `./logs/sac_render_3m_r3/render_seed0_det.mp4`
+- Result: `RENDER_OK`, H.264 MP4, `640x480`, `30fps`, `300` frames, `10s`,
+  `1,552,965` bytes.
+- Rollout summary: total reward `4.084568977355957`, `done=false`.
+- Review: no blockers. The deterministic path uses
+  `networks.sample_action(..., deterministic=True) -> tanh(mean)`, and
+  checkpoint load/normalizer use are correct.
+- Main sampled-frame inspection found a nonblank upright humanoid with no
+  obvious fall.
+
+This render is for visual inspection only. Its single raw-env rollout reward is
+not numerically interchangeable with vectorized eval reward.
+
 ## Runtime And Artifacts
 
 - Checkpoint:

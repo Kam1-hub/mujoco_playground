@@ -1,6 +1,6 @@
 # G1 SAC Integration Status And Roadmap
 
-Status: updated on 2026-05-14 after the bounded 1024-env 3M R3 run.
+Status: updated on 2026-05-14 after the deterministic 3M render helper smoke.
 
 ## 1. Mission
 
@@ -191,16 +191,18 @@ Validation ladder:
 27. High-parallel 512/1024/2048 capacity benchmark
 28. Bounded 1024-env 1M run
 29. Bounded 1024-env 3M run
-30. 10M-scale training
+30. Deterministic checkpoint render helper smoke
+31. 10M-scale training
 
 Status:
 
-- Steps 1 through 29 are complete.
+- Steps 1 through 30 are complete.
 - Step 29 is runtime/checkpoint/eval PASS with the first strong deterministic
   policy improvement signal, but not a clean stable-SAC declaration because
   stochastic eval degraded and alpha/std collapsed.
-- Step 30 remains `NOT VALIDATED` and requires an entropy/alpha decision
-  review, render/helper planning, resource plan, and stop conditions.
+- Step 30 produced a deterministic 3M MP4 render smoke for visual inspection.
+- Step 31 remains `NOT VALIDATED` and requires human/video inspection, an
+  entropy/alpha decision review, resource plan, and stop conditions.
 
 ### Phase 6: Reports, Commits, Migration Handoff
 
@@ -258,6 +260,8 @@ WSL2 target workspace state:
 - Branch: `sac-integration...origin/sac-integration`
 - Latest recorded validation state before this report update: bounded
   `1024`-env 3M R3 runtime/checkpoint/eval PASS, with deterministic recovery
+  and a deterministic render helper smoke producing
+  `./logs/sac_render_3m_r3/render_seed0_det.mp4`.
   and entropy-collapse caveat.
 - Menagerie: present at `1b86ece576591213e2b666ebf59508454200ca97`
 - Python env: present under ignored `.venv`

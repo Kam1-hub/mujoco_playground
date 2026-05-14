@@ -18,8 +18,9 @@ domain randomization, or fine-tuning as part of the current validation phase.
 
 - Path: `/home/admin/projects/mujoco_playground/g1_sac_dev`
 - Branch: `sac-integration`
-- Latest recorded diagnostic state: bounded 1024-env 3M R3 run after the
-  high-parallel 512/1024/2048 capacity benchmark and 1M follow-up;
+- Latest recorded diagnostic state: deterministic 3M render helper smoke after
+  the bounded 1024-env 3M R3 run, high-parallel 512/1024/2048 capacity
+  benchmark, and 1M follow-up;
   use `git log --oneline -5` for the exact commit hash.
 - Remote: `origin https://github.com/Kam1-hub/mujoco_playground.git`
 - Last known pushed branch: `sac-integration`
@@ -100,6 +101,8 @@ SAC Route B code lives in local files and should not disturb PPO/RSL:
   `--policy_mode deterministic|stochastic|both`, optional
   `--action_diagnostics`, optional `--reward_components`, and
   `--top_k_actions`.
+- `scripts/render_sac_checkpoint.py`: eval-only checkpoint render/export
+  helper for MP4/GIF/PNG-frame visual inspection.
 - `scripts/inspect_g1_action_mapping.py`: no-training action dimension to
   actuator/joint mapping helper.
 - `scripts/summarize_sac_action_diag.py`: no-training summary helper that joins
@@ -199,12 +202,20 @@ Current validated ladder:
   `-3.7941` to `-2.3314`. However stochastic reward worsened to `-10.9904`
   and alpha/std collapsed (`alpha=0.000766`, `log_std=-0.9573`,
   `std=0.4106`), so SAC stability is not yet declared.
+- Deterministic 3M render helper smoke: PASS. `scripts/render_sac_checkpoint.py`
+  rendered
+  `./logs/sac_render_3m_r3/render_seed0_det.mp4` from the 3M R3 checkpoint:
+  H.264 MP4, `640x480`, `30fps`, `300` frames, `10s`, `1,552,965` bytes,
+  `RENDER_OK`, total rollout reward `4.084568977355957`, and `done=false`.
+  Main sampled-frame inspection found a nonblank upright humanoid with no
+  obvious fall.
 - Action joint mapping diagnostic: PASS.
 
 Still not validated:
 
 - 10M training.
 - Full performance benchmark.
+- Human/video inspection of the 3M deterministic render.
 - PPO comparison.
 - Domain randomization.
 - Fine-tuning.

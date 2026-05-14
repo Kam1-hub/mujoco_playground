@@ -24,6 +24,7 @@ Required reports:
 - `14_high_parallel_capacity_results.md`
 - `15_env1024_1m_r3_results.md`
 - `16_env1024_3m_r3_results.md`
+- `17_render_helper_smoke.md`
 
 Repo-root continuation handoff:
 

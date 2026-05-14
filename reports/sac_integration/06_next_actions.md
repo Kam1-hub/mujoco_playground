@@ -1,6 +1,6 @@
 # Next Actions
 
-Status: updated on 2026-05-14 after the bounded 1024-env 3M R3 run.
+Status: updated on 2026-05-14 after the deterministic 3M render helper smoke.
 
 ## Immediate State
 
@@ -190,16 +190,22 @@ Status: updated on 2026-05-14 after the bounded 1024-env 3M R3 run.
   `-4.9891` to `-2.3314`, and from R3 250k `-3.7941` to `-2.3314`.
   However stochastic reward worsened to `-10.9904`, alpha collapsed to
   `0.000766`, log_std to `-0.9573`, and std to `0.4106`.
+- Eval-only render helper `scripts/render_sac_checkpoint.py` is available.
+  The deterministic 3M checkpoint smoke rendered
+  `./logs/sac_render_3m_r3/render_seed0_det.mp4` with `RENDER_OK`, `300`
+  frames, `10s`, H.264 MP4, and `done=false`. Main sampled-frame inspection
+  found a nonblank upright humanoid with no obvious fall.
 
 ## Current Recommendation
 
 - Do not jump directly to 10M.
 - Do not declare stable SAC integration from the 3M result.
-- Next step should be an entropy/alpha decision review before any 10M run:
+- Next step should be visual inspection of
+  `./logs/sac_render_3m_r3/render_seed0_det.mp4`, followed by an
+  entropy/alpha decision review before any 10M run:
   - decide whether alpha/log_std need a floor or another entropy-handling
     ablation;
   - decide whether to run a bounded entropy ablation before longer training;
-  - plan a deterministic render helper for visual inspection;
   - only then decide whether the deterministic improvement justifies a
     carefully gated longer run.
 

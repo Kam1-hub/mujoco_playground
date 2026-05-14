@@ -1,6 +1,30 @@
 # Smoke Results
 
-Status: updated on 2026-05-14 after the bounded 1024-env 3M R3 run.
+Status: updated on 2026-05-14 after the deterministic 3M render helper smoke.
+
+## 2026-05-14 Deterministic 3M Render Helper Smoke
+
+- Scope: eval-only render/export helper for checkpoint visual inspection.
+- Code added: `scripts/render_sac_checkpoint.py`.
+- No training, SAC math, reward, `action_scale`, Kp, env behavior, PPO/RSL, or
+  checkpoint schema change was made.
+- Static checks: `compileall scripts learning/sac_lift` PASS; render helper
+  `--help` PASS.
+- Smoke checkpoint:
+  `./logs/sac_lift_gpu_3m_env1024_r3_b256_g16_replay1m/sac_lift_step_2999296.pkl`
+- Smoke command: deterministic mode, seed `0`, `episode_length=300`,
+  `640x480`, `fps=30`.
+- Output: `./logs/sac_render_3m_r3/render_seed0_det.mp4`.
+- Result: `RENDER_OK`, MP4, H.264, `300` frames, `10s`, `1,552,965` bytes,
+  total rollout reward `4.084568977355957`, `done=false`.
+- Review: no blockers. The deterministic action path uses
+  `networks.sample_action(..., deterministic=True) -> tanh(mean)`, checkpoint
+  load and normalizer use are correct, and raw-env render is acceptable for
+  visual inspection.
+- Main visual sanity from extracted frames: video is nonblank, humanoid is
+  upright in sampled frames, and no obvious fall was seen.
+- Caveat: render reward is not numerically identical to vectorized eval reward.
+  Inspect the MP4 visually before any 5M or 10M decision.
 
 ## 2026-05-14 Bounded 1024-Env 3M R3 Run
 

@@ -54,7 +54,8 @@ Runtime artifacts are local and ignored. Do not commit `logs/`, `.venv/`,
 | High-parallel 512/1024/2048 capacity benchmark | PASS_CAPACITY_1024_SELECTED | `reports/sac_integration/14_high_parallel_capacity_results.md` |
 | Bounded 1024-env 1M R3 run | PASS_RUNTIME_UNCLEAN_TREND | `./logs/sac_lift_gpu_1m_env1024_r3_b256_g16_replay1m/sac_lift_step_999424.pkl` |
 | Bounded 1024-env 3M R3 run | PASS_RUNTIME_MIXED_POLICY | `./logs/sac_lift_gpu_3m_env1024_r3_b256_g16_replay1m/sac_lift_step_2999296.pkl` |
-| 10M training | NOT VALIDATED | Requires entropy/alpha decision review, resource plan, and stop conditions |
+| Deterministic 3M render helper smoke | PASS_RENDER_SMOKE | `./logs/sac_render_3m_r3/render_seed0_det.mp4` |
+| 10M training | NOT VALIDATED | Requires visual inspection, entropy/alpha decision review, resource plan, and stop conditions |
 
 ## Completed Outcomes
 
@@ -151,6 +152,13 @@ Runtime artifacts are local and ignored. Do not commit `logs/`, `.venv/`,
   However stochastic reward worsened to `-10.9904`, alpha collapsed to
   `0.000766`, log_std collapsed to `-0.9573`, and std fell to `0.4106`.
   This blocks any automatic 10M run and requires entropy/alpha review.
+- Added eval-only render helper `scripts/render_sac_checkpoint.py` and
+  validated a deterministic 3M checkpoint render smoke. It produced
+  `./logs/sac_render_3m_r3/render_seed0_det.mp4`, H.264 MP4, `640x480`,
+  `30fps`, `300` frames, `10s`, `1,552,965` bytes, `RENDER_OK`, total rollout
+  reward `4.084568977355957`, and `done=false`. Main sampled-frame inspection
+  found a nonblank upright humanoid with no obvious fall. Render reward should
+  not be compared numerically with vectorized eval reward.
 
 ### Full Action Diagnostic Summary
 
