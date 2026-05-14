@@ -1,6 +1,6 @@
 # Phase Summary and Risks
 
-Date: 2026-05-13
+Date: 2026-05-14
 
 This report freezes the current SAC Route B validation state so a new agent can
 continue without relying on chat history.
@@ -43,6 +43,7 @@ Runtime artifacts are local and ignored. Do not commit `logs/`, `.venv/`,
 | Full action distribution diagnostic | PASS | `reports/sac_integration/10_action_distribution_diagnostics.md` |
 | Fresh 100k actor drift train diagnostic | PASS | `reports/sac_integration/11_actor_drift_train_diagnostic.md` |
 | Fresh 250k actor drift train diagnostic | PASS | `reports/sac_integration/11_actor_drift_train_diagnostic.md` |
+| Alpha/entropy ablation plan | READY_NOT_RUN | `reports/sac_integration/12_alpha_entropy_ablation_plan.md` |
 | 1M training | NOT VALIDATED | Requires explicit user confirmation and resource/stop plan |
 
 ## Completed Outcomes
@@ -74,6 +75,8 @@ Runtime artifacts are local and ignored. Do not commit `logs/`, `.venv/`,
 - Validated a fresh 250k actor drift diagnostic run. The run produced
   checkpoint `./logs/sac_lift_gpu_250k_actor_diag/sac_lift_step_249984.pkl`,
   passed checkpoint readiness, and passed a 4 env x 200 action diagnostic eval.
+- Added no-training action mapping tools and recorded the fresh 100k
+  alpha/entropy ablation plan. The ablation training itself has not been run.
 
 ### Full Action Diagnostic Summary
 
@@ -516,7 +519,11 @@ It is not yet reasonable to claim:
   area is actor mean / action distribution behavior.
 - Fresh 100k/250k train-time diagnostics support that the actor mean /
   deterministic action drift starts early and grows in absolute level. The next
-  step should be a decision review, not an automatic fresh 500k/750k/1M run.
+  step is a fresh 100k alpha/entropy ablation, not an automatic fresh
+  500k/750k/1M run.
+- The alpha/entropy ablation is currently blocked only by execution approval:
+  the plan is ready, but the external reviewer requires explicit user approval
+  before another 100k training run.
 - Eval reward is still low and should be treated as a smoke signal, not a
   performance benchmark.
 - Truncation handling is currently synthesized as zero when absent. That passed
@@ -601,12 +608,11 @@ Stop immediately and report if any of these occur:
 ## 1M Decision And Readiness Plan
 
 Do not automatically jump to fresh 500k, 750k, or 1M from this report update.
-The next recommended step is a decision review comparing fresh 500k trajectory
-completion, alpha/entropy hyperparameter review, deterministic actor
-regularization / eval-policy design, and action/reward component targeted
-analysis. A later 1M review should consider whether alpha floor, target entropy,
-log-alpha dynamics, or deterministic mean action drift need analysis before a
-longer run. Consider 1M only with:
+The next recommended step is the fresh 100k alpha/entropy ablation plan in
+`12_alpha_entropy_ablation_plan.md`: run A1 and A3, then run A4 only if runtime
+gates pass. A later 1M review should consider whether alpha floor, target
+entropy, log-alpha dynamics, or deterministic mean action drift need analysis
+before a longer run. Consider 1M only with:
 
 - explicit resource budget
 - fresh logdir and checkpoint path

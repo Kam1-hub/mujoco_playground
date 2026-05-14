@@ -1,6 +1,6 @@
 # Next Actions
 
-Status: updated on 2026-05-13 after fresh 250k actor drift diagnostic.
+Status: updated on 2026-05-14 after alpha/entropy ablation planning.
 
 ## Immediate State
 
@@ -87,6 +87,15 @@ Status: updated on 2026-05-13 after fresh 250k actor drift diagnostic.
   readiness PASS, and 4 env x 200 action diagnostic eval `EVAL_OK`.
 - Fresh 250k result: actor mean abs and deterministic action abs increased
   versus fresh 100k, while log_std/std and alpha continued downward.
+- No-training action mapping tools are committed:
+  `scripts/inspect_g1_action_mapping.py` and
+  `scripts/summarize_sac_action_diag.py`.
+- The next alpha/entropy ablation plan is recorded in
+  `reports/sac_integration/12_alpha_entropy_ablation_plan.md`.
+- The first fresh 100k ablation training command still needs explicit user
+  approval because the external execution reviewer rejected the new training
+  run after prior read-only instructions. This is an execution-policy gate, not
+  a SAC technical blocker.
 
 ## Completed WSL2 GPU Validation
 
@@ -253,15 +262,17 @@ or menagerie.
 
 Do not run 750k or 1M yet.
 
-Recommended next step is a decision review, not automatic fresh 500k/750k/1M:
+Recommended next step is explicit approval and execution of the fresh 100k
+alpha/entropy ablation plan:
 
-1. Compare fresh 100k and fresh 250k actor drift trajectories.
-2. Decide whether a fresh 500k diagnostic is needed to complete the trajectory.
-3. Consider alpha/entropy hyperparameter review before any longer diagnostic.
-4. Consider deterministic actor regularization / eval-policy design only as a
-   design discussion, not an immediate code change.
-5. Consider action/reward component targeted analysis.
-6. Do not tune reward, `action_scale`, or Kp yet.
+1. Run A1: `--alpha_learning_rate 1e-4`.
+2. Run A3: `--target_entropy_coef 0.25`.
+3. Run A4 only if A1 or A3 passes runtime gates.
+4. For each variant, run checkpoint readiness and small both-mode action
+   diagnostic eval.
+5. Do not run fresh 250k extension until a 100k variant improves actor drift.
+6. Do not run fresh 500k, 750k, or 1M.
+7. Do not tune reward, `action_scale`, or Kp yet.
 
 ## Completed Both-Mode Eval Diagnostic
 

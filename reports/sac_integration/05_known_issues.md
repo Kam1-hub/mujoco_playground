@@ -1,6 +1,6 @@
 # Known Issues
 
-Status: updated on 2026-05-13 after fresh 250k actor drift diagnostic.
+Status: updated on 2026-05-14 after alpha/entropy ablation planning.
 
 ## Open
 
@@ -16,6 +16,7 @@ Status: updated on 2026-05-13 after fresh 250k actor drift diagnostic.
 | Actor mean/action magnitude drift explains deterministic eval risk | policy diagnostics | OPEN | Full action diagnostic found deterministic action abs `0.1823 -> 0.2147 -> 0.3029`, policy mean abs `0.1950 -> 0.2288 -> 0.3468`, policy std mean `0.8996 -> 0.8692 -> 0.7519`, and deterministic reward avg `-4.2130 -> -4.4792 -> -4.8204`. | Keep 750k/1M paused. Review actor mean drift by dimension, target entropy / alpha / log_std dynamics, and reward component sensitivity before longer runs. |
 | Actor mean drift appears by fresh 100k | policy diagnostics | OPEN | Fresh 100k diagnostic showed final actor mean abs `0.238568` vs interval avg `0.170754`, final deterministic action abs `0.218864` vs interval avg `0.163467`, final log_std mean `-0.157116` vs interval avg `-0.136390`, and alpha about `0.0326`. | Fresh 250k confirmed amplification; use decision review before any fresh 500k/750k/1M. |
 | Actor mean drift amplifies by fresh 250k | policy diagnostics | OPEN | Fresh 250k diagnostic showed actor mean abs increasing from fresh 100k `0.238568 -> 0.299021`, deterministic action abs `0.218864 -> 0.270944`, final log_std `-0.157116 -> -0.205270`, and alpha `0.032585 -> 0.018768`. | Do not run fresh 500k/750k/1M automatically. Decide between fresh 500k trajectory completion, alpha/entropy review, deterministic actor regularization/eval-policy design, or action/reward component analysis. |
+| Alpha/entropy ablation not yet executed | execution gate | OPEN | `12_alpha_entropy_ablation_plan.md` defines A1/A3/A4 fresh 100k ablations. The first A1 training attempt was blocked by sandbox `snap-confine`; external execution was rejected pending explicit user approval for new training after prior read-only instructions. | Ask for explicit user approval, then run A1 and A3 only. This is not a SAC technical blocker. |
 | Deterministic reward degradation is component-specific | reward diagnostics | OPEN | Full action diagnostic links deterministic degradation mainly to `reward/ang_vel_xy` `-50.82 -> -62.66 -> -73.31`, `reward/stand_still` `-18.72 -> -21.72 -> -28.33`, and `reward/orientation` `-34.80 -> -43.27 -> -40.37`; positive `feet_phase` and `tracking_lin_vel` partially offset it. | Diagnose affected components before reward tuning. Do not change reward/action_scale/Kp in the current validation phase. |
 | Existing GPU 10k checkpoint is not deterministic-eval ready | checkpoint/eval | OPEN_NON_BLOCKING | `./logs/sac_lift_gpu_10k/sac_lift_step_9984.pkl` has `normalize_observations=True` but lacks `policy_normalizer` and `value_normalizer`. | Do not use the old checkpoint for trusted deterministic eval; use normalizer-ready 10k, 50k, or 100k checkpoints instead. |
 | Sandboxed `uv` may hit `snap-confine` capability restrictions | tooling | OPEN_NON_BLOCKING | The first sandboxed 100k `uv` attempt failed before training started with a `snap-confine` capability error; the identical command then succeeded with external permission and unchanged parameters. | Treat as tooling noise unless it prevents a command from starting; do not classify it as a training failure. |
@@ -72,6 +73,7 @@ Status: updated on 2026-05-13 after fresh 250k actor drift diagnostic.
 - Fresh 100k and fresh 250k train-time actor drift diagnostics are validated.
   Fresh 250k shows actor mean and deterministic action magnitude increase in
   absolute level while log_std/std and alpha continue downward.
+- Fresh 100k alpha/entropy ablation is planned but not yet executed.
 - 1M, full eval benchmark, and PPO comparison are still `NOT VALIDATED`.
 - The 500k sanity PASS exposed a watch item: alpha declined to about `0.0080`
   and deterministic reward worsened versus 250k. Both-mode eval suggests the
