@@ -18,8 +18,9 @@ domain randomization, or fine-tuning as part of the current validation phase.
 
 - Path: `/home/admin/projects/mujoco_playground/g1_sac_dev`
 - Branch: `sac-integration`
-- Latest recorded diagnostic state: fresh env1024 R3 100k fixed-alpha
-  diagnostic after the fixed-command forward eval gate, fixed-command eval
+- Latest recorded diagnostic state: fresh env1024 R3 100k `fixed_alpha=0.05`
+  diagnostic after the first `fixed_alpha=0.03` gate, fixed-command forward
+  eval gate, fixed-command eval
   support, alpha sign audit, fixed-command 3M render helper smoke,
   deterministic 3M render helper smoke, bounded 1024-env 3M R3 run,
   high-parallel 512/1024/2048 capacity benchmark, and 1M follow-up; use
@@ -253,6 +254,16 @@ Current validated ladder:
   `-3.9779`, low `tracking_lin_vel`, and `termination=-100` in both smokes.
   This is not infrastructure failure, but it does not justify 250k/5M/10M from
   `fixed_alpha=0.03`.
+- Fresh env1024 R3 100k `fixed_alpha=0.05` diagnostic: PASS
+  runtime/checkpoint with weak fixed-command smoke. Effective alpha stayed
+  fixed at `0.05`, raw `log_alpha` stayed at `-3.0`, and `alpha_floor` stayed
+  inactive. The run returned `TRAIN_OK`, checkpoint
+  `./logs/sac_lift_gpu_100k_env1024_r3_fixed_alpha_0p05/sac_lift_step_99328.pkl`,
+  and readiness PASS. However `critic_loss=0.3446` crossed the prior watch
+  threshold, `fwd0.5` deterministic reward was `-3.7355`, `fwd1.0`
+  deterministic reward was `-3.8258`, `tracking_lin_vel` remained low, and
+  `termination=-100` remained present. Do not extend fixed-alpha variants to
+  250k/5M/10M from these results.
 - Action joint mapping diagnostic: PASS.
 
 Still not validated:
@@ -816,7 +827,8 @@ Both-mode eval diagnostic:
 5. Do not draft or execute 10M automatically.
 
 Do not start long training automatically. Do not modify reward, action scale,
-Kp, domain randomization, fine-tuning, PPO, or RSL.
+Kp, domain randomization, fine-tuning, PPO, or RSL without an explicit targeted
+audit/ablation plan.
 
 ## Completed 100k Sanity Command
 
@@ -899,13 +911,14 @@ weak (`-3.2302` reward avg) and deterministic `tracking_lin_vel` collapsed from
 `183.95` to `25.94`. Stochastic remained poor for both commands.
 
 Do not run training, eval, preflight, installs, downloads, or git commits unless
-explicitly asked. The latest short gate shows `fixed_alpha=0.03` preserves
-alpha but does not solve 100k fixed-forward tracking. Next recommended work is
-another short alpha/entropy diagnostic, preferably fresh env1024 R3 100k
-`fixed_alpha=0.05`; `alpha_floor=0.03` is the next alternative. Do not run
-250k, 5M, or 10M from the `fixed_alpha=0.03` result. A fixed-command `fwd1.0`
-render/video review is useful, and remaining command coverage for `[0,0.3,0]`,
-`[0,0,0.5]`, and `[0,0,0]` remains useful, but neither should justify 5M/10M
-without resolving forward tracking weakness and stochastic collapse. Do not
-change reward, action_scale, Kp, domain randomization, fine-tuning, PPO, or RSL.
+explicitly asked. The latest short gates show `fixed_alpha=0.03` and
+`fixed_alpha=0.05` preserve alpha but do not solve 100k fixed-forward
+tracking; `0.05` also introduced a critic-loss watch item. Next recommended
+work is reward/prior targeted audit or ablation, with `alpha_floor=0.03` only
+as a secondary diagnostic. Do not run fixed-alpha 250k, 5M, or 10M from these
+results. A fixed-command `fwd1.0` render/video review is useful, and remaining
+command coverage for `[0,0.3,0]`, `[0,0,0.5]`, and `[0,0,0]` remains useful,
+but neither should justify 5M/10M without resolving forward tracking weakness
+and stochastic collapse. Do not change reward, action_scale, Kp, domain
+randomization, fine-tuning, PPO, or RSL without a targeted audit/ablation plan.
 ```

@@ -180,7 +180,7 @@ Audit conclusion:
 
 ## Fresh 100k Fixed-Alpha Diagnostic
 
-Gate name: fresh env1024 R3 100k fixed-alpha diagnostic.
+Gate name: fresh env1024 R3 100k fixed-alpha diagnostic, first variant.
 
 - Variant: `fixed_alpha=0.03`.
 - Scope: short diagnostic training, checkpoint readiness, and small
@@ -260,6 +260,93 @@ Warnings:
 - No traceback, OOM, fatal CUDA error, NaN, checkpoint readiness failure, or
   eval failure was observed.
 
+## Fresh 100k Fixed-Alpha 0.05 Diagnostic
+
+Gate name: fresh env1024 R3 100k fixed-alpha diagnostic, second variant.
+
+- Variant: `fixed_alpha=0.05`.
+- Scope: short diagnostic training, checkpoint readiness, and small
+  fixed-command smoke already completed before this report update.
+- No 250k, 5M, 10M, render, code change, reward, `action_scale`, Kp, PPO/RSL,
+  or checkpoint schema change was made for this report update.
+- Training status: `TRAIN_OK`.
+- Checkpoint:
+  `./logs/sac_lift_gpu_100k_env1024_r3_fixed_alpha_0p05/sac_lift_step_99328.pkl`
+- Checkpoint readiness: PASS.
+
+Training metrics:
+
+| env_steps | gradient_steps | wall_time | sps | actor_loss | critic_loss | q | target_q | reward_mean | done_fraction | discount_mean |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 99328 | 1312 | 46.3739s | 2141.8925 | -6.27606 | 0.344604 | 5.32498 | 5.24534 | -0.175746 | 0.0429688 | 0.957031 |
+
+Alpha metrics:
+
+| alpha_raw | log_alpha_raw | alpha_effective | log_alpha_effective | fixed_alpha | alpha_floor | alpha_floor_active | alpha_loss_type_id | alpha_loss | alpha_log_prob | alpha_grad_proxy_exp | alpha_grad_proxy_log |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 0.0497871 | -3.0 | 0.05 | -2.99573 | 0.05 | 0.0 | 0.0 | 0.0 | 1.29048 | -18.6699 | 1.29048 | 25.9199 |
+
+Interpretation: the fixed-alpha mechanism worked. Effective alpha stayed fixed
+at `0.05`, raw `log_alpha` stayed at init `-3.0`, and `alpha_floor` remained
+inactive.
+
+Actor drift metrics:
+
+| Metric | Final | Interval |
+|---|---:|---:|
+| actor policy mean abs mean | 0.157220 | 0.122486 |
+| actor policy mean abs max | 1.51309 | 0.760698 |
+| actor log_std mean | -0.153414 | -0.133005 |
+| actor log_std min | -0.640887 | -0.577784 |
+| actor log_std max | 0.065457 | 0.239801 |
+| actor policy std mean | 0.859991 | 0.880084 |
+| sampled action abs mean | 0.524748 | 0.521151 |
+| sampled action saturation 0.95 | 0.0409483 | 0.0425800 |
+| deterministic action abs mean | 0.149726 | 0.119732 |
+| deterministic action saturation 0.95 | 0.0 | 0.0 |
+| alpha effective | 0.05 | 0.05 |
+| alpha raw | 0.0497871 | 0.0497871 |
+
+Small fixed-command smoke:
+
+- `fwd0.5` JSON:
+  `./logs/sac_eval_fixed_alpha_100k_smoke/eval_fwd0p5_seed0_both_4x200_alpha0p05.json`
+- `fwd1.0` JSON:
+  `./logs/sac_eval_fixed_alpha_100k_smoke/eval_fwd1p0_seed0_both_4x200_alpha0p05.json`
+- Both outputs returned `EVAL_OK`, `policy_mode=both`, `fixed_command=true`,
+  and action/reward/obs NaN flags false.
+
+| Command | Mode | Reward | Reward Std | Reward Min | Reward Max | Action Abs | Sat 0.95 | tracking_lin_vel | tracking_ang_vel | feet_phase | ang_vel_xy | orientation | feet_slip | termination |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| `[0.5,0,0]` | deterministic | -3.7355 | 0.6304 | -4.4104 | -2.7027 | 0.1138 | 0.0 | 8.7119 | 24.1327 | 22.3450 | -52.3156 | -37.8373 | -16.4873 | -100 |
+| `[0.5,0,0]` | stochastic | -5.9704 |  |  |  | 0.5190 | 0.0380 | 7.5620 | 4.0102 | 19.9924 | -124.6087 | -47.3861 | -10.2421 | -100 |
+| `[1.0,0,0]` | deterministic | -3.8258 | 0.4952 | -4.3698 | -3.0269 | 0.1117 | 0.0 | 2.6894 | 24.6694 | 22.4319 | -51.3789 | -37.9635 | -16.5967 | -100 |
+| `[1.0,0,0]` | stochastic | -6.1849 |  |  |  | 0.5186 | 0.0381 | 3.2869 | 3.9803 | 20.1518 | -126.3973 | -48.2956 | -11.0013 | -100 |
+
+Interpretation:
+
+- This is not an infrastructure failure: train, checkpoint readiness, and smoke
+  eval all passed.
+- `fixed_alpha=0.05` preserves alpha, but it does not solve forward tracking at
+  100k.
+- `critic_loss=0.3446` crosses the previous `0.3` watch threshold.
+- `fixed_alpha=0.05` did not improve the fixed-forward smoke versus
+  `fixed_alpha=0.03`; both `fwd0.5` and `fwd1.0` still terminate in the 4x200
+  smoke, and `tracking_lin_vel` remains low.
+- Do not continue to 250k, 5M, or 10M from fixed alpha alone.
+- The next route should shift toward reward/prior targeted audit or ablation;
+  `alpha_floor=0.03` remains a secondary alpha/entropy diagnostic, but do not
+  keep increasing fixed alpha blindly.
+
+Warnings:
+
+- Known non-fatal WSL2 CUDA driver warning.
+- Known non-fatal JAX cast overflow warning.
+- Sandbox `snap-confine` blocked some `uv` attempts; same commands were rerun
+  externally unchanged.
+- No traceback, OOM, fatal CUDA error, NaN, checkpoint readiness failure, or
+  eval failure was observed.
+
 ## Interpretation
 
 - Fixed-command eval support closes the gap between render-only command
@@ -273,6 +360,9 @@ Warnings:
 - The alpha sign audit does not justify a sign-bug patch by itself. It does
   justify treating alpha floor, fixed alpha, standard log-alpha update, and
   target-entropy sweeps as controlled ablations before longer 5M/10M runs.
+- Both fixed-alpha `0.03` and `0.05` verified the mechanism but failed to
+  produce useful 100k fixed-forward tracking. Higher fixed alpha alone is not a
+  credible next route.
 
 ## Next Action
 
@@ -292,3 +382,10 @@ effective alpha but produced weak fixed-command smoke. Do not extend it to 250k
 or longer from this result. If continuing alpha/entropy diagnostics, run another
 short 100k gate with `fixed_alpha=0.05` first; use `alpha_floor=0.03` as the
 next alternative.
+
+The second fixed-alpha gate (`fixed_alpha=0.05`, fresh env1024 R3 100k) also
+preserved effective alpha but produced weak fixed-command smoke and a critic
+loss watch item. Do not extend fixed-alpha variants to 250k, 5M, or 10M from
+these results. The next main route should be reward/prior targeted audit or
+ablation. Treat `alpha_floor=0.03` as a secondary diagnostic rather than the
+primary path, and do not keep increasing fixed alpha blindly.
