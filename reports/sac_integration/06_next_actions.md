@@ -1,6 +1,7 @@
 # Next Actions
 
-Status: updated on 2026-05-14 after fresh 100k alpha/entropy ablation diagnostics.
+Status: updated on 2026-05-14 after fresh 100k alpha/entropy ablation
+multi-seed eval-only diagnostics.
 
 ## Immediate State
 
@@ -103,6 +104,13 @@ Status: updated on 2026-05-14 after fresh 100k alpha/entropy ablation diagnostic
   A1/A3/A4.
 - Caveat: A4 stochastic 4x200 reward was worse than A1/A3, so this remains a
   diagnostic signal rather than a final policy-quality benchmark.
+- Fresh 100k A1/A3/A4 multi-seed eval-only follow-up also passed:
+  `./logs/sac_eval_alpha_ablate_multiseed/` contains `15` ignored JSON outputs,
+  all `EVAL_OK`, all action/reward/obs NaN flags false.
+- Multi-seed result: A4 remains best on deterministic action/mean drift
+  metrics, but A1 is slightly better on deterministic reward
+  (`-4.3262` vs A4 `-4.3436`) and A4 stochastic reward is worse than A1 by
+  about `0.0945`.
 
 ## Completed WSL2 GPU Validation
 
@@ -269,15 +277,17 @@ or menagerie.
 
 Do not run 750k or 1M yet.
 
-Fresh 100k alpha/entropy ablation A1/A3/A4 is complete. A4 is the best current
-100k candidate, but the next step should still be bounded:
+Fresh 100k alpha/entropy ablation A1/A3/A4 and the multi-seed eval-only
+follow-up are complete. A4 is still the best drift-control candidate, but the
+next step should remain bounded:
 
-1. Prefer multi-seed 100k ablation eval for A4, optionally including A1 for a
-   direct slow-alpha comparison.
-2. Alternatively, plan a fresh 250k A4 extension only after user/main-agent
+1. Decide whether the A4 stochastic caveat is acceptable.
+2. If acceptable, plan a fresh 250k A4 extension only after user/main-agent
    confirmation and with the same checkpoint/eval gates.
-3. Do not run fresh 500k, 750k, or 1M.
-4. Do not tune reward, `action_scale`, or Kp yet.
+3. If not acceptable, do further alpha/entropy or stochastic-policy design
+   before longer training.
+4. Do not run fresh 500k, 750k, or 1M.
+5. Do not tune reward, `action_scale`, or Kp yet.
 
 ## Completed Both-Mode Eval Diagnostic
 
@@ -371,16 +381,16 @@ CPU, stop and report the CUDA/JAX blocker.
 ## Recommended Next Step
 
 Do not automatically run fresh 500k, 750k, or 1M. The next useful step is a
-bounded A4 follow-up decision.
+bounded A4 fresh 250k decision, with the multi-seed reward caveat explicitly
+considered.
 
 Recommended diagnostic questions:
 
-1. Should A4 get multi-seed 100k eval before any longer run?
-2. Is A4 strong enough for a fresh 250k extension, or should A1 be compared by
-   multi-seed eval first?
-3. Does A4 preserve its actor mean/log_std advantage beyond a single seed 0
-   4x200 eval?
-4. What stop conditions would apply if a fresh 250k A4 extension is approved?
+1. Is A4 strong enough for a fresh 250k extension despite A1's tiny
+   deterministic reward edge and A4's stochastic reward caveat?
+2. Should the 250k extension compare A4 only, or include A1 as a direct
+   slow-alpha comparator?
+3. What stop conditions would apply if a fresh 250k A4 extension is approved?
 
 Do not jump into fresh 500k, 750k, or 1M from this report update.
 
@@ -396,7 +406,7 @@ Do not jump into fresh 500k, 750k, or 1M from this report update.
 
 ## Recommended Follow-Ups After Deterministic Eval Smoke
 
-1. Run a bounded A4 follow-up decision before any fresh 250k A4 extension.
+1. Run a bounded A4 fresh 250k decision before any extension.
 2. Keep eval scales bounded unless the user asks for a benchmark.
 3. Do not start fresh 500k, 750k, or 1M automatically from this report update.
 4. Compare against PPO baseline only after SAC smoke plus eval have clean

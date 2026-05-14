@@ -44,6 +44,7 @@ Runtime artifacts are local and ignored. Do not commit `logs/`, `.venv/`,
 | Fresh 100k actor drift train diagnostic | PASS | `reports/sac_integration/11_actor_drift_train_diagnostic.md` |
 | Fresh 250k actor drift train diagnostic | PASS | `reports/sac_integration/11_actor_drift_train_diagnostic.md` |
 | Fresh 100k alpha/entropy ablation A1/A3/A4 | PASS | `reports/sac_integration/12_alpha_entropy_ablation_plan.md` |
+| Fresh 100k alpha/entropy ablation multi-seed eval-only | PASS | `./logs/sac_eval_alpha_ablate_multiseed/`, `15` JSON outputs |
 | 1M training | NOT VALIDATED | Requires explicit user confirmation and resource/stop plan |
 
 ## Completed Outcomes
@@ -79,6 +80,11 @@ Runtime artifacts are local and ignored. Do not commit `logs/`, `.venv/`,
 - Validated fresh 100k alpha/entropy ablation A1/A3/A4. All three variants
   returned `TRAIN_OK`, passed checkpoint readiness, and passed small both-mode
   action diagnostic eval. A4 is the best current 100k drift candidate.
+- Validated multi-seed eval-only follow-up for A1/A3/A4. All `15` JSON outputs
+  under ignored `./logs/sac_eval_alpha_ablate_multiseed/` returned `EVAL_OK`
+  with action/reward/obs NaN flags false. A4 remained best on deterministic
+  action magnitude and actor mean drift metrics, while A1 slightly edged
+  deterministic reward and A4 retained a stochastic reward caveat.
 
 ### Full Action Diagnostic Summary
 
@@ -222,6 +228,35 @@ Interpretation:
   4x200 reward among A1/A3/A4.
 - A4 stochastic 4x200 reward was worse than A1/A3, so this remains a diagnostic
   signal, not a final policy-quality benchmark.
+
+### Fresh 100k Alpha/Entropy Multi-Seed Eval Summary
+
+Eval-only setup: A1/A3/A4 checkpoints, seeds `0..4`, `num_eval_envs=16`,
+`episode_length=1000`, `--policy_mode both`, `--action_diagnostics`, and
+`--reward_components`. JSON directory:
+`./logs/sac_eval_alpha_ablate_multiseed/`; JSON count: `15`.
+
+Deterministic aggregate:
+
+| Variant | Reward Avg | Reward SD | Action Abs | Mean Abs | LogStd Mean | Std Mean | OK |
+|---|---:|---:|---:|---:|---:|---:|---|
+| A1 | -4.3262 | 0.4001 | 0.1826 | 0.1961 | -0.1065 | 0.9006 | true |
+| A3 | -4.5518 | 0.4394 | 0.1906 | 0.2076 | -0.1107 | 0.8972 | true |
+| A4 | -4.3436 | 0.3791 | 0.1774 | 0.1920 | -0.1058 | 0.9015 | true |
+
+Stochastic aggregate:
+
+| Variant | Reward Avg | Reward SD | Action Abs | Mean Abs | LogStd Mean | Std Mean | OK |
+|---|---:|---:|---:|---:|---:|---:|---|
+| A1 | -6.3990 | 0.3916 | 0.5259 | 0.2054 | -0.1534 | 0.8599 | true |
+| A3 | -6.4888 | 0.4957 | 0.5285 | 0.2291 | -0.1599 | 0.8548 | true |
+| A4 | -6.4935 | 0.5123 | 0.5266 | 0.2067 | -0.1540 | 0.8595 | true |
+
+Interpretation: A4 remains best on deterministic action magnitude and actor
+mean drift metrics. It is not strictly best on deterministic reward: A1 is
+slightly better (`-4.3262` vs `-4.3436`), and the gap is small relative to seed
+variance. A4 stochastic reward is worse than A1 by about `0.0945` and
+essentially tied with A3.
 
 ## Key Metrics
 
@@ -546,10 +581,11 @@ It is not yet reasonable to claim:
   area is actor mean / action distribution behavior.
 - Fresh 100k/250k train-time diagnostics support that the actor mean /
   deterministic action drift starts early and grows in absolute level.
-- Fresh 100k alpha/entropy ablation suggests A4 can reduce early actor mean and
-  deterministic action magnitude while preserving higher alpha. This is useful
-  but not sufficient for 750k/1M because it is a single-seed 100k diagnostic and
-  A4 stochastic 4x200 reward was worse than A1/A3.
+- Fresh 100k alpha/entropy ablation plus multi-seed eval suggests A4 can
+  reduce early actor mean and deterministic action magnitude while preserving
+  healthier std. This is useful but not sufficient for 750k/1M because A1
+  slightly edges deterministic reward and A4 remains weaker on stochastic
+  reward.
 - Eval reward is still low and should be treated as a smoke signal, not a
   performance benchmark.
 - Truncation handling is currently synthesized as zero when absent. That passed
@@ -634,11 +670,12 @@ Stop immediately and report if any of these occur:
 ## 1M Decision And Readiness Plan
 
 Do not automatically jump to fresh 500k, 750k, or 1M from this report update.
-The next recommended step is a bounded A4 follow-up decision: multi-seed 100k
-ablation eval and/or a fresh 250k A4 extension only after user/main-agent
-confirmation. A later 1M review should consider whether alpha floor, target
-entropy, log-alpha dynamics, or deterministic mean action drift need analysis
-before a longer run. Consider 1M only with:
+The next recommended step is a bounded A4 follow-up decision: either a fresh
+250k A4 extension after user/main-agent confirmation, or further design if the
+stochastic reward caveat is considered blocking. A later 1M review should
+consider whether alpha floor, target entropy, log-alpha dynamics, or
+deterministic mean action drift need analysis before a longer run. Consider 1M
+only with:
 
 - explicit resource budget
 - fresh logdir and checkpoint path

@@ -19,7 +19,7 @@ domain randomization, or fine-tuning as part of the current validation phase.
 - Path: `/home/admin/projects/mujoco_playground/g1_sac_dev`
 - Branch: `sac-integration`
 - Latest local diagnostic report baseline before this update:
-  `f454fef Record SAC action joint mapping diagnostic`
+  `2a9db24 Record SAC alpha entropy ablation results`
 - Remote: `origin https://github.com/Kam1-hub/mujoco_playground.git`
 - Last known pushed branch: `sac-integration`
 
@@ -171,6 +171,8 @@ Current validated ladder:
 - Fresh 100k train-time actor drift diagnostic: PASS.
 - Fresh 250k train-time actor drift diagnostic: PASS.
 - Fresh 100k alpha/entropy ablation A1/A3/A4: PASS.
+- Fresh 100k alpha/entropy ablation A1/A3/A4 multi-seed eval-only diagnostic:
+  PASS.
 - Action joint mapping diagnostic: PASS.
 
 Still not validated:
@@ -254,6 +256,12 @@ All paths below are runtime artifacts and should remain ignored:
 - `./logs/sac_eval_alpha_ablate/`
   - Small 4 env x 200 both-mode action diagnostic eval JSONs for A1/A3/A4.
   - All returned `EVAL_OK`; action/reward/obs NaN flags were false.
+- `./logs/sac_eval_alpha_ablate_multiseed/`
+  - Eval-only multi-seed diagnostic JSONs for A1/A3/A4.
+  - Seeds `0..4`, `num_eval_envs=16`, `episode_length=1000`,
+    `--policy_mode both`, `--action_diagnostics`, and `--reward_components`.
+  - Contains `15` JSON outputs. All evals returned `EVAL_OK`; all
+    action/reward/obs NaN flags were false.
 - `./logs/sac_lift_schema_dry_run/sac_lift_step_0.pkl`
   - Dry-run schema validation artifact, if still present.
 
@@ -521,9 +529,10 @@ Both-mode eval diagnostic:
 - Fresh 250k train-time diagnostics show the drift amplifies in absolute level,
   while log_std/std and alpha continue downward.
 - Fresh 100k alpha/entropy ablation A1/A3/A4 has run. A4 is the best current
-  100k drift candidate, but it still needs multi-seed or fresh 250k
-  confirmation before longer training because its stochastic 4x200 reward was
-  worse than A1/A3.
+  100k drift-control candidate after multi-seed eval-only follow-up. A4 has
+  the lowest deterministic action magnitude and actor mean magnitude, but A1
+  slightly edges deterministic reward and A4 remains weaker on stochastic
+  reward.
 - Action joint mapping now links the 500k deterministic top action dimensions
   mainly to right ankle roll/pitch, waist pitch, right knee, and hip roll. See
   `reports/sac_integration/13_action_joint_mapping_diagnostic.md`.
@@ -536,8 +545,9 @@ Both-mode eval diagnostic:
 1. Do read-only status checks.
 2. Read this file and `reports/sac_integration/09_phase_summary_and_risks.md`.
 3. Review `reports/sac_integration/12_alpha_entropy_ablation_plan.md`.
-4. If the user explicitly approves another bounded diagnostic, run multi-seed
-   100k ablation eval for A4 or plan a fresh 250k A4 extension.
+4. If the user explicitly approves another bounded diagnostic, plan a fresh
+   250k A4 extension or further design if the stochastic caveat is considered
+   blocking.
 5. Do not draft or execute fresh 500k/750k/1M until A4 is confirmed.
 
 Do not start fresh 500k, 750k, or 1M automatically. Do not modify reward,
@@ -593,19 +603,22 @@ status checks: pwd, git status --short --branch, git log --oneline -5,
 git remote -v, and git check-ignore -v logs .venv
 g1_env/external_deps/mujoco_menagerie || true.
 
-Current HEAD should be at least f454fef Record SAC action joint mapping diagnostic
+Current HEAD should be at least 2a9db24 Record SAC alpha entropy ablation results
 unless newer report commits exist. GPU 10k smoke, deterministic
 eval smoke, GPU 50k sanity/eval, GPU 100k sanity/eval, GPU 250k sanity/eval,
 GPU 500k sanity/eval, 100k/250k/500k both-mode eval diagnostic, and full action
 distribution / reward-component diagnostic have passed. Fresh 100k and fresh
 250k actor drift diagnostics have also passed. Fresh 100k alpha/entropy
-ablation A1/A3/A4 has passed runtime/checkpoint/eval gates, and A4 is the best
-current 100k drift candidate. 750k and 1M are not validated.
+ablation A1/A3/A4 has passed runtime/checkpoint/eval gates, and the A1/A3/A4
+multi-seed eval-only follow-up has also passed. A4 is the best current 100k
+drift-control candidate, with the caveat that A1 slightly edges deterministic
+reward and A4 remains weaker on stochastic reward. 750k and 1M are not
+validated.
 
 Do not run training, eval, preflight, installs, downloads, or git commits unless
-explicitly asked. Next recommended work is multi-seed 100k A4 ablation eval
-and/or a fresh 250k A4 extension after confirmation. Do not start fresh 500k,
-750k, or 1M without a separate resource/stop-condition plan and user
-confirmation. Do not change reward, action_scale, Kp, domain randomization,
-fine-tuning, PPO, or RSL.
+explicitly asked. Next recommended work is a main/user decision on a bounded
+fresh 250k A4 extension versus further design around the stochastic caveat. Do
+not start fresh 500k, 750k, or 1M without a separate resource/stop-condition
+plan and user confirmation. Do not change reward, action_scale, Kp, domain
+randomization, fine-tuning, PPO, or RSL.
 ```

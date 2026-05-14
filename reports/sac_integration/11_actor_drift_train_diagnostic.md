@@ -386,5 +386,51 @@ Interval metrics:
 
 - Do not run 750k or 1M.
 - Do not run a fresh 250k A4 extension automatically.
-- Recommended next step: multi-seed 100k ablation eval and/or fresh 250k A4
-  extension only after user/main-agent confirmation.
+- Multi-seed 100k ablation eval has completed; see below.
+- Recommended next step: decide whether to run a bounded fresh 250k A4
+  extension after user/main-agent confirmation, or do further design if the
+  stochastic caveat is blocking.
+
+## Fresh 100k Alpha/Entropy Multi-Seed Eval Follow-Up
+
+### Context
+
+- Scope: eval-only follow-up for A1/A3/A4 fresh 100k ablation checkpoints.
+- JSON directory: `./logs/sac_eval_alpha_ablate_multiseed/`.
+- JSON count: `15`.
+- Eval setup: seeds `0..4`, `num_eval_envs=16`, `episode_length=1000`,
+  `--policy_mode both`, `--action_diagnostics`, and `--reward_components`.
+- Checkpoint readiness: A1/A3/A4 PASS.
+- All evals returned `EVAL_OK`; all action/reward/obs NaN flags were false.
+- No training or code changes occurred in this follow-up.
+
+### Deterministic Aggregate
+
+| Variant | Reward Avg | Reward SD | Min Avg | Max Avg | Action Abs | Sat 0.95 | Mean Abs | Log Std Mean | Std Mean | OK |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|
+| A1 | -4.3262 | 0.4001 | -8.0999 | -3.1584 | 0.1826 | 0.000000 | 0.1961 | -0.1065 | 0.9006 | true |
+| A3 | -4.5518 | 0.4394 | -8.2729 | -3.1404 | 0.1906 | 0.000063 | 0.2076 | -0.1107 | 0.8972 | true |
+| A4 | -4.3436 | 0.3791 | -7.9928 | -2.9098 | 0.1774 | 0.000025 | 0.1920 | -0.1058 | 0.9015 | true |
+
+### Stochastic Aggregate
+
+| Variant | Reward Avg | Reward SD | Min Avg | Max Avg | Action Abs | Sat 0.95 | Mean Abs | Log Std Mean | Std Mean | OK |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|
+| A1 | -6.3990 | 0.3916 | -10.1843 | -4.9255 | 0.5259 | 0.0433 | 0.2054 | -0.1534 | 0.8599 | true |
+| A3 | -6.4888 | 0.4957 | -10.1385 | -5.1995 | 0.5285 | 0.0451 | 0.2291 | -0.1599 | 0.8548 | true |
+| A4 | -6.4935 | 0.5123 | -10.1824 | -5.1044 | 0.5266 | 0.0440 | 0.2067 | -0.1540 | 0.8595 | true |
+
+### Interpretation
+
+- A4 remains best on deterministic action magnitude and actor mean drift
+  metrics.
+- A4 is not strictly best on deterministic reward: A1 is slightly better
+  (`-4.3262` vs `-4.3436`), and this gap is tiny relative to seed variance.
+- A4 stochastic reward is worse than A1 by about `0.0945` and essentially tied
+  with A3.
+- A3 remains the weakest candidate for drift/reward.
+- A4 is still the best drift-control candidate, but it should be described
+  with the reward caveat.
+- Next action: do not run 750k or 1M. Decide whether to run a bounded fresh
+  250k A4 extension after confirmation, or do further design if the stochastic
+  caveat is concerning.

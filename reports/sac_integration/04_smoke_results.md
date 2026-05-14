@@ -1,6 +1,44 @@
 # Smoke Results
 
-Status: updated on 2026-05-14 after fresh 100k alpha/entropy ablation diagnostics.
+Status: updated on 2026-05-14 after fresh 100k alpha/entropy ablation
+multi-seed eval-only diagnostics.
+
+## 2026-05-14 Alpha/Entropy Ablation Multi-Seed Eval-Only Diagnostic
+
+- Scope: eval-only follow-up for fresh 100k A1/A3/A4 ablation checkpoints.
+- JSON directory: `./logs/sac_eval_alpha_ablate_multiseed/`
+- JSON count: `15`
+- Checkpoint readiness: A1/A3/A4 PASS; all normalizer/eval-ready checks passed.
+- Eval setup: seeds `0..4`, `num_eval_envs=16`, `episode_length=1000`,
+  `--policy_mode both`, `--action_diagnostics`, `--reward_components`.
+- All evals returned `EVAL_OK`; all action/reward/obs NaN flags were false.
+- No training, code change, report change, traceback, OOM, fatal CUDA,
+  checkpoint failure, or eval failure occurred before this report update.
+
+Deterministic aggregate:
+
+| Variant | Reward Avg | Reward SD | Action Abs | Mean Abs | Log Std Mean | Std Mean | OK |
+|---|---:|---:|---:|---:|---:|---:|---|
+| A1 | -4.3262 | 0.4001 | 0.1826 | 0.1961 | -0.1065 | 0.9006 | true |
+| A3 | -4.5518 | 0.4394 | 0.1906 | 0.2076 | -0.1107 | 0.8972 | true |
+| A4 | -4.3436 | 0.3791 | 0.1774 | 0.1920 | -0.1058 | 0.9015 | true |
+
+Stochastic aggregate:
+
+| Variant | Reward Avg | Reward SD | Action Abs | Mean Abs | Log Std Mean | Std Mean | OK |
+|---|---:|---:|---:|---:|---:|---:|---|
+| A1 | -6.3990 | 0.3916 | 0.5259 | 0.2054 | -0.1534 | 0.8599 | true |
+| A3 | -6.4888 | 0.4957 | 0.5285 | 0.2291 | -0.1599 | 0.8548 | true |
+| A4 | -6.4935 | 0.5123 | 0.5266 | 0.2067 | -0.1540 | 0.8595 | true |
+
+Interpretation: A4 remains the best drift-control candidate because it has the
+lowest deterministic action magnitude and actor mean magnitude. It is not
+strictly best on deterministic reward: A1 is slightly better
+(`-4.3262` vs `-4.3436`), a small gap relative to seed variance. A4 stochastic
+reward is worse than A1 by about `0.0945` and essentially tied with A3. Do not
+run 750k or 1M from this result; the next decision is a bounded fresh 250k A4
+extension after confirmation, or further design if the stochastic caveat is
+blocking.
 
 ## 2026-05-14 Fresh 100k Alpha/Entropy Ablation Diagnostics
 
