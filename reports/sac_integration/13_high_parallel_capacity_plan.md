@@ -6,7 +6,10 @@ CHECKPOINT AI results. All 512/1024/2048 cases returned `TRAIN_OK` and
 readiness PASS; 1024 envs was fastest. The subsequent bounded 1024-env 1M R3
 run also completed as a runtime/checkpoint/eval PASS, but reward regressed
 versus R3 250k and actor drift continued; see
-`reports/sac_integration/15_env1024_1m_r3_results.md`.
+`reports/sac_integration/15_env1024_1m_r3_results.md`. The subsequent
+bounded 1024-env 3M R3 run also completed as runtime/checkpoint/eval PASS and
+showed strong deterministic-policy recovery, but stochastic eval degraded and
+alpha/std collapsed; see `reports/sac_integration/16_env1024_3m_r3_results.md`.
 
 ## Context
 
@@ -185,5 +188,6 @@ The 512, 1024, and 2048 env capacity benchmark has been completed. `1024` envs
 was stable and fastest at `953.36` SPS. The follow-up 1024-env 1M R3 run also
 completed successfully at runtime with `999424` env steps and checkpoint/eval
 PASS. However, it did not improve policy quality versus R3 250k. Do not jump
-directly to 10M; first run a decision review between a bounded 3M continuation
-and diagnostic/regularization adjustment.
+directly to 10M. The follow-up 1024-env 3M R3 run completed successfully and
+improved deterministic reward, but alpha/std collapsed and stochastic reward
+worsened. Next run an entropy/alpha decision review before any longer training.

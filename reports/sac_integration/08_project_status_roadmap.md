@@ -1,6 +1,6 @@
 # G1 SAC Integration Status And Roadmap
 
-Status: updated on 2026-05-14 after the bounded 1024-env 1M R3 run.
+Status: updated on 2026-05-14 after the bounded 1024-env 3M R3 run.
 
 ## 1. Mission
 
@@ -190,15 +190,17 @@ Validation ladder:
 26. Bounded R3 250k actor regularization extension
 27. High-parallel 512/1024/2048 capacity benchmark
 28. Bounded 1024-env 1M run
-29. Multi-million training
+29. Bounded 1024-env 3M run
+30. 10M-scale training
 
 Status:
 
-- Steps 1 through 28 are complete.
-- Step 28 is runtime/checkpoint/eval PASS but not a policy-quality
-  breakthrough.
-- Step 29 remains `NOT VALIDATED` and requires separate resource and
-  stop-condition planning after a decision review.
+- Steps 1 through 29 are complete.
+- Step 29 is runtime/checkpoint/eval PASS with the first strong deterministic
+  policy improvement signal, but not a clean stable-SAC declaration because
+  stochastic eval degraded and alpha/std collapsed.
+- Step 30 remains `NOT VALIDATED` and requires an entropy/alpha decision
+  review, render/helper planning, resource plan, and stop conditions.
 
 ### Phase 6: Reports, Commits, Migration Handoff
 
@@ -255,7 +257,8 @@ WSL2 target workspace state:
 - Path: `/home/admin/projects/mujoco_playground/g1_sac_dev`
 - Branch: `sac-integration...origin/sac-integration`
 - Latest recorded validation state before this report update: bounded
-  `1024`-env 1M R3 runtime/checkpoint/eval PASS, with policy-quality caveat.
+  `1024`-env 3M R3 runtime/checkpoint/eval PASS, with deterministic recovery
+  and entropy-collapse caveat.
 - Menagerie: present at `1b86ece576591213e2b666ebf59508454200ca97`
 - Python env: present under ignored `.venv`
 - CUDA JAX: validated, backend `gpu`, device `cuda:0`
@@ -1288,4 +1291,4 @@ action abs rose `0.1556 -> 0.2046`, and log_std narrowed
 
 ## 25. Current Position In One Sentence
 
-SAC Route B is implemented; CPU tiny smoke, WSL2 GPU preflight, Route B GPU 10k smoke, normalizer-ready checkpoint validation, bounded deterministic eval smoke, 50k sanity/eval, 100k sanity/eval, 250k sanity/eval, 500k sanity/eval, both-mode eval diagnostic, full action diagnostic, fresh 100k/250k train-time actor drift diagnostics, fresh 100k alpha/entropy ablation diagnostics, the A1/A3/A4 multi-seed eval-only ablation diagnostic, bounded fresh 250k/500k/750k A4 extensions, fresh 100k actor-regularization R1, fresh 100k actor-regularization R2/R3, bounded R3 250k, the 512/1024/2048 high-parallel capacity benchmark, and bounded 1024-env 1M R3 have passed runtime/checkpoint/eval gates; 1M is not a policy-quality breakthrough; 3M/10M, full eval benchmarking, domain randomization, and fine-tuning remain `NOT VALIDATED`.
+SAC Route B is implemented; CPU tiny smoke, WSL2 GPU preflight, Route B GPU 10k smoke, normalizer-ready checkpoint validation, bounded deterministic eval smoke, 50k sanity/eval, 100k sanity/eval, 250k sanity/eval, 500k sanity/eval, both-mode eval diagnostic, full action diagnostic, fresh 100k/250k train-time actor drift diagnostics, fresh 100k alpha/entropy ablation diagnostics, the A1/A3/A4 multi-seed eval-only ablation diagnostic, bounded fresh 250k/500k/750k A4 extensions, fresh 100k actor-regularization R1, fresh 100k actor-regularization R2/R3, bounded R3 250k, the 512/1024/2048 high-parallel capacity benchmark, bounded 1024-env 1M R3, and bounded 1024-env 3M R3 have passed runtime/checkpoint/eval gates; 3M provides the first strong deterministic-policy improvement signal but also severe alpha/std collapse and stochastic degradation; 10M, full eval benchmarking, domain randomization, and fine-tuning remain `NOT VALIDATED`.

@@ -74,4 +74,11 @@ env steps, passed checkpoint readiness, and passed 5-seed both-mode eval with
 no NaN flags. Runtime stability supports the high-parallel configuration, but
 policy quality did not improve versus R3 250k. See
 `reports/sac_integration/15_env1024_1m_r3_results.md` for details before
-planning any 3M or 10M run.
+planning any longer run.
+
+The bounded 1024-env 3M R3 follow-up has also completed. It reached
+`2999296` env steps, passed checkpoint readiness, and passed 5-seed both-mode
+eval with no NaN flags. Deterministic reward improved strongly to `-2.3314`,
+but stochastic reward worsened to `-10.9904` and alpha/std collapsed. See
+`reports/sac_integration/16_env1024_3m_r3_results.md`. Do not jump directly
+to 10M; run an entropy/alpha decision review first.

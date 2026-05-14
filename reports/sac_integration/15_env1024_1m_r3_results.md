@@ -171,6 +171,16 @@ Versus env1024 65k capacity benchmark:
 - No traceback, OOM, fatal CUDA/XLA, checkpoint failure, eval failure, or NaN
   was observed.
 
+## Follow-Up: 3M R3
+
+The bounded 1024-env 3M R3 continuation has completed. It reached `2999296`
+env steps, passed checkpoint readiness, and passed 5-seed both-mode eval with
+no NaN flags. Deterministic reward improved versus this 1M run
+`-4.9891 -> -2.3314`, but stochastic reward worsened
+`-6.7546 -> -10.9904` and entropy collapsed (`alpha=0.000766`,
+`log_std=-0.9573`, `std=0.4106`). See
+`reports/sac_integration/16_env1024_3m_r3_results.md`.
+
 ## Interpretation
 
 Runtime stability supports `1024 envs + replay1M + R3 + UTD~4` on the 12GB

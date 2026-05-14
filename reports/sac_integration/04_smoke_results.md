@@ -1,6 +1,61 @@
 # Smoke Results
 
-Status: updated on 2026-05-14 after the bounded 1024-env 1M R3 run.
+Status: updated on 2026-05-14 after the bounded 1024-env 3M R3 run.
+
+## 2026-05-14 Bounded 1024-Env 3M R3 Run
+
+- Scope: bounded high-parallel 3M validation with R3 settings; no 10M, code
+  change, or report change was performed during the run.
+- Runtime stability: PASS. `1024 envs + replay1M + R3 + UTD~4` fits the 12GB
+  GPU through 3M env steps.
+- Policy quality: mixed. Deterministic eval recovered strongly, but stochastic
+  eval degraded and alpha/std collapsed severely.
+- Checkpoint:
+  `./logs/sac_lift_gpu_3m_env1024_r3_b256_g16_replay1m/sac_lift_step_2999296.pkl`
+- Eval JSONs: `./logs/sac_eval_env1024_3m_r3_multiseed/`
+- Checkpoint exists at `15,441,267` bytes; readiness PASS.
+- Five eval JSONs: all deterministic/stochastic `EVAL_OK`; all action/reward/obs
+  NaN flags false.
+- GPU memory: pre-run `853MiB`; during train `9838MiB / 12282MiB`; post-train
+  `853MiB`.
+- No traceback, OOM, fatal CUDA/XLA, checkpoint failure, eval failure, or NaN
+  was observed.
+
+Training summary:
+
+| env_steps | gradient_steps | wall_time | sps | actor_loss | critic_loss | alpha | log_alpha | q | target_q |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 2999296 | 46624 | 914.5063s | 3279.6889 | -1.5595 | 0.01014 | 0.000766 | -7.1739 | 1.6108 | 1.5903 |
+
+Actor and regularization summary:
+
+| Metric | Final | Interval |
+|---|---:|---:|
+| actor mean abs | 0.2071 | 0.2472 |
+| deterministic action abs | 0.1845 | 0.2164 |
+| log_std mean | -0.9573 | -0.4745 |
+| std mean | 0.4106 | 0.6539 |
+| sampled action abs | 0.3641 | 0.4712 |
+| deterministic action saturation 0.95 | 0.00337 | 0.00430 |
+| deterministic action L2 | 0.06880 | 0.09112 |
+| actor mean L2 | 0.11501 | 0.15248 |
+| actor regularization loss | 0.04015 | 0.05318 |
+
+Eval aggregate:
+
+| Mode | Reward Avg | Reward SD | Reward Min Avg | Reward Max Avg | Action Abs | Mean Abs | Log Std | Std Mean | Sat 0.95 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| deterministic | -2.3314 | 1.9412 | -18.3913 | 9.0293 | 0.1572 | 0.1739 | -0.8741 | 0.4443 | 0.00255 |
+| stochastic | -10.9904 | 2.5724 | -35.7932 | -3.1370 | 0.3616 | 0.1970 | -0.9378 | 0.4188 | 0.00463 |
+
+Interpretation: this is the first strong deterministic-policy improvement
+signal. Versus 1M R3, deterministic reward improved `-4.9891 -> -2.3314`,
+actor mean abs improved `0.2299 -> 0.2071`, and deterministic action abs
+improved `0.2046 -> 0.1845`. But stochastic reward worsened
+`-6.7546 -> -10.9904`, alpha collapsed `0.01231 -> 0.000766`, log_std
+collapsed `-0.2881 -> -0.9573`, and std collapsed `0.7602 -> 0.4106`.
+Do not jump directly to 10M; next step should be an entropy/alpha decision
+review and deterministic render helper planning.
 
 ## 2026-05-14 Bounded 1024-Env 1M R3 Run
 
@@ -54,8 +109,8 @@ UTD~4`. Policy quality remains unresolved: versus R3 250k, actor mean abs
 rose `0.1630 -> 0.2299`, deterministic action abs rose `0.1556 -> 0.2046`,
 log_std narrowed `-0.1709 -> -0.2881`, deterministic reward worsened
 `-3.7941 -> -4.9891`, and stochastic reward worsened `-5.9802 -> -6.7546`.
-Do not jump directly to 10M; next step should be a decision review between a
-bounded 3M continuation and further diagnostic/regularization adjustment.
+This 1M recommendation is superseded by the 3M result above. Do not jump
+directly to 10M; next step should be an entropy/alpha decision review.
 
 ## 2026-05-14 High-Parallel Capacity Benchmark
 

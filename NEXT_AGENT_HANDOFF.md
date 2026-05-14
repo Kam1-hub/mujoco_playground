@@ -18,8 +18,8 @@ domain randomization, or fine-tuning as part of the current validation phase.
 
 - Path: `/home/admin/projects/mujoco_playground/g1_sac_dev`
 - Branch: `sac-integration`
-- Latest recorded diagnostic state: bounded 1024-env 1M R3 run after the
-  high-parallel 512/1024/2048 capacity benchmark;
+- Latest recorded diagnostic state: bounded 1024-env 3M R3 run after the
+  high-parallel 512/1024/2048 capacity benchmark and 1M follow-up;
   use `git log --oneline -5` for the exact commit hash.
 - Remote: `origin https://github.com/Kam1-hub/mujoco_playground.git`
 - Last known pushed branch: `sac-integration`
@@ -193,11 +193,17 @@ Current validated ladder:
   successful `1024`-env 1M run and shows the setup fits in 12GB VRAM, but it is
   not a policy-quality breakthrough because reward regressed versus R3 250k
   and actor mean/std drift continued.
+- Bounded 1024-env 3M R3 run: PASS runtime/checkpoint/eval. It is the first
+  strong deterministic-policy improvement signal: deterministic 5-seed reward
+  improved versus 1M from `-4.9891` to `-2.3314` and versus R3 250k from
+  `-3.7941` to `-2.3314`. However stochastic reward worsened to `-10.9904`
+  and alpha/std collapsed (`alpha=0.000766`, `log_std=-0.9573`,
+  `std=0.4106`), so SAC stability is not yet declared.
 - Action joint mapping diagnostic: PASS.
 
 Still not validated:
 
-- 3M/10M training.
+- 10M training.
 - Full performance benchmark.
 - PPO comparison.
 - Domain randomization.
@@ -732,6 +738,11 @@ Both-mode eval diagnostic:
   `9838MiB / 12282MiB`, but deterministic reward worsened versus R3 250k
   `-3.7941 -> -4.9891` and stochastic reward worsened
   `-5.9802 -> -6.7546`, so it is not a policy-quality breakthrough.
+- Bounded 1024-env 3M R3 has run and passed runtime/checkpoint/eval gates. It
+  reached `2999296` env steps with `3279.6889` SPS and similar peak training
+  memory around `9838MiB / 12282MiB`. Deterministic reward improved strongly
+  to `-2.3314`, but stochastic reward worsened to `-10.9904` and entropy
+  collapsed (`alpha=0.000766`, `log_std=-0.9573`, `std=0.4106`).
 - Action joint mapping now links the 500k deterministic top action dimensions
   mainly to right ankle roll/pitch, waist pitch, right knee, and hip roll. See
   `reports/sac_integration/13_action_joint_mapping_diagnostic.md`.
@@ -746,10 +757,8 @@ Both-mode eval diagnostic:
 1. Do read-only status checks.
 2. Read this file and `reports/sac_integration/09_phase_summary_and_risks.md`.
 3. Review `reports/sac_integration/12_alpha_entropy_ablation_plan.md`.
-4. Plan a bounded 1024-env 1M run with R3 settings,
-   `grad_updates_per_step=16`, `batch_size=256`, and initial replay cap
-   `max_replay_size=1000000`.
-5. Do not draft or execute 3M or 10M automatically.
+4. Review the bounded 1024-env 3M R3 result before any longer run.
+5. Do not draft or execute 10M automatically.
 
 Do not start long training automatically. Do not modify reward, action scale,
 Kp, domain randomization, fine-tuning, PPO, or RSL.
@@ -804,7 +813,7 @@ status checks: pwd, git status --short --branch, git log --oneline -5,
 git remote -v, and git check-ignore -v logs .venv
 g1_env/external_deps/mujoco_menagerie || true.
 
-Current HEAD should include the report commit for the bounded 1024-env 1M R3
+Current HEAD should include the report commit for the bounded 1024-env 3M R3
 run unless newer report commits exist. GPU 10k smoke, deterministic eval smoke, GPU 50k
 sanity/eval, GPU 100k sanity/eval, GPU 250k sanity/eval, GPU 500k sanity/eval,
 100k/250k/500k both-mode eval diagnostic, and full action distribution /
@@ -814,13 +823,12 @@ A4 500k, and A4 750k have passed runtime gates, but A4 750k worsened drift and
 eval quality. Fresh 100k R1 was too weak; fresh 100k R2/R3 found R3 as the
 strongest candidate; bounded R3 250k has now passed and retained drift control.
 The high-parallel 512/1024/2048 capacity benchmark has passed, and 1024 envs is
-now validated at bounded 1M runtime/checkpoint/eval scale. The 1M result is not
-a policy-quality breakthrough.
+now validated at bounded 1M and 3M runtime/checkpoint/eval scale. The 3M
+result is the first strong deterministic-policy improvement signal, but
+stochastic eval degraded and alpha/std collapsed.
 
 Do not run training, eval, preflight, installs, downloads, or git commits unless
-explicitly asked. Next recommended work is a decision review between a bounded
-3M continuation with the stable 1024-env setup and further diagnostic or
-regularization adjustment because 1M reward worsened. Do not start 3M or 10M without a
-separate resource/stop-condition plan. Do not change reward, action_scale, Kp,
-domain randomization, fine-tuning, PPO, or RSL.
+explicitly asked. Next recommended work is an entropy/alpha decision review and
+deterministic render helper planning before any 10M run. Do not change reward,
+action_scale, Kp, domain randomization, fine-tuning, PPO, or RSL.
 ```

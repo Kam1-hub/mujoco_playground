@@ -1,6 +1,6 @@
 # Known Issues
 
-Status: updated on 2026-05-14 after the bounded 1024-env 1M R3 run.
+Status: updated on 2026-05-14 after the bounded 1024-env 3M R3 run.
 
 ## Open
 
@@ -10,6 +10,7 @@ Status: updated on 2026-05-14 after the bounded 1024-env 1M R3 run.
 | First JIT latency can look like a hang | validation noise | OPEN_NON_BLOCKING | WSL2/JAX first compile may take minutes. | Record wall time and wait through first compile before classifying a failure. |
 | Route B actual env steps may be lower than requested | reporting | OPEN_NON_BLOCKING | Training loop uses `num_timesteps // num_envs`; `10000` with `128` envs yields `9984`. | Record actual `env_steps` and checkpoint filename; do not assume target equals actual. |
 | Replay buffer scale can become the SAC VRAM bottleneck | memory | OPEN | Route B stores about 671 float32 values per transition; 1M raw replay is about 2.5-2.7 GB before JAX/XLA overhead. | Keep first smoke at `max_replay_size=8192`; increase only after measured GPU smoke. |
+| 1024-env 3M R3 is runtime stable with deterministic recovery but entropy collapse | policy diagnostics | OPEN | Bounded 1024-env 3M R3 returned `TRAIN_OK`, passed checkpoint readiness, used about `9838MiB / 12282MiB` during training, and completed 5-seed both-mode eval with no NaN flags. Deterministic reward improved versus 1M `-4.9891 -> -2.3314`, but stochastic reward worsened `-6.7546 -> -10.9904`, alpha collapsed `0.01231 -> 0.000766`, log_std narrowed `-0.2881 -> -0.9573`, and std fell `0.7602 -> 0.4106`. | Do an entropy/alpha decision review before any 10M run. Consider log_std/alpha floor or entropy ablation design and deterministic render helper planning. |
 | 1024-env 1M R3 is runtime stable but not a policy-quality breakthrough | validation scope | OPEN | Bounded 1024-env 1M R3 returned `TRAIN_OK`, passed checkpoint readiness, used about `9838MiB / 12282MiB` during training, and completed 5-seed both-mode eval with no NaN flags. However reward regressed versus R3 250k: deterministic `-3.7941 -> -4.9891`, stochastic `-5.9802 -> -6.7546`; actor mean abs rose `0.1630 -> 0.2299` and log_std narrowed `-0.1709 -> -0.2881`. | Do a decision review before any 3M continuation or further regularization change. Do not jump directly to 10M. |
 | 500k metrics require follow-up diagnostics | training dynamics | OPEN_NON_BLOCKING | At 500k, alpha dropped to about `0.0080`; bounded deterministic eval reward worsened from `-4.27974` at 250k to `-4.69107`; critic loss stayed finite/low and Q/target Q decreased to about `3.3`. | Treat 500k as sanity PASS, not a failure. Before any 750k/1M run, diagnose actor mean/action distribution/reward components and keep watching alpha/log-alpha dynamics. |
 | Deterministic `tanh(mean)` path degrades while stochastic sampled eval does not | policy diagnostics | OPEN | Both-mode eval across 100k/250k/500k showed deterministic reward mean `-4.2218 -> -4.4585 -> -4.8476`, while stochastic reward mean improved `-6.4616 -> -6.1954 -> -5.9091`. Deterministic action magnitude increased `0.1823 -> 0.2148 -> 0.3029`. | Do not run 1M automatically. Continue actor mean / action distribution / reward-component diagnostics or design review. |
@@ -93,7 +94,7 @@ Status: updated on 2026-05-14 after the bounded 1024-env 1M R3 run.
 - Fresh 100k actor-regularization R2/R3 coefficient sweep is validated. R3 is
   the best current 100k regularization candidate, but its higher critic loss
   makes a decision review necessary before any bounded 250k extension.
-- 3M/10M, full eval benchmark, and PPO comparison are still `NOT VALIDATED`.
+- 10M, full eval benchmark, and PPO comparison are still `NOT VALIDATED`.
 - The 500k sanity PASS exposed a watch item: alpha declined to about `0.0080`
   and deterministic reward worsened versus 250k. Both-mode eval suggests the
   next question is actor mean / action distribution behavior, not a longer run.

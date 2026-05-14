@@ -53,7 +53,8 @@ Runtime artifacts are local and ignored. Do not commit `logs/`, `.venv/`,
 | Bounded R3 250k actor-regularization extension | PASS_RUNTIME_CANDIDATE_RETAINED | `./logs/sac_lift_gpu_250k_actor_reg_te0p25_alr1e4_l2_0p5_mean_0p05_s1/sac_lift_step_249984.pkl` |
 | High-parallel 512/1024/2048 capacity benchmark | PASS_CAPACITY_1024_SELECTED | `reports/sac_integration/14_high_parallel_capacity_results.md` |
 | Bounded 1024-env 1M R3 run | PASS_RUNTIME_UNCLEAN_TREND | `./logs/sac_lift_gpu_1m_env1024_r3_b256_g16_replay1m/sac_lift_step_999424.pkl` |
-| 3M/10M training | NOT VALIDATED | Requires decision review, resource plan, and stop conditions |
+| Bounded 1024-env 3M R3 run | PASS_RUNTIME_MIXED_POLICY | `./logs/sac_lift_gpu_3m_env1024_r3_b256_g16_replay1m/sac_lift_step_2999296.pkl` |
+| 10M training | NOT VALIDATED | Requires entropy/alpha decision review, resource plan, and stop conditions |
 
 ## Completed Outcomes
 
@@ -141,6 +142,15 @@ Runtime artifacts are local and ignored. Do not commit `logs/`, `.venv/`,
   deterministic reward worsened versus R3 250k `-3.7941 -> -4.9891`,
   stochastic reward worsened `-5.9802 -> -6.7546`, actor mean abs rose
   `0.1630 -> 0.2299`, and log_std narrowed `-0.1709 -> -0.2881`.
+- Validated a bounded 1024-env 3M R3 run. The run produced checkpoint
+  `./logs/sac_lift_gpu_3m_env1024_r3_b256_g16_replay1m/sac_lift_step_2999296.pkl`,
+  passed checkpoint readiness, and passed 5-seed both-mode eval with no
+  action/reward/obs NaN flags. It is a runtime stability PASS and the first
+  strong deterministic-policy improvement signal: deterministic reward improved
+  versus 1M `-4.9891 -> -2.3314` and versus R3 250k `-3.7941 -> -2.3314`.
+  However stochastic reward worsened to `-10.9904`, alpha collapsed to
+  `0.000766`, log_std collapsed to `-0.9573`, and std fell to `0.4106`.
+  This blocks any automatic 10M run and requires entropy/alpha review.
 
 ### Full Action Diagnostic Summary
 
@@ -782,11 +792,14 @@ It is reasonable to claim:
   policy-quality conclusions. High-parallel capacity testing selected 1024
   envs, and the bounded 1024-env 1M R3 run passed runtime/checkpoint/eval
   gates.
+- The bounded 1024-env 3M R3 run also passed runtime/checkpoint/eval gates and
+  improved deterministic eval strongly, but stochastic eval worsened and
+  alpha/std collapsed.
 - Runtime artifacts are ignored and have not been committed.
 
 It is not yet reasonable to claim:
 
-- 3M/10M training stability.
+- 10M training stability.
 - Any final policy quality or solved task performance.
 - Tuned rewards, tuned action scale, tuned stiffness/damping, or optimized SAC
   hyperparameters.
@@ -969,26 +982,27 @@ The 1024-env capacity run was fastest and stable. The 2048-env run is feasible
 but slower in this configuration, so 1024 was used for the bounded 1M
 follow-up.
 
-## Post-1M Decision Plan
+## Post-3M Decision Plan
 
-Do not automatically jump to 3M or 10M from this report update. The bounded
-1024-env 1M R3 run proved the high-parallel runtime path and 1M replay cap are
-feasible on the 12GB GPU, but reward regressed versus R3 250k and actor
-mean/std drift continued.
+Do not automatically jump to 10M from this report update. The bounded 1024-env
+3M R3 run proved the high-parallel runtime path and 1M replay cap remain
+feasible on the 12GB GPU and produced the first strong deterministic-policy
+improvement signal. However, alpha/std collapsed and stochastic eval degraded
+severely.
 
-The next recommended step is a decision review between:
+The next recommended step is a decision review focused on:
 
-1. bounded 3M continuation using the same stable high-parallel setup to test
-   longer-horizon gait learning;
-2. diagnostic or regularization adjustment before 3M because the 1M reward
-   trend worsened.
+1. entropy/alpha handling, including possible alpha/log_std floor or a
+   controlled entropy ablation;
+2. deterministic render helper for visual inspection;
+3. whether the deterministic recovery justifies a carefully gated longer run.
 
-Any 3M plan should include:
+Any 10M plan should include:
 
 - explicit resource budget
 - fresh logdir and checkpoint path
 - checkpoint readiness gate
-- bounded deterministic eval command
+- bounded both-mode eval command
 - stop conditions for NaN/Inf/OOM/fatal CUDA/env/checkpoint/eval failures
 - no logs/checkpoints/.venv/menagerie committed
 - clean ignored-artifact audit

@@ -1,6 +1,6 @@
 # Next Actions
 
-Status: updated on 2026-05-14 after the bounded 1024-env 1M R3 run.
+Status: updated on 2026-05-14 after the bounded 1024-env 3M R3 run.
 
 ## Immediate State
 
@@ -183,16 +183,25 @@ Status: updated on 2026-05-14 after the bounded 1024-env 1M R3 run.
   deterministic reward worsened `-3.7941 -> -4.9891`, stochastic reward
   worsened `-5.9802 -> -6.7546`, actor mean abs rose `0.1630 -> 0.2299`, and
   log_std narrowed `-0.1709 -> -0.2881`.
+- Bounded 1024-env 3M R3 run passed runtime/checkpoint/eval gates. Checkpoint:
+  `./logs/sac_lift_gpu_3m_env1024_r3_b256_g16_replay1m/sac_lift_step_2999296.pkl`.
+- 3M result: runtime stability remains clean and deterministic policy eval
+  recovered strongly. Deterministic 5-seed reward improved from 1M
+  `-4.9891` to `-2.3314`, and from R3 250k `-3.7941` to `-2.3314`.
+  However stochastic reward worsened to `-10.9904`, alpha collapsed to
+  `0.000766`, log_std to `-0.9573`, and std to `0.4106`.
 
 ## Current Recommendation
 
 - Do not jump directly to 10M.
-- Do not declare stable SAC integration from the 1M result.
-- Next step should be a decision review:
-  - Option A: bounded 3M continuation using the same stable high-parallel setup
-    to test whether a longer horizon recovers gait learning.
-  - Option B: adjust diagnostics/regularization before 3M because 1M reward
-    worsened while actor mean/std drift continued.
+- Do not declare stable SAC integration from the 3M result.
+- Next step should be an entropy/alpha decision review before any 10M run:
+  - decide whether alpha/log_std need a floor or another entropy-handling
+    ablation;
+  - decide whether to run a bounded entropy ablation before longer training;
+  - plan a deterministic render helper for visual inspection;
+  - only then decide whether the deterministic improvement justifies a
+    carefully gated longer run.
 
 ## Completed WSL2 GPU Validation
 
@@ -355,9 +364,10 @@ Bounded deterministic eval after 500k:
 Artifacts remain ignored under `logs`; do not commit logs, checkpoints, `.venv`,
 or menagerie.
 
-## Current Recommended Next Step
+## Historical Post-Capacity Recommendation
 
-Do not run 3M or 10M training yet.
+This section is retained as historical context. The 1024-env 1M and 3M R3
+runs have now both been executed and recorded. Do not run 10M training yet.
 
 Fresh 100k alpha/entropy ablation A1/A3/A4, the multi-seed eval-only
 follow-up, the bounded fresh 250k, 500k, and 750k A4 extensions, the fresh 100k
@@ -367,15 +377,14 @@ capacity benchmark is also complete. All three capacity runs were `TRAIN_OK`
 and readiness PASS with sampled UTD preserved at about `4.0`; `1024` envs was
 fastest at `953.36` SPS, while `2048` envs was feasible but slower.
 
-1. Plan a bounded 1024-env 1M run with R3 settings, `batch_size=256`,
-   `grad_updates_per_step=16`, and replay cap initially
-   `max_replay_size=1000000`.
+1. Keep `1024 envs`, `batch_size=256`, `grad_updates_per_step=16`, and
+   `max_replay_size=1000000` as the proven high-parallel runtime baseline.
 2. Keep `2048` as feasible but not selected unless a later batch/update-ratio
    pass makes it faster and non-fragile.
-3. Only after the bounded 1M result, plan a multi-million ladder with
-   `num_timesteps` decoupled from `max_replay_size`.
+3. Treat the completed 3M result as mixed: deterministic recovery is strong,
+   but entropy collapse and stochastic degradation block automatic 10M.
 4. Do not use `max_replay_size=num_timesteps` for 5M or 10M runs on 12GB VRAM.
-5. Do not run 3M or 10M directly from this report update.
+5. Do not run 10M directly from this report update.
 6. Do not tune reward, `action_scale`, or Kp yet.
 
 ## Completed Both-Mode Eval Diagnostic
@@ -469,19 +478,20 @@ CPU, stop and report the CUDA/JAX blocker.
 
 ## Recommended Next Step
 
-The bounded 1024-env 1M R3 plan has now been executed and recorded. Do not
-automatically run 3M or 10M. The next useful step is a decision review using
-the 1M evidence:
+The bounded 1024-env 3M R3 result has now been executed and recorded. Do not
+automatically run 10M. The next useful step is a decision review using the 3M
+evidence:
 
-1. Runtime path: keep `1024 envs`, `batch_size=256`,
-   `grad_updates_per_step=16`, and `max_replay_size=1000000` for a bounded
-   3M continuation to test whether longer horizon recovers gait learning.
-2. Diagnostic path: adjust or review regularization/entropy diagnostics first
-   because the 1M result worsened reward versus R3 250k while actor mean/std
-   drift continued.
+1. Entropy path: review alpha/log_std handling because alpha collapsed to
+   `0.000766`, log_std to `-0.9573`, and stochastic reward worsened to
+   `-10.9904`.
+2. Inspection path: plan a render helper for deterministic visual inspection,
+   because deterministic eval improved strongly to `-2.3314`.
+3. Training path: only after that review, decide whether a carefully gated
+   longer run is justified.
 
-Any 3M plan must restate memory stop conditions and must not jump directly to
-10M.
+Any 10M plan must restate memory stop conditions, keep replay cap decoupled
+from `num_timesteps`, and must not change reward/action scale/Kp.
 
 ## Migration Reminders
 
