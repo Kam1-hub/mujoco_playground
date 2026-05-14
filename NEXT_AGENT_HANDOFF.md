@@ -18,8 +18,8 @@ domain randomization, or fine-tuning as part of the current validation phase.
 
 - Path: `/home/admin/projects/mujoco_playground/g1_sac_dev`
 - Branch: `sac-integration`
-- Latest recorded diagnostic state: bounded R3 250k actor-regularization
-  extension plus high-parallel 512/1024/2048 capacity benchmark;
+- Latest recorded diagnostic state: bounded 1024-env 1M R3 run after the
+  high-parallel 512/1024/2048 capacity benchmark;
   use `git log --oneline -5` for the exact commit hash.
 - Remote: `origin https://github.com/Kam1-hub/mujoco_playground.git`
 - Last known pushed branch: `sac-integration`
@@ -188,14 +188,17 @@ Current validated ladder:
   deterministic/stochastic eval versus R3 100k and A4 250k.
 - High-parallel 512/1024/2048 capacity benchmark: PASS. All three cases
   returned `TRAIN_OK`, wrote checkpoints, and passed readiness. `1024` envs was
-  fastest at `953.36` SPS and is the next bounded 1M candidate.
+  fastest at `953.36` SPS and was selected for the bounded 1M follow-up.
+- Bounded 1024-env 1M R3 run: PASS runtime/checkpoint/eval. It is the first
+  successful `1024`-env 1M run and shows the setup fits in 12GB VRAM, but it is
+  not a policy-quality breakthrough because reward regressed versus R3 250k
+  and actor mean/std drift continued.
 - Action joint mapping diagnostic: PASS.
 
 Still not validated:
 
-- 1M training.
+- 3M/10M training.
 - Full performance benchmark.
-- Bounded 1024-env 1M run.
 - PPO comparison.
 - Domain randomization.
 - Fine-tuning.
@@ -723,7 +726,12 @@ Both-mode eval diagnostic:
 - The earlier 128-env ladder is now runtime/diagnostic evidence, not a
   policy-quality conclusion for G1. The 512/1024/2048 env capacity benchmark
   has passed while preserving approximate sampled update-to-data ratio. `1024`
-  envs is now the best next bounded 1M candidate.
+  envs was selected for the bounded 1M follow-up.
+- Bounded 1024-env 1M R3 has run and passed runtime/checkpoint/eval gates. It
+  reached `999424` env steps with `3209.6723` SPS and peaked around
+  `9838MiB / 12282MiB`, but deterministic reward worsened versus R3 250k
+  `-3.7941 -> -4.9891` and stochastic reward worsened
+  `-5.9802 -> -6.7546`, so it is not a policy-quality breakthrough.
 - Action joint mapping now links the 500k deterministic top action dimensions
   mainly to right ankle roll/pitch, waist pitch, right knee, and hip roll. See
   `reports/sac_integration/13_action_joint_mapping_diagnostic.md`.
@@ -796,9 +804,8 @@ status checks: pwd, git status --short --branch, git log --oneline -5,
 git remote -v, and git check-ignore -v logs .venv
 g1_env/external_deps/mujoco_menagerie || true.
 
-Current HEAD should include the report commit for the R3 250k
-actor-regularization extension and high-parallel capacity benchmark unless
-newer report commits exist. GPU 10k smoke, deterministic eval smoke, GPU 50k
+Current HEAD should include the report commit for the bounded 1024-env 1M R3
+run unless newer report commits exist. GPU 10k smoke, deterministic eval smoke, GPU 50k
 sanity/eval, GPU 100k sanity/eval, GPU 250k sanity/eval, GPU 500k sanity/eval,
 100k/250k/500k both-mode eval diagnostic, and full action distribution /
 reward-component diagnostic have passed. Fresh 100k and fresh 250k actor drift
@@ -807,12 +814,13 @@ A4 500k, and A4 750k have passed runtime gates, but A4 750k worsened drift and
 eval quality. Fresh 100k R1 was too weak; fresh 100k R2/R3 found R3 as the
 strongest candidate; bounded R3 250k has now passed and retained drift control.
 The high-parallel 512/1024/2048 capacity benchmark has passed, and 1024 envs is
-the next bounded 1M candidate. 1M is not validated.
+now validated at bounded 1M runtime/checkpoint/eval scale. The 1M result is not
+a policy-quality breakthrough.
 
 Do not run training, eval, preflight, installs, downloads, or git commits unless
-explicitly asked. Next recommended work is a bounded 1024-env 1M plan using R3
-settings, `grad_updates_per_step=16`, `batch_size=256`, and initial replay cap
-`max_replay_size=1000000`. Do not start 3M or 10M without the 1M result and a
+explicitly asked. Next recommended work is a decision review between a bounded
+3M continuation with the stable 1024-env setup and further diagnostic or
+regularization adjustment because 1M reward worsened. Do not start 3M or 10M without a
 separate resource/stop-condition plan. Do not change reward, action_scale, Kp,
 domain randomization, fine-tuning, PPO, or RSL.
 ```

@@ -3,7 +3,10 @@
 Execution update: this plan has now been run. See
 `reports/sac_integration/14_high_parallel_capacity_results.md` for detailed
 CHECKPOINT AI results. All 512/1024/2048 cases returned `TRAIN_OK` and
-readiness PASS; 1024 envs was fastest and is the next bounded 1M candidate.
+readiness PASS; 1024 envs was fastest. The subsequent bounded 1024-env 1M R3
+run also completed as a runtime/checkpoint/eval PASS, but reward regressed
+versus R3 250k and actor drift continued; see
+`reports/sac_integration/15_env1024_1m_r3_results.md`.
 
 ## Context
 
@@ -179,8 +182,8 @@ Do not use `max_replay_size=num_timesteps` for huge runs by default.
 ## Current Recommendation
 
 The 512, 1024, and 2048 env capacity benchmark has been completed. `1024` envs
-is the current best next bounded 1M candidate because it was stable and fastest
-at `953.36` SPS. `2048` envs is feasible but slower in this benchmark. Do not
-jump directly to 3M or 10M; first run a bounded 1024-env 1M validation with R3
-settings, `grad_updates_per_step=16`, and a replay cap decoupled from future
-multi-million runs.
+was stable and fastest at `953.36` SPS. The follow-up 1024-env 1M R3 run also
+completed successfully at runtime with `999424` env steps and checkpoint/eval
+PASS. However, it did not improve policy quality versus R3 250k. Do not jump
+directly to 10M; first run a decision review between a bounded 3M continuation
+and diagnostic/regularization adjustment.

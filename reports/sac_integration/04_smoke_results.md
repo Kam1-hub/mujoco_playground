@@ -1,7 +1,61 @@
 # Smoke Results
 
-Status: updated on 2026-05-14 after the R3 250k actor-regularization extension
-and high-parallel capacity benchmark.
+Status: updated on 2026-05-14 after the bounded 1024-env 1M R3 run.
+
+## 2026-05-14 Bounded 1024-Env 1M R3 Run
+
+- Scope: bounded high-parallel 1M validation with R3 settings; no 3M/10M,
+  code change, or report change was performed during the run.
+- Runtime stability: PASS; this is the first successful bounded `1024`-env
+  `1M` R3 run.
+- Policy quality: not a breakthrough. Reward regressed versus R3 250k and
+  actor mean/std drift continued.
+- Checkpoint:
+  `./logs/sac_lift_gpu_1m_env1024_r3_b256_g16_replay1m/sac_lift_step_999424.pkl`
+- Eval JSONs: `./logs/sac_eval_env1024_1m_r3_multiseed/`
+- Checkpoint exists at about `15M`; readiness PASS; `policy_normalizer` and
+  `value_normalizer` present; `deterministic_eval_ready=true`.
+- Five eval JSONs: all `EVAL_OK`; all action/reward/obs NaN flags false.
+- GPU memory: pre-run `853MiB / 12282MiB`; during train
+  `9838MiB / 12282MiB`; post-train `853MiB / 12282MiB`; eval sample about
+  `1130MiB / 12282MiB`.
+- No traceback, OOM, fatal CUDA/XLA, checkpoint failure, eval failure, or NaN
+  was observed.
+
+Training summary:
+
+| env_steps | gradient_steps | wall_time | sps | actor_loss | critic_loss | alpha | log_alpha | q | target_q |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 999424 | 15376 | 311.3788s | 3209.6723 | -3.8164 | 0.0830 | 0.01231 | -4.3973 | 3.6304 | 3.6343 |
+
+Actor and regularization summary:
+
+| Metric | Final | Interval |
+|---|---:|---:|
+| actor mean abs | 0.2299 | 0.2083 |
+| deterministic action abs | 0.2046 | 0.1923 |
+| log_std mean | -0.2881 | -0.2291 |
+| std mean | 0.7602 | 0.8010 |
+| sampled action abs | 0.5073 | 0.5103 |
+| deterministic action saturation 0.95 | 0.00202 | 0.00046 |
+| deterministic action L2 | 0.08415 | 0.06840 |
+| actor mean L2 | 0.12882 | 0.09238 |
+| actor regularization loss | 0.04852 | 0.03882 |
+
+Eval aggregate:
+
+| Mode | Reward Avg | Reward SD | Reward Min Avg | Reward Max Avg | Action Abs | Mean Abs | Log Std | Std Mean | Sat 0.95 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| deterministic | -4.9891 | 0.5340 | -10.2290 | -3.4159 | 0.2043 | 0.2263 | -0.2867 | 0.7594 | 0.00107 |
+| stochastic | -6.7546 | 0.5407 | -12.4739 | -4.6233 | 0.4948 | 0.2364 | -0.3242 | 0.7341 | 0.0267 |
+
+Interpretation: runtime stability supports `1024 envs + replay1M + R3 +
+UTD~4`. Policy quality remains unresolved: versus R3 250k, actor mean abs
+rose `0.1630 -> 0.2299`, deterministic action abs rose `0.1556 -> 0.2046`,
+log_std narrowed `-0.1709 -> -0.2881`, deterministic reward worsened
+`-3.7941 -> -4.9891`, and stochastic reward worsened `-5.9802 -> -6.7546`.
+Do not jump directly to 10M; next step should be a decision review between a
+bounded 3M continuation and further diagnostic/regularization adjustment.
 
 ## 2026-05-14 High-Parallel Capacity Benchmark
 
@@ -25,7 +79,7 @@ Summary:
 | 1024 | 4.0 | 784 | 68.742s | 953.36 | 0.1217 | 0.04605 | 3.4970 | 3.4905 |
 | 2048 | 4.0 | 800 | 79.317s | 826.26 | 0.0706 | 0.04597 | 3.7519 | 3.7731 |
 
-Interpretation: `1024` envs is the best next bounded 1M candidate. It was
+Interpretation: `1024` envs was selected for the bounded 1M follow-up. It was
 fastest at `953.36` SPS and retained finite stable metrics with readiness PASS.
 `2048` envs is feasible but slower in this test; `512` envs is stable but
 slower. Full detail is in
@@ -995,7 +1049,7 @@ Current validation state:
 - 500k sanity: `PASS`
 - bounded A4 750k bridge: `PASS_RUNTIME_UNCLEAN_TREND`
 - both-mode eval diagnostic for 100k/250k/500k: `PASS`
-- 1M training: `NOT VALIDATED`
+- bounded 1024-env 1M R3: `PASS_RUNTIME_UNCLEAN_TREND`
 - deterministic eval smoke, 50k bounded eval, 100k bounded eval, 250k bounded
   eval, and 500k bounded eval: `PASS`; full eval benchmark: `NOT VALIDATED`
 - Risk note: alpha continued down from about `0.0187` at 250k to about

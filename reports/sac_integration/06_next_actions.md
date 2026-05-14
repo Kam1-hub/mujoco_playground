@@ -1,7 +1,6 @@
 # Next Actions
 
-Status: updated on 2026-05-14 after the R3 250k actor-regularization extension
-and high-parallel capacity benchmark.
+Status: updated on 2026-05-14 after the bounded 1024-env 1M R3 run.
 
 ## Immediate State
 
@@ -177,6 +176,23 @@ and high-parallel capacity benchmark.
 - High-parallel capacity results are recorded in
   `reports/sac_integration/14_high_parallel_capacity_results.md`: 512, 1024,
   and 2048 envs all passed, and 1024 envs was fastest.
+- Bounded 1024-env 1M R3 run passed runtime/checkpoint/eval gates. Checkpoint:
+  `./logs/sac_lift_gpu_1m_env1024_r3_b256_g16_replay1m/sac_lift_step_999424.pkl`.
+- 1M result: runtime stability supports `1024 envs + replay1M + R3 + UTD~4`
+  on the 12GB GPU, but policy quality is not solved. Versus R3 250k,
+  deterministic reward worsened `-3.7941 -> -4.9891`, stochastic reward
+  worsened `-5.9802 -> -6.7546`, actor mean abs rose `0.1630 -> 0.2299`, and
+  log_std narrowed `-0.1709 -> -0.2881`.
+
+## Current Recommendation
+
+- Do not jump directly to 10M.
+- Do not declare stable SAC integration from the 1M result.
+- Next step should be a decision review:
+  - Option A: bounded 3M continuation using the same stable high-parallel setup
+    to test whether a longer horizon recovers gait learning.
+  - Option B: adjust diagnostics/regularization before 3M because 1M reward
+    worsened while actor mean/std drift continued.
 
 ## Completed WSL2 GPU Validation
 
@@ -453,25 +469,19 @@ CPU, stop and report the CUDA/JAX blocker.
 
 ## Recommended Next Step
 
-Do not automatically run 3M or 10M. The next useful step is a bounded 1024-env
-1M plan using R3 250k and capacity-benchmark evidence:
+The bounded 1024-env 1M R3 plan has now been executed and recorded. Do not
+automatically run 3M or 10M. The next useful step is a decision review using
+the 1M evidence:
 
-- `num_envs=1024`
-- `batch_size=256`
-- `grad_updates_per_step=16`
-- `max_replay_size=1000000`
-- R3 coefficients:
-  `target_entropy_coef=0.25`, `alpha_learning_rate=1e-4`,
-  `deterministic_action_l2_coef=0.5`, `actor_mean_l2_coef=0.05`
+1. Runtime path: keep `1024 envs`, `batch_size=256`,
+   `grad_updates_per_step=16`, and `max_replay_size=1000000` for a bounded
+   3M continuation to test whether longer horizon recovers gait learning.
+2. Diagnostic path: adjust or review regularization/entropy diagnostics first
+   because the 1M result worsened reward versus R3 250k while actor mean/std
+   drift continued.
 
-Recommended diagnostic questions:
-
-1. Does 1024 envs remain stable for 1M with `grad_updates_per_step=16`?
-2. Does `max_replay_size=1000000` fit the 12GB GPU with XLA/env overhead?
-3. Do losses, alpha, Q, actor drift, and regularization metrics remain finite?
-4. Does checkpoint readiness pass after the bounded 1M run?
-
-Do not jump into 3M or 10M from this report update.
+Any 3M plan must restate memory stop conditions and must not jump directly to
+10M.
 
 ## Migration Reminders
 

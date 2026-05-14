@@ -58,13 +58,20 @@ failure, or unignored artifact was reported.
 
 - Sample UTD was preserved at about `4.0` by scaling
   `grad_updates_per_step` to `8 / 16 / 32` for `512 / 1024 / 2048` envs.
-- `1024` envs is the best next bounded 1M candidate: it was fastest at
+- `1024` envs was the best bounded 1M candidate: it was fastest at
   `953.36` SPS, passed readiness, reported no NaN/Inf, and kept actor and
   regularization metrics stable.
 - `2048` envs is feasible, but it was slower than `1024` envs in this test, so
   it should not replace `1024` yet.
 - `512` envs is stable but slower.
-- The next action should be a bounded 1024-env 1M run using R3 settings,
-  `grad_updates_per_step=16`, and a replay cap decoupled from future
-  multi-million training. The initial 1M replay cap can be
-  `max_replay_size=1000000`; do not jump directly to 3M or 10M.
+- The selected follow-up was a bounded 1024-env 1M run using R3 settings,
+  `grad_updates_per_step=16`, and `max_replay_size=1000000`; see below.
+
+## Follow-Up
+
+The bounded 1024-env 1M R3 follow-up has now completed. It reached `999424`
+env steps, passed checkpoint readiness, and passed 5-seed both-mode eval with
+no NaN flags. Runtime stability supports the high-parallel configuration, but
+policy quality did not improve versus R3 250k. See
+`reports/sac_integration/15_env1024_1m_r3_results.md` for details before
+planning any 3M or 10M run.

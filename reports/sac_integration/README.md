@@ -22,6 +22,7 @@ Required reports:
 - `13_action_joint_mapping_diagnostic.md`
 - `13_high_parallel_capacity_plan.md`
 - `14_high_parallel_capacity_results.md`
+- `15_env1024_1m_r3_results.md`
 
 Repo-root continuation handoff:
 

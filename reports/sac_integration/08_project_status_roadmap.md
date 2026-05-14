@@ -1,7 +1,6 @@
 # G1 SAC Integration Status And Roadmap
 
-Status: updated on 2026-05-14 after the R3 250k actor-regularization extension
-and high-parallel capacity benchmark.
+Status: updated on 2026-05-14 after the bounded 1024-env 1M R3 run.
 
 ## 1. Mission
 
@@ -195,10 +194,11 @@ Validation ladder:
 
 Status:
 
-- Steps 1 through 27 are complete.
-- Step 28 is the next recommended bounded run.
+- Steps 1 through 28 are complete.
+- Step 28 is runtime/checkpoint/eval PASS but not a policy-quality
+  breakthrough.
 - Step 29 remains `NOT VALIDATED` and requires separate resource and
-  stop-condition planning after the bounded 1M result.
+  stop-condition planning after a decision review.
 
 ### Phase 6: Reports, Commits, Migration Handoff
 
@@ -254,8 +254,8 @@ WSL2 target workspace state:
 
 - Path: `/home/admin/projects/mujoco_playground/g1_sac_dev`
 - Branch: `sac-integration...origin/sac-integration`
-- Latest train-time actor drift diagnostic code baseline before this report
-  update: `202c6a9 Add SAC actor drift train diagnostics`
+- Latest recorded validation state before this report update: bounded
+  `1024`-env 1M R3 runtime/checkpoint/eval PASS, with policy-quality caveat.
 - Menagerie: present at `1b86ece576591213e2b666ebf59508454200ca97`
 - Python env: present under ignored `.venv`
 - CUDA JAX: validated, backend `gpu`, device `cuda:0`
@@ -589,19 +589,17 @@ action/reward/obs NaN: false/false/false
 json: ./logs/sac_eval_smoke/eval_4x200.json
 ```
 
-After report review, only then consider with explicit user confirmation:
+After report review, only then consider:
 
-- decision review before any fresh 500k actor drift diagnostic
-- 1M decision/readiness review only after the deterministic policy issue is
-  understood
-- PPO comparison
+- decision review before any bounded 3M continuation;
+- diagnostic or regularization adjustment if prioritizing the 1M reward
+  regression;
+- PPO comparison after SAC policy-quality gates become meaningful.
 
-Do not jump directly to 1M training. The 4x200 eval is a smoke, not a full
-benchmark. The 50k, 100k, 250k, and 500k sanity runs are now validated. The
-both-mode diagnostic shows deterministic `tanh(mean)` degradation while
-sampled stochastic eval does not degrade. Fresh 100k train-time diagnostics now
-show actor mean drift forming early, and fresh 250k shows the drift amplifies in
-absolute level. 1M remains `NOT VALIDATED`.
+Do not jump directly to 10M training. The 4x200 eval is a smoke, not a full
+benchmark. The 50k, 100k, 250k, and 500k sanity runs are runtime/diagnostic
+gates. The bounded 1024-env 1M R3 run now validates the high-parallel runtime
+path, but reward regressed versus R3 250k and actor mean/std drift continued.
 
 ## 11. 50k Sanity Result
 
@@ -927,11 +925,10 @@ Known warnings and risk notes:
 - This is not a runtime failure, but alpha decline and eval degradation must
   block any automatic jump to 1M.
 
-1M training remains `NOT VALIDATED`. Consider 1M only after a separate
-decision/readiness review with a resource budget, fresh logdir, checkpoint
-readiness gate, bounded eval command, and stop-condition plan. The review should
-include alpha floor, target entropy/log-alpha dynamics, Q drift, critic loss,
-eval reward trend, and NaN flags.
+This older 500k signal has now been superseded by bounded high-parallel R3
+work. The 1024-env 1M R3 run is runtime/checkpoint/eval PASS but still shows
+policy-quality regression versus R3 250k, so a decision review is required
+before any 3M continuation or regularization adjustment.
 
 ## 15. Fresh 100k Actor Drift Diagnostic
 
@@ -1264,10 +1261,31 @@ kept near `4.0` by scaling `grad_updates_per_step=8/16/32`.
 | 1024 | 16 | 953.36 | 0.1217 | 0.04605 | 3.4970 | 3.4905 | PASS |
 | 2048 | 32 | 826.26 | 0.0706 | 0.04597 | 3.7519 | 3.7731 | PASS |
 
-`1024` envs is the best next bounded 1M candidate. `2048` is feasible but
+`1024` envs was selected for the bounded 1M follow-up. `2048` is feasible but
 slower in this benchmark; `512` is stable but slower. Full details are recorded
 in `reports/sac_integration/14_high_parallel_capacity_results.md`.
 
-## 24. Current Position In One Sentence
+## 24. Bounded 1024-Env 1M R3 Result
 
-SAC Route B is implemented; CPU tiny smoke, WSL2 GPU preflight, Route B GPU 10k smoke, normalizer-ready checkpoint validation, bounded deterministic eval smoke, 50k sanity/eval, 100k sanity/eval, 250k sanity/eval, 500k sanity/eval, both-mode eval diagnostic, full action diagnostic, fresh 100k/250k train-time actor drift diagnostics, fresh 100k alpha/entropy ablation diagnostics, the A1/A3/A4 multi-seed eval-only ablation diagnostic, bounded fresh 250k/500k/750k A4 extensions, fresh 100k actor-regularization R1, fresh 100k actor-regularization R2/R3, bounded R3 250k, and the 512/1024/2048 high-parallel capacity benchmark have passed runtime gates; 1024 envs is the next bounded 1M candidate; 1M, full eval benchmarking, domain randomization, and fine-tuning remain `NOT VALIDATED`.
+The bounded 1024-env 1M R3 run passed runtime/checkpoint/eval gates:
+
+- checkpoint:
+  `./logs/sac_lift_gpu_1m_env1024_r3_b256_g16_replay1m/sac_lift_step_999424.pkl`
+- actual env steps: `999424`
+- gradient steps: `15376`
+- SPS: `3209.6723`
+- checkpoint readiness: PASS
+- five both-mode eval JSONs under `./logs/sac_eval_env1024_1m_r3_multiseed/`
+  all returned `EVAL_OK` with no action/reward/obs NaN flags
+- peak training memory: about `9838MiB / 12282MiB`
+
+Interpretation: runtime stability supports `1024 envs + replay1M + R3 +
+UTD~4`, but this is not a policy-quality breakthrough. Versus R3 250k,
+deterministic reward worsened `-3.7941 -> -4.9891`, stochastic reward worsened
+`-5.9802 -> -6.7546`, actor mean abs rose `0.1630 -> 0.2299`, deterministic
+action abs rose `0.1556 -> 0.2046`, and log_std narrowed
+`-0.1709 -> -0.2881`.
+
+## 25. Current Position In One Sentence
+
+SAC Route B is implemented; CPU tiny smoke, WSL2 GPU preflight, Route B GPU 10k smoke, normalizer-ready checkpoint validation, bounded deterministic eval smoke, 50k sanity/eval, 100k sanity/eval, 250k sanity/eval, 500k sanity/eval, both-mode eval diagnostic, full action diagnostic, fresh 100k/250k train-time actor drift diagnostics, fresh 100k alpha/entropy ablation diagnostics, the A1/A3/A4 multi-seed eval-only ablation diagnostic, bounded fresh 250k/500k/750k A4 extensions, fresh 100k actor-regularization R1, fresh 100k actor-regularization R2/R3, bounded R3 250k, the 512/1024/2048 high-parallel capacity benchmark, and bounded 1024-env 1M R3 have passed runtime/checkpoint/eval gates; 1M is not a policy-quality breakthrough; 3M/10M, full eval benchmarking, domain randomization, and fine-tuning remain `NOT VALIDATED`.

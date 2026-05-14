@@ -52,7 +52,8 @@ Runtime artifacts are local and ignored. Do not commit `logs/`, `.venv/`,
 | Fresh 100k actor-regularization R2/R3 | PASS_RUNTIME_CANDIDATE_FOUND | `./logs/sac_eval_actor_reg_100k_multiseed/`, `15` JSON outputs including R1/R2/R3 |
 | Bounded R3 250k actor-regularization extension | PASS_RUNTIME_CANDIDATE_RETAINED | `./logs/sac_lift_gpu_250k_actor_reg_te0p25_alr1e4_l2_0p5_mean_0p05_s1/sac_lift_step_249984.pkl` |
 | High-parallel 512/1024/2048 capacity benchmark | PASS_CAPACITY_1024_SELECTED | `reports/sac_integration/14_high_parallel_capacity_results.md` |
-| 1M training | NOT VALIDATED | Requires explicit user confirmation and resource/stop plan |
+| Bounded 1024-env 1M R3 run | PASS_RUNTIME_UNCLEAN_TREND | `./logs/sac_lift_gpu_1m_env1024_r3_b256_g16_replay1m/sac_lift_step_999424.pkl` |
+| 3M/10M training | NOT VALIDATED | Requires decision review, resource plan, and stop conditions |
 
 ## Completed Outcomes
 
@@ -130,8 +131,16 @@ Runtime artifacts are local and ignored. Do not commit `logs/`, `.venv/`,
   and critic loss improved `0.1684 -> 0.0536`.
 - Recorded and executed the high-parallel capacity plan. The benchmark treats
   128-env runs as runtime/diagnostic evidence, keeps sampled UTD near `4.0`,
-  and shows 1024 envs as the best next bounded 1M candidate. All 512/1024/2048
-  runs returned `TRAIN_OK`, wrote checkpoints, and passed readiness.
+  and selected 1024 envs for the bounded 1M follow-up. All 512/1024/2048 runs
+  returned `TRAIN_OK`, wrote checkpoints, and passed readiness.
+- Validated a bounded 1024-env 1M R3 run. The run produced checkpoint
+  `./logs/sac_lift_gpu_1m_env1024_r3_b256_g16_replay1m/sac_lift_step_999424.pkl`,
+  passed checkpoint readiness, and passed 5-seed both-mode eval with no
+  action/reward/obs NaN flags. It is a runtime stability PASS for
+  `1024 envs + replay1M + R3 + UTD~4`, but policy quality is not solved:
+  deterministic reward worsened versus R3 250k `-3.7941 -> -4.9891`,
+  stochastic reward worsened `-5.9802 -> -6.7546`, actor mean abs rose
+  `0.1630 -> 0.2299`, and log_std narrowed `-0.1709 -> -0.2881`.
 
 ### Full Action Diagnostic Summary
 
@@ -770,12 +779,14 @@ It is reasonable to claim:
   5-seed eval gates. R3 retained actor drift control at 250k and improved
   deterministic/stochastic eval versus R3 100k and A4 250k.
 - The earlier 128-env ladder is runtime/diagnostic evidence, not enough for G1
-  policy-quality conclusions. High-parallel capacity testing is now planned.
+  policy-quality conclusions. High-parallel capacity testing selected 1024
+  envs, and the bounded 1024-env 1M R3 run passed runtime/checkpoint/eval
+  gates.
 - Runtime artifacts are ignored and have not been committed.
 
 It is not yet reasonable to claim:
 
-- 1M training stability.
+- 3M/10M training stability.
 - Any final policy quality or solved task performance.
 - Tuned rewards, tuned action scale, tuned stiffness/damping, or optimized SAC
   hyperparameters.
@@ -954,18 +965,25 @@ On 12GB VRAM, do not use `max_replay_size=num_timesteps` for 5M/10M runs by
 default. Longer runs should start with about a 1M replay cap, and only consider
 2M after explicit replay stress evidence.
 
-The 1024-env run was fastest and stable. The 2048-env run is feasible but
-slower in this configuration, so 1024 should be used for the next bounded 1M
-candidate.
+The 1024-env capacity run was fastest and stable. The 2048-env run is feasible
+but slower in this configuration, so 1024 was used for the bounded 1M
+follow-up.
 
-## 1M Decision And Readiness Plan
+## Post-1M Decision Plan
 
-Do not automatically jump to 3M or 10M from this report update. The next
-recommended step is a bounded 1024-env 1M run using R3 settings, sampled UTD
-near `4.0`, and a replay cap decoupled from later multi-million training.
-The bounded 1M plan should consider replay cap, alpha floor, target entropy,
-log-alpha dynamics, critic scale, actor regularization, and deterministic mean
-action drift. Consider 1M only with:
+Do not automatically jump to 3M or 10M from this report update. The bounded
+1024-env 1M R3 run proved the high-parallel runtime path and 1M replay cap are
+feasible on the 12GB GPU, but reward regressed versus R3 250k and actor
+mean/std drift continued.
+
+The next recommended step is a decision review between:
+
+1. bounded 3M continuation using the same stable high-parallel setup to test
+   longer-horizon gait learning;
+2. diagnostic or regularization adjustment before 3M because the 1M reward
+   trend worsened.
+
+Any 3M plan should include:
 
 - explicit resource budget
 - fresh logdir and checkpoint path
@@ -975,10 +993,10 @@ action drift. Consider 1M only with:
 - no logs/checkpoints/.venv/menagerie committed
 - clean ignored-artifact audit
 
-The 1M replay buffer can require roughly 2.5-2.7 GB raw storage before overhead,
-so memory pressure, checkpoint size, compile behavior, and replay update cost
-must be budgeted explicitly. A 1M run should have its own user-approved command,
-fresh logdir, post-run checkpoint check, bounded eval, and report update.
+The 1M replay buffer can require roughly 2.5-2.7 GB raw storage before overhead
+and peaked around `9838MiB / 12282MiB` during the 1024-env 1M run, so memory
+pressure, checkpoint size, compile behavior, and replay update cost must remain
+explicitly budgeted for 3M.
 
 ## Standing Prohibitions
 
