@@ -384,11 +384,10 @@ Interval metrics:
 
 ### Updated Next Action
 
-- Do not run 750k or 1M.
-- Fresh 250k and fresh 500k A4 extensions have completed; see below.
-- Do not run 750k or 1M automatically.
-- Recommended next step: decision review on bounded A4 continuation versus
-  further targeted design or holding.
+- Fresh 250k, 500k, and 750k A4 extensions have completed; see below.
+- Do not run 1M automatically.
+- Recommended next step: decision review/design pass on A4 750k evidence
+  versus further targeted design or holding.
 
 ## Fresh 100k Alpha/Entropy Multi-Seed Eval Follow-Up
 
@@ -430,8 +429,8 @@ Interval metrics:
 - A3 remains the weakest candidate for drift/reward.
 - A4 is still the best drift-control candidate, but it should be described
   with the reward caveat.
-- Fresh 250k and fresh 500k A4 extensions have completed; see below. Do not
-  run 750k or 1M automatically.
+- Fresh 250k, 500k, and 750k A4 extensions have completed; see below. Do not
+  run 1M automatically.
 
 ## Fresh 250k A4 Alpha/Entropy Extension
 
@@ -631,3 +630,97 @@ Multi-seed 16 env x 1000 aggregate:
 - This result does not authorize a jump to 750k or 1M. Next action should be a
   decision review before any longer training. Do not tune reward,
   `action_scale`, or Kp yet.
+
+## Fresh 750k A4 Alpha/Entropy Bridge
+
+### Context
+
+- Scope: bounded fresh 750k A4 bridge using the current alpha/entropy
+  drift-control candidate.
+- Parameters: `target_entropy_coef=0.25`,
+  `alpha_learning_rate=1e-4`.
+- This was not a 1M run.
+- No code changes were made during the run.
+- No reward, `action_scale`, Kp, PPO, RSL, domain randomization, or
+  fine-tuning changes were made.
+
+### Training Result
+
+- Status: `TRAIN_OK`
+- Checkpoint:
+  `./logs/sac_lift_gpu_750k_alpha_ablate_te0p25_alr1e4_s1/sac_lift_step_749952.pkl`
+- Checkpoint readiness: PASS
+- `deterministic_eval_ready`: `true`
+- `policy_normalizer` / `value_normalizer`: present
+- `env_steps`: `749952`
+- `gradient_steps`: `11704`
+- `wall_time`: `397.2631`
+- `sps`: `1887.7966`
+- `actor_loss`: `-6.5525`
+- `critic_loss`: `0.1441`
+- `alpha`: `0.017246`
+- `log_alpha`: `-4.06016`
+- `alpha_loss`: `0.37864`
+- `alpha_log_prob`: `-14.7051`
+- `alpha_error_log_prob_plus_target`: `-21.9551`
+- `alpha_error_neg_log_prob_minus_target`: `21.9551`
+- `alpha_grad_proxy_exp`: `0.37864`
+- `q`: `6.1746`
+- `target_q`: `6.2776`
+- `reward_mean`: `-0.0920`
+- `done_fraction`: `0.0078125`
+- `discount_mean`: `0.9921875`
+
+### Actor Drift Metrics
+
+| Metric | Final | Interval Avg |
+|---|---:|---:|
+| actor policy mean abs mean | 0.37190 | 0.27588 |
+| actor policy mean abs max | 2.98192 | 2.04548 |
+| actor log_std mean | -0.24975 | -0.19484 |
+| actor log_std min | -0.67336 | -0.60936 |
+| actor log_std max | 0.04948 | 0.08209 |
+| actor policy std mean | 0.78393 | 0.82621 |
+| sampled action abs mean | 0.53627 | 0.52738 |
+| sampled action saturation 0.95 | 0.04943 | 0.04476 |
+| deterministic action abs mean | 0.31850 | 0.24939 |
+| deterministic action saturation 0.95 | 0.00310 | 0.00069 |
+
+### Eval Summary
+
+- Small eval JSON:
+  `./logs/sac_eval_alpha_ablate_750k/eval_A4_seed0_4x200_actiondiag.json`
+- Multi-seed JSON directory:
+  `./logs/sac_eval_alpha_ablate_750k_multiseed/`
+- Small eval status: PASS / `EVAL_OK`
+- Multi-seed eval status: PASS; five 16 env x 1000 JSON outputs.
+- All action/reward/obs NaN flags were false.
+
+Small eval, seed 0, 4 env x 200 steps:
+
+| Mode | Reward Mean | Reward SD | Reward Min | Reward Max | Action Abs | Sat 0.95 | NaN |
+|---|---:|---:|---:|---:|---:|---:|---|
+| deterministic | -5.1279 | 0.5785 | -5.9269 | -4.5109 | 0.3075 | 0.00151 | false |
+| stochastic | -5.9461 | 0.2064 | -6.3028 | -5.8096 | 0.5247 | 0.04280 | false |
+
+Multi-seed 16 env x 1000 aggregate:
+
+| Mode | Reward Avg | Reward SD | Reward Min Avg | Reward Max Avg | Action Abs | Sat 0.95 | Policy Mean Abs | LogStd Mean | Std Mean |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| deterministic | -5.7314 | 0.3095 | -11.2225 | -4.3237 | 0.3027 | 0.00201 | 0.3493 | -0.2376 | 0.7924 |
+| stochastic | -6.3802 | 0.4577 | -10.9567 | -4.3543 | 0.5274 | 0.04521 | 0.3551 | -0.2611 | 0.7751 |
+
+### Interpretation And Next Action
+
+- A4 750k is runtime stable: training, checkpoint readiness, 4x200 eval, and
+  5-seed eval all passed.
+- It is not a clean stability improvement. Versus A4 500k, alpha declined
+  `0.02435 -> 0.01725`, actor mean abs rose `0.29323 -> 0.37190`,
+  deterministic action abs rose `0.26540 -> 0.31850`, log_std narrowed
+  `-0.22279 -> -0.24975`, and std fell `0.80245 -> 0.78393`.
+- Q/target_q improved downward versus A4 500k (`8.47/8.41 -> 6.17/6.28`), but
+  critic loss worsened `0.0803 -> 0.1441`.
+- Deterministic 5-seed eval worsened sharply `-4.4075 -> -5.7314`, and
+  stochastic 5-seed eval also worsened `-6.0434 -> -6.3802`.
+- This blocks any automatic 1M or longer run. Next action should be a decision
+  review/design pass, not another longer training run.

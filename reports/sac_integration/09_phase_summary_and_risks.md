@@ -47,6 +47,7 @@ Runtime artifacts are local and ignored. Do not commit `logs/`, `.venv/`,
 | Fresh 100k alpha/entropy ablation multi-seed eval-only | PASS | `./logs/sac_eval_alpha_ablate_multiseed/`, `15` JSON outputs |
 | Bounded fresh 250k A4 alpha/entropy extension | PASS | `./logs/sac_lift_gpu_250k_alpha_ablate_te0p25_alr1e4_s1/sac_lift_step_249984.pkl` |
 | Bounded fresh 500k A4 alpha/entropy extension | PASS | `./logs/sac_lift_gpu_500k_alpha_ablate_te0p25_alr1e4_s1/sac_lift_step_499968.pkl` |
+| Bounded fresh 750k A4 alpha/entropy bridge | PASS_RUNTIME_UNCLEAN_TREND | `./logs/sac_lift_gpu_750k_alpha_ablate_te0p25_alr1e4_s1/sac_lift_step_749952.pkl` |
 | 1M training | NOT VALIDATED | Requires explicit user confirmation and resource/stop plan |
 
 ## Completed Outcomes
@@ -100,6 +101,13 @@ Runtime artifacts are local and ignored. Do not commit `logs/`, `.venv/`,
   passed 5-seed 16 env x 1000 eval. A4 mitigated the old fresh 500k
   deterministic drift pattern but did not eliminate A4's own 250k-to-500k
   drift.
+- Validated a bounded fresh 750k A4 alpha/entropy bridge. The run produced
+  checkpoint
+  `./logs/sac_lift_gpu_750k_alpha_ablate_te0p25_alr1e4_s1/sac_lift_step_749952.pkl`,
+  passed checkpoint readiness, passed 4 env x 200 action diagnostic eval, and
+  passed 5-seed 16 env x 1000 eval. Runtime remained stable, but actor drift,
+  deterministic eval, stochastic eval, and critic loss worsened versus A4
+  500k, so the result blocks any automatic 1M or longer run.
 
 ### Full Action Diagnostic Summary
 
@@ -129,7 +137,8 @@ Interpretation:
   decrease while policy mean/action magnitude increase.
 - Deterministic degradation aligns mainly with `reward/ang_vel_xy`,
   `reward/stand_still`, and `reward/orientation`.
-- 750k and 1M should remain paused until actor mean drift is understood.
+- 1M should remain paused until actor mean drift and the A4 750k degradation
+  are understood.
 
 ### Fresh 100k Actor Drift Diagnostic Summary
 
@@ -372,6 +381,60 @@ Interpretation:
 - Q/target_q are slightly lower than A4 250k but much higher than the old fresh
   500k baseline. Critic loss rose to `0.0803`; this is finite and not a failure,
   but it is the main watch item.
+
+### Bounded Fresh 750k A4 Bridge Summary
+
+The bounded fresh 750k A4 bridge passed runtime, checkpoint, and eval gates:
+
+- Checkpoint:
+  `./logs/sac_lift_gpu_750k_alpha_ablate_te0p25_alr1e4_s1/sac_lift_step_749952.pkl`
+- Checkpoint readiness: PASS, `deterministic_eval_ready=true`, normalizers
+  present.
+- 4 env x 200 seed 0 eval: PASS,
+  `./logs/sac_eval_alpha_ablate_750k/eval_A4_seed0_4x200_actiondiag.json`.
+- 5-seed 16 env x 1000 eval: PASS, five JSON outputs in
+  `./logs/sac_eval_alpha_ablate_750k_multiseed/`.
+- All evals returned `EVAL_OK`; all action/reward/obs NaN flags were false.
+
+Training and drift metrics:
+
+| Metric | Value |
+|---|---:|
+| env_steps | 749952 |
+| gradient_steps | 11704 |
+| wall_time | 397.2631 |
+| sps | 1887.7966 |
+| alpha | 0.017246 |
+| log_alpha | -4.06016 |
+| actor mean abs | 0.37190 |
+| deterministic action abs | 0.31850 |
+| log_std mean | -0.24975 |
+| std mean | 0.78393 |
+| q | 6.1746 |
+| target_q | 6.2776 |
+| critic_loss | 0.1441 |
+
+Eval aggregate:
+
+| Mode | Reward Avg | Reward SD | Action Abs | Sat 0.95 | Policy Mean Abs | LogStd Mean | Std Mean |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| deterministic | -5.7314 | 0.3095 | 0.3027 | 0.00201 | 0.3493 | -0.2376 | 0.7924 |
+| stochastic | -6.3802 | 0.4577 | 0.5274 | 0.04521 | 0.3551 | -0.2611 | 0.7751 |
+
+Interpretation:
+
+- A4 750k is runtime stable: training, checkpoint readiness, 4x200 eval, and
+  5-seed eval all passed.
+- It is not a clean stability improvement. Versus A4 500k, alpha declined
+  `0.02435 -> 0.01725`, actor mean abs rose `0.29323 -> 0.37190`,
+  deterministic action abs rose `0.26540 -> 0.31850`, log_std narrowed
+  `-0.22279 -> -0.24975`, and std fell `0.80245 -> 0.78393`.
+- Q/target_q moved down versus A4 500k (`8.47/8.41 -> 6.17/6.28`), but
+  critic loss worsened `0.0803 -> 0.1441`.
+- Deterministic 5-seed eval worsened sharply
+  `-4.4075 -> -5.7314`; stochastic 5-seed eval also worsened
+  `-6.0434 -> -6.3802`.
+- This result blocks any automatic 1M or longer run.
 
 ## Key Metrics
 
@@ -673,6 +736,9 @@ It is reasonable to claim:
   already visible by 100k and amplifies in absolute level by 250k.
 - Bounded A4 250k and 500k alpha/entropy extensions mitigate the corresponding
   baseline drift patterns without eliminating A4's own longer-horizon drift.
+- Bounded A4 750k is runtime stable but not a clean improvement. It passed
+  training, checkpoint, and eval gates, but actor drift and eval quality
+  worsened versus A4 500k.
 - Runtime artifacts are ignored and have not been committed.
 
 It is not yet reasonable to claim:
@@ -706,6 +772,11 @@ It is not yet reasonable to claim:
 - Bounded fresh 250k and 500k A4 extensions mitigated the corresponding
   baselines, but did not eliminate A4's own 100k-to-500k drift. Q/target_q and
   critic loss remain watch items before any longer extension.
+- Bounded fresh 750k A4 bridge passed runtime/checkpoint/eval gates, but actor
+  mean abs rose to `0.37190`, deterministic action abs rose to `0.31850`,
+  critic loss rose to `0.1441`, deterministic 5-seed eval worsened to
+  `-5.7314`, and stochastic 5-seed eval worsened to `-6.3802`. This blocks any
+  automatic 1M or longer run.
 - Eval reward is still low and should be treated as a smoke signal, not a
   performance benchmark.
 - Truncation handling is currently synthesized as zero when absent. That passed
@@ -789,12 +860,13 @@ Stop immediately and report if any of these occur:
 
 ## 1M Decision And Readiness Plan
 
-Do not automatically jump to 750k or 1M from this report update. The next
-recommended step is a decision review using the bounded A4 500k evidence:
-either plan a bounded 750k bridge, do another targeted diagnostic, or hold for
-design. A later 1M review should consider whether alpha floor, target entropy,
-log-alpha dynamics, critic scale, or deterministic mean action drift need more
-analysis before a longer run. Consider 1M only with:
+Do not automatically jump to 1M or any longer run from this report update. The
+next recommended step is a decision review/design pass using the bounded A4
+750k evidence. The 750k bridge was runtime stable but not a clean improvement:
+actor drift, deterministic eval, stochastic eval, and critic loss worsened
+versus A4 500k. A later 1M review should consider whether alpha floor, target
+entropy, log-alpha dynamics, critic scale, or deterministic mean action drift
+need more analysis before a longer run. Consider 1M only with:
 
 - explicit resource budget
 - fresh logdir and checkpoint path

@@ -1,7 +1,60 @@
 # Smoke Results
 
-Status: updated on 2026-05-14 after the bounded fresh 500k A4 alpha/entropy
-extension.
+Status: updated on 2026-05-14 after the bounded fresh 750k A4 alpha/entropy
+bridge.
+
+## 2026-05-14 Fresh 750k A4 Alpha/Entropy Bridge
+
+- Scope: bounded fresh 750k A4 bridge only; not 1M.
+- Parameters: `target_entropy_coef=0.25`,
+  `alpha_learning_rate=1e-4`.
+- Status: `TRAIN_OK`
+- Checkpoint:
+  `./logs/sac_lift_gpu_750k_alpha_ablate_te0p25_alr1e4_s1/sac_lift_step_749952.pkl`
+- Checkpoint readiness: PASS; `deterministic_eval_ready=true`; normalizers
+  present.
+- 4 env x 200 seed 0 eval: PASS / `EVAL_OK`, JSON
+  `./logs/sac_eval_alpha_ablate_750k/eval_A4_seed0_4x200_actiondiag.json`
+- 5-seed 16 env x 1000 eval: PASS, five JSONs in
+  `./logs/sac_eval_alpha_ablate_750k_multiseed/`.
+- All evals returned `EVAL_OK`; all action/reward/obs NaN flags were false.
+- No code, reward, `action_scale`, Kp, PPO, RSL, domain randomization, or
+  fine-tuning changes were made.
+- No traceback, OOM, fatal CUDA, env, checkpoint, or eval failure was observed.
+
+Training summary:
+
+| env_steps | gradient_steps | wall_time | sps | actor_loss | critic_loss | alpha | log_alpha | q | target_q |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 749952 | 11704 | 397.2631 | 1887.7966 | -6.5525 | 0.1441 | 0.017246 | -4.06016 | 6.1746 | 6.2776 |
+
+Actor drift summary:
+
+| Metric | Final | Interval |
+|---|---:|---:|
+| actor mean abs | 0.37190 | 0.27588 |
+| deterministic action abs | 0.31850 | 0.24939 |
+| log_std mean | -0.24975 | -0.19484 |
+| std mean | 0.78393 | 0.82621 |
+
+Eval summary:
+
+| Eval | Mode | Reward Avg/Mean | Reward SD | Action Abs | Sat 0.95 | NaN |
+|---|---|---:|---:|---:|---:|---|
+| 4x200 seed0 | deterministic | -5.1279 | 0.5785 | 0.3075 | 0.00151 | false |
+| 4x200 seed0 | stochastic | -5.9461 | 0.2064 | 0.5247 | 0.04280 | false |
+| 5-seed 16x1000 | deterministic | -5.7314 | 0.3095 | 0.3027 | 0.00201 | false |
+| 5-seed 16x1000 | stochastic | -6.3802 | 0.4577 | 0.5274 | 0.04521 | false |
+
+Interpretation: A4 750k is runtime stable but not a clean stability
+improvement. Versus A4 500k, alpha declined `0.02435 -> 0.01725`, actor mean
+abs rose `0.29323 -> 0.37190`, deterministic action abs rose
+`0.26540 -> 0.31850`, log_std narrowed `-0.22279 -> -0.24975`, critic loss
+rose `0.0803 -> 0.1441`, deterministic 5-seed eval worsened
+`-4.4075 -> -5.7314`, and stochastic 5-seed eval worsened
+`-6.0434 -> -6.3802`. Q/target_q moved down from A4 500k
+`8.47/8.41 -> 6.17/6.28`, but the drift/eval degradation blocks any
+automatic 1M or longer run.
 
 ## 2026-05-14 Fresh 500k A4 Alpha/Entropy Extension
 
@@ -687,8 +740,8 @@ Warnings observed:
 - JAX cast warning: `RuntimeWarning: overflow encountered in cast`.
 - CUDA timer warmup warning: `Delay kernel timed out: measured time has sub-optimal accuracy`.
 - These warnings did not fail preflight, 10k smoke, 50k sanity, 100k sanity,
-  250k sanity, 500k sanity, or bounded eval; they remain non-fatal WSL2/JAX
-  noise unless accompanied by a failed command.
+  250k sanity, 500k sanity, bounded A4 750k bridge, or bounded eval; they
+  remain non-fatal WSL2/JAX noise unless accompanied by a failed command.
 - A first sandboxed `uv` attempt hit a `snap-confine` capability issue. The
   same command succeeded with external permission and unchanged parameters, so
   this is recorded as tooling noise, not a training failure.
@@ -746,6 +799,7 @@ Current validation state:
 - 100k sanity: `PASS`
 - 250k sanity: `PASS`
 - 500k sanity: `PASS`
+- bounded A4 750k bridge: `PASS_RUNTIME_UNCLEAN_TREND`
 - both-mode eval diagnostic for 100k/250k/500k: `PASS`
 - 1M training: `NOT VALIDATED`
 - deterministic eval smoke, 50k bounded eval, 100k bounded eval, 250k bounded
@@ -754,8 +808,13 @@ Current validation state:
   `0.0080` at 500k. Q and target Q decreased from about `5.2` to about `3.3`,
   critic loss stayed finite/low, and bounded deterministic eval reward
   worsened. Both-mode eval narrows this to a deterministic `tanh(mean)` issue:
-  stochastic sampled eval did not show the same reward degradation. This is not
-  a runtime failure, but it blocks any automatic jump to 750k or 1M.
+  stochastic sampled eval did not show the same reward degradation. This was
+  not a runtime failure.
+- A4 750k remained runtime stable but worsened actor drift and eval quality
+  versus A4 500k: alpha `0.02435 -> 0.01725`, actor mean abs
+  `0.29323 -> 0.37190`, deterministic 5-seed reward `-4.4075 -> -5.7314`,
+  stochastic 5-seed reward `-6.0434 -> -6.3802`, and critic loss
+  `0.0803 -> 0.1441`. This blocks any automatic jump to 1M or longer runs.
 - PPO comparison: `NOT VALIDATED`
 - domain randomization, fine-tuning, reward/action_scale/Kp tuning: not run
 - No logs, checkpoints, `.venv`, or menagerie assets are committed.

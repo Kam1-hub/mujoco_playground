@@ -1,7 +1,7 @@
 # G1 SAC Integration Status And Roadmap
 
-Status: updated on 2026-05-14 after the bounded fresh 500k A4 alpha/entropy
-extension.
+Status: updated on 2026-05-14 after the bounded fresh 750k A4 alpha/entropy
+bridge.
 
 ## 1. Mission
 
@@ -185,12 +185,13 @@ Validation ladder:
 20. Fresh 100k alpha/entropy ablation multi-seed eval-only diagnostic
 21. Bounded fresh 250k A4 alpha/entropy extension
 22. Bounded fresh 500k A4 alpha/entropy extension
-23. 1M training
+23. Bounded fresh 750k A4 alpha/entropy bridge
+24. 1M training
 
 Status:
 
-- Steps 1 through 22 are complete.
-- Step 23 remains `NOT VALIDATED` and requires separate user confirmation and
+- Steps 1 through 23 are complete.
+- Step 24 remains `NOT VALIDATED` and requires separate user confirmation and
   an explicit resource/stop-condition plan.
 
 ### Phase 6: Reports, Commits, Migration Handoff
@@ -1010,8 +1011,8 @@ action/reward/obs NaN: false/false/false
 ```
 
 Interpretation: drift amplifies in absolute level by fresh 250k. This is not a
-runtime failure. The next A4 500k extension has since completed; do not run
-750k or 1M automatically.
+runtime failure. The A4 500k and 750k extensions have since completed; do not
+run 1M automatically.
 
 ## 17. Bounded Fresh 500k A4 Alpha/Entropy Extension
 
@@ -1051,9 +1052,51 @@ action/reward/obs NaN: false
 ```
 
 Interpretation: A4 500k mitigates the old 500k deterministic drift pattern and
-passes runtime/checkpoint/eval gates. It does not authorize 750k or 1M; Q,
-target Q, and critic loss are the main watch items for any longer extension.
+passes runtime/checkpoint/eval gates. The bounded A4 750k bridge has since run
+and should be used for the current longer-run decision.
 
-## 18. Current Position In One Sentence
+## 18. Bounded Fresh 750k A4 Alpha/Entropy Bridge
 
-SAC Route B is implemented; CPU tiny smoke, WSL2 GPU preflight, Route B GPU 10k smoke, normalizer-ready checkpoint validation, bounded deterministic eval smoke, 50k sanity/eval, 100k sanity/eval, 250k sanity/eval, 500k sanity/eval, both-mode eval diagnostic, full action diagnostic, fresh 100k/250k train-time actor drift diagnostics, fresh 100k alpha/entropy ablation diagnostics, the A1/A3/A4 multi-seed eval-only ablation diagnostic, and the bounded fresh 250k and 500k A4 extensions have passed; 750k, 1M, full eval benchmarking, domain randomization, and fine-tuning remain `NOT VALIDATED`.
+Status: `TRAIN_OK`
+
+```text
+checkpoint: ./logs/sac_lift_gpu_750k_alpha_ablate_te0p25_alr1e4_s1/sac_lift_step_749952.pkl
+checkpoint readiness: PASS
+env_steps: 749952
+gradient_steps: 11704
+wall_time: 397.2631
+sps: 1887.7966
+alpha: 0.017246
+log_alpha: -4.06016
+critic_loss: 0.1441
+q: 6.1746
+target_q: 6.2776
+```
+
+Actor drift evidence:
+
+```text
+actor_policy_mean_abs_mean final / interval: 0.37190 / 0.27588
+deterministic_action_abs_mean final / interval: 0.31850 / 0.24939
+actor_log_std_mean final / interval: -0.24975 / -0.19484
+actor_policy_std_mean final / interval: 0.78393 / 0.82621
+```
+
+Eval evidence:
+
+```text
+4x200 JSON: ./logs/sac_eval_alpha_ablate_750k/eval_A4_seed0_4x200_actiondiag.json
+5-seed JSON dir: ./logs/sac_eval_alpha_ablate_750k_multiseed/
+deterministic 5-seed reward avg: -5.7314
+stochastic 5-seed reward avg: -6.3802
+action/reward/obs NaN: false
+```
+
+Interpretation: A4 750k is runtime stable but not a clean stability
+improvement. Actor mean/action drift increased, entropy/std narrowed, critic
+loss rose, and deterministic plus stochastic 5-seed eval rewards worsened
+versus A4 500k. This blocks any automatic 1M or longer run.
+
+## 19. Current Position In One Sentence
+
+SAC Route B is implemented; CPU tiny smoke, WSL2 GPU preflight, Route B GPU 10k smoke, normalizer-ready checkpoint validation, bounded deterministic eval smoke, 50k sanity/eval, 100k sanity/eval, 250k sanity/eval, 500k sanity/eval, both-mode eval diagnostic, full action diagnostic, fresh 100k/250k train-time actor drift diagnostics, fresh 100k alpha/entropy ablation diagnostics, the A1/A3/A4 multi-seed eval-only ablation diagnostic, and the bounded fresh 250k, 500k, and 750k A4 extensions have passed; 1M, full eval benchmarking, domain randomization, and fine-tuning remain `NOT VALIDATED`, and 750k evidence argues against automatic longer training.

@@ -1,7 +1,7 @@
 # Next Actions
 
-Status: updated on 2026-05-14 after the bounded fresh 500k A4 alpha/entropy
-extension.
+Status: updated on 2026-05-14 after the bounded fresh 750k A4 alpha/entropy
+bridge.
 
 ## Immediate State
 
@@ -133,6 +133,17 @@ extension.
   range, and actor/log_std metrics were healthier.
 - A4 500k still drifts relative to A4 250k, and Q/target_q plus critic loss
   remain watch items (`q=8.47294`, `target_q=8.41017`, `critic_loss=0.0803`).
+- Bounded fresh 750k A4 alpha/entropy bridge passed with `TRAIN_OK`,
+  checkpoint
+  `./logs/sac_lift_gpu_750k_alpha_ablate_te0p25_alr1e4_s1/sac_lift_step_749952.pkl`,
+  checkpoint readiness PASS, 4 env x 200 eval PASS, and 5-seed 16 env x 1000
+  eval PASS.
+- A4 750k is runtime stable but not a clean stability improvement: alpha
+  declined `0.02435 -> 0.01725`, actor mean abs rose
+  `0.29323 -> 0.37190`, deterministic action abs rose
+  `0.26540 -> 0.31850`, critic loss rose `0.0803 -> 0.1441`,
+  deterministic 5-seed reward worsened `-4.4075 -> -5.7314`, and stochastic
+  5-seed reward worsened `-6.0434 -> -6.3802`.
 
 ## Completed WSL2 GPU Validation
 
@@ -297,19 +308,22 @@ or menagerie.
 
 ## Current Recommended Next Step
 
-Do not run 750k or 1M yet.
+Do not run 1M or any longer training yet.
 
 Fresh 100k alpha/entropy ablation A1/A3/A4, the multi-seed eval-only
-follow-up, and the bounded fresh 250k and 500k A4 extensions are complete. A4
-remains the best drift-control candidate, but the next step should be a
-decision review, not automatic longer training:
+follow-up, and the bounded fresh 250k, 500k, and 750k A4 extensions are
+complete. A4 mitigated the old 500k drift pattern, but the 750k bridge worsened
+actor drift, deterministic eval, stochastic eval, and critic loss versus A4
+500k. The next step should be a decision review/design pass, not automatic
+longer training:
 
-1. Decide whether the A4 500k mitigation is strong enough to justify planning
-   any bounded 750k bridge, or whether to hold for more design.
-2. Treat Q/target_q and critic loss as the main watch items in any next plan.
+1. Decide whether to stop A4 extension at 750k and focus on alpha/log_std or
+   deterministic action drift design.
+2. Treat actor drift, eval degradation, and critic loss as the main watch
+   items in any next plan.
 3. If the remaining drift or stochastic caveat is concerning, do further
    alpha/entropy, deterministic-policy, or reward-component design first.
-4. Do not run 750k or 1M automatically.
+4. Do not run 1M automatically.
 5. Do not tune reward, `action_scale`, or Kp yet.
 
 ## Completed Both-Mode Eval Diagnostic
@@ -403,19 +417,20 @@ CPU, stop and report the CUDA/JAX blocker.
 
 ## Recommended Next Step
 
-Do not automatically run 750k or 1M. The next useful step is a decision review
-for bounded A4 continuation, with the A4 500k mitigation, remaining
-250k-to-500k drift, stochastic caveat, and Q/target_q plus critic-loss watch
-items all explicitly considered.
+Do not automatically run 1M or any longer training. The next useful step is a
+decision review/design pass using the bounded A4 750k bridge evidence: runtime
+remained clean, but actor drift, deterministic eval, stochastic eval, and
+critic loss all worsened versus A4 500k.
 
 Recommended diagnostic questions:
 
-1. Is A4 500k strong enough to justify planning a bounded A4 750k bridge?
-2. Should the next step instead be another targeted diagnostic or a hold for
-   design?
-3. What stop conditions would apply if any bounded A4 extension is approved?
+1. Should A4 be capped at 500k/750k while investigating alpha/log_std and
+   deterministic action drift?
+2. Is another targeted diagnostic or design change more useful than a longer
+   run?
+3. What stop conditions would apply if any future extension is approved?
 
-Do not jump into 750k or 1M from this report update.
+Do not jump into 1M from this report update.
 
 ## Migration Reminders
 
@@ -429,15 +444,15 @@ Do not jump into 750k or 1M from this report update.
 
 ## Recommended Follow-Ups After Deterministic Eval Smoke
 
-1. Run a decision review before any bounded A4 750k bridge.
+1. Run a decision review before any longer A4 bridge.
 2. Keep eval scales bounded unless the user asks for a benchmark.
-3. Do not start 750k or 1M automatically from this report update.
+3. Do not start 1M automatically from this report update.
 4. Compare against PPO baseline only after SAC smoke plus eval have clean
    reports.
 
 ## Do Not Start Yet
 
-- 750k or 1M training without separate user confirmation and a
+- 1M or longer training without separate user confirmation and a
   resource/stop-condition plan
 - PPO-scale `num_envs=2048` or `8192` experiments as SAC smoke substitutes
 - domain randomization

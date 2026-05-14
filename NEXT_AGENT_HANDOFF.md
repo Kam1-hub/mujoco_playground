@@ -18,8 +18,8 @@ domain randomization, or fine-tuning as part of the current validation phase.
 
 - Path: `/home/admin/projects/mujoco_playground/g1_sac_dev`
 - Branch: `sac-integration`
-- Latest recorded diagnostic state: bounded fresh 500k A4 alpha/entropy
-  extension report; use `git log --oneline -5` for the exact commit hash.
+- Latest recorded diagnostic state: bounded fresh 750k A4 alpha/entropy bridge
+  report; use `git log --oneline -5` for the exact commit hash.
 - Remote: `origin https://github.com/Kam1-hub/mujoco_playground.git`
 - Last known pushed branch: `sac-integration`
 
@@ -175,11 +175,12 @@ Current validated ladder:
   PASS.
 - Bounded fresh 250k A4 alpha/entropy extension: PASS.
 - Bounded fresh 500k A4 alpha/entropy extension: PASS.
+- Bounded fresh 750k A4 alpha/entropy bridge: PASS runtime/checkpoint/eval,
+  but not a clean stability improvement.
 - Action joint mapping diagnostic: PASS.
 
 Still not validated:
 
-- 750k training.
 - 1M training.
 - Full performance benchmark.
 - PPO comparison.
@@ -288,6 +289,18 @@ All paths below are runtime artifacts and should remain ignored:
   - Status `EVAL_OK`; action/reward/obs NaN flags false.
 - `./logs/sac_eval_alpha_ablate_500k_multiseed/`
   - Five 16 env x 1000 both-mode eval JSONs from the A4 500k extension
+    checkpoint.
+  - All returned `EVAL_OK`; all action/reward/obs NaN flags false.
+- `./logs/sac_lift_gpu_750k_alpha_ablate_te0p25_alr1e4_s1/sac_lift_step_749952.pkl`
+  - Bounded fresh 750k A4 alpha/entropy bridge checkpoint.
+  - `target_entropy_coef=0.25`, `alpha_learning_rate=1e-4`.
+  - Checkpoint readiness PASS; normalizers present.
+- `./logs/sac_eval_alpha_ablate_750k/eval_A4_seed0_4x200_actiondiag.json`
+  - Small 4 env x 200 both-mode action diagnostic eval from the A4 750k
+    bridge checkpoint.
+  - Status `EVAL_OK`; action/reward/obs NaN flags false.
+- `./logs/sac_eval_alpha_ablate_750k_multiseed/`
+  - Five 16 env x 1000 both-mode eval JSONs from the A4 750k bridge
     checkpoint.
   - All returned `EVAL_OK`; all action/reward/obs NaN flags false.
 - `./logs/sac_lift_schema_dry_run/sac_lift_step_0.pkl`
@@ -424,9 +437,34 @@ Bounded fresh 500k A4 extension:
 - 5-seed stochastic eval aggregate: reward avg `-6.0434`, action abs `0.5152`,
   policy mean abs `0.2704`, log_std `-0.2277`, std `0.7984`.
 
-Next recommended step: decision review for bounded A4 continuation. Consider a
-bounded A4 750k bridge plan, another targeted diagnostic, or holding for design.
-Do not run 750k or 1M automatically.
+Bounded fresh 750k A4 bridge:
+
+- Status: `TRAIN_OK`
+- Checkpoint:
+  `./logs/sac_lift_gpu_750k_alpha_ablate_te0p25_alr1e4_s1/sac_lift_step_749952.pkl`
+- Checkpoint readiness PASS; `deterministic_eval_ready=true`; normalizers
+  present.
+- Training metrics: `env_steps=749952`, `gradient_steps=11704`,
+  `wall_time=397.2631`, `sps=1887.7966`, `actor_loss=-6.5525`,
+  `critic_loss=0.1441`, `alpha=0.017246`, `log_alpha=-4.06016`,
+  `q=6.1746`, `target_q=6.2776`.
+- Drift metrics: final actor mean abs `0.37190`, deterministic action abs
+  `0.31850`, log_std mean `-0.24975`, std mean `0.78393`.
+- Versus A4 500k, alpha declined `0.02435 -> 0.01725`, actor mean abs rose
+  `0.29323 -> 0.37190`, deterministic action abs rose
+  `0.26540 -> 0.31850`, log_std narrowed `-0.22279 -> -0.24975`, and std
+  fell `0.80245 -> 0.78393`.
+- Q/target_q moved down from A4 500k (`8.47/8.41 -> 6.17/6.28`), but critic
+  loss worsened `0.0803 -> 0.1441`.
+- 5-seed deterministic eval aggregate: reward avg `-5.7314`, action abs
+  `0.3027`, policy mean abs `0.3493`, log_std `-0.2376`, std `0.7924`.
+- 5-seed stochastic eval aggregate: reward avg `-6.3802`, action abs `0.5274`,
+  policy mean abs `0.3551`, log_std `-0.2611`, std `0.7751`.
+- Conclusion: runtime stable but not a clean stability improvement. This blocks
+  any automatic 1M or longer run.
+
+Next recommended step: decision review/design pass using A4 750k evidence. Do
+not run 1M automatically.
 
 GPU 10k smoke:
 
@@ -613,6 +651,10 @@ Both-mode eval diagnostic:
 - Bounded fresh 250k and 500k A4 extensions have run and passed. They mitigate
   the corresponding baselines but do not eliminate A4's own 100k-to-500k drift.
   Q/target_q and critic loss should be watched.
+- Bounded fresh 750k A4 bridge has run and passed runtime/checkpoint/eval
+  gates, but it is not a clean stability improvement. Actor mean/action drift,
+  deterministic eval reward, stochastic eval reward, and critic loss worsened
+  versus A4 500k.
 - Action joint mapping now links the 500k deterministic top action dimensions
   mainly to right ankle roll/pitch, waist pitch, right knee, and hip roll. See
   `reports/sac_integration/13_action_joint_mapping_diagnostic.md`.
@@ -625,11 +667,12 @@ Both-mode eval diagnostic:
 1. Do read-only status checks.
 2. Read this file and `reports/sac_integration/09_phase_summary_and_risks.md`.
 3. Review `reports/sac_integration/12_alpha_entropy_ablation_plan.md`.
-4. If the user explicitly approves another bounded diagnostic, plan a bounded
-   A4 750k bridge or another targeted diagnostic with explicit stop conditions.
-5. Do not draft or execute 750k/1M automatically.
+4. If the user explicitly approves another bounded diagnostic, first do a
+   decision review/design pass using the A4 750k evidence and explicit stop
+   conditions.
+5. Do not draft or execute 1M automatically.
 
-Do not start 750k or 1M automatically. Do not modify reward, action scale, Kp,
+Do not start 1M automatically. Do not modify reward, action scale, Kp,
 domain randomization, fine-tuning, PPO, or RSL.
 
 ## Completed 100k Sanity Command
@@ -682,7 +725,7 @@ status checks: pwd, git status --short --branch, git log --oneline -5,
 git remote -v, and git check-ignore -v logs .venv
 g1_env/external_deps/mujoco_menagerie || true.
 
-Current HEAD should be at least 1870bb4 Record SAC A4 250k alpha ablation
+Current HEAD should include the report commit for the bounded A4 750k bridge
 unless newer report commits exist. GPU 10k smoke, deterministic
 eval smoke, GPU 50k sanity/eval, GPU 100k sanity/eval, GPU 250k sanity/eval,
 GPU 500k sanity/eval, 100k/250k/500k both-mode eval diagnostic, and full action
@@ -695,12 +738,13 @@ reward and A4 remains weaker on stochastic reward. Bounded fresh 250k A4
 extension has also passed and mitigates drift versus the fresh 250k baseline,
 but does not eliminate A4's own 100k-to-250k drift. Bounded fresh 500k A4 has
 also passed and mitigates the old 500k deterministic drift pattern, but
-Q/target_q and critic loss remain watch items. 750k and 1M are not validated.
+Q/target_q and critic loss remain watch items. Bounded fresh 750k A4 also
+passed runtime/checkpoint/eval gates, but actor drift and eval quality worsened
+versus A4 500k. 1M is not validated.
 
 Do not run training, eval, preflight, installs, downloads, or git commits unless
-explicitly asked. Next recommended work is a main/user decision review on a
-bounded A4 750k bridge plan versus another targeted diagnostic or hold for
-design. Do not start 750k or 1M without a separate resource/stop-condition plan
-and user confirmation. Do not change reward, action_scale, Kp, domain
-randomization, fine-tuning, PPO, or RSL.
+explicitly asked. Next recommended work is a main/user decision review or
+design pass using the A4 750k evidence. Do not start 1M without a separate
+resource/stop-condition plan and user confirmation. Do not change reward,
+action_scale, Kp, domain randomization, fine-tuning, PPO, or RSL.
 ```

@@ -1,19 +1,19 @@
 # Alpha Entropy Ablation Plan
 
 Status: results recorded after fresh 100k A1/A3/A4 ablations, multi-seed
-eval-only diagnostics, the bounded fresh 250k A4 extension, and the bounded
-fresh 500k A4 extension.
+eval-only diagnostics, the bounded fresh 250k and 500k A4 extensions, and the
+bounded fresh 750k A4 bridge.
 
 This report records the controlled diagnostic plan, the validated fresh 100k
 A1/A3/A4 alpha/entropy ablation results, the follow-up multi-seed eval-only
-diagnostics, the bounded fresh 250k A4 extension, and the bounded fresh 500k
-A4 extension.
+diagnostics, the bounded fresh 250k and 500k A4 extensions, and the bounded
+fresh 750k A4 bridge.
 
 ## Context
 
 - Current branch: `sac-integration`
-- Current focus: stabilize deterministic SAC actor behavior before any 750k or
-  1M run.
+- Current focus: stabilize deterministic SAC actor behavior before any 1M or
+  longer run.
 - Fresh 100k and fresh 250k actor drift diagnostics passed runtime gates.
 - Both diagnostics show actor mean / deterministic action magnitude rising
   while alpha, log_std, and policy std decline.
@@ -113,10 +113,10 @@ Warnings:
 
 Next action:
 
-- Do not run 750k or 1M.
+- Do not run 1M automatically.
 - Fresh 250k and fresh 500k A4 extensions have now completed; use the results
   below for the next bounded decision.
-- Do not run 750k or 1M automatically.
+- Bounded 750k bridge has now completed; do not run 1M automatically.
 - Recommended next step is a decision review before any longer A4 extension.
 
 ## Multi-Seed 100k Ablation Eval-Only Results
@@ -164,8 +164,8 @@ Interpretation:
 - A3 remains the weakest candidate for drift/reward.
 - A4 is still the best drift-control candidate, but it should be described
   with the reward caveat.
-- The next decision should not be 750k or 1M. Recommended next decision is
-  a decision review using the fresh 250k A4 extension evidence below.
+- The next decision should not be 1M. Use the bounded A4 extension evidence
+  below before any longer-run decision.
 
 ## Fresh 250k A4 Extension Results
 
@@ -354,8 +354,104 @@ Interpretation:
 
 - A4 continues mitigating the old 500k deterministic drift pattern and passes
   runtime/checkpoint/eval gates.
-- Q/target_q and critic loss block any automatic jump to 750k or 1M.
-- Next action should be a decision review, not immediate longer training.
+- Q/target_q and critic loss required a decision review before any longer run.
+  The bounded 750k bridge below has now completed and supersedes this as the
+  latest A4 long-horizon evidence.
+
+## Fresh 750k A4 Bridge Results
+
+Execution context:
+
+- `CHECKPOINT A4-750K-BRIDGE` completed after the bounded fresh 500k A4
+  extension and decision review.
+- Scope: bounded fresh 750k A4 bridge only. This was not a 1M run.
+- Parameters: `target_entropy_coef=0.25`,
+  `alpha_learning_rate=1e-4`.
+- No code, reward, `action_scale`, Kp, PPO, RSL, domain randomization, or
+  fine-tuning changes were made.
+- Checkpoint:
+  `./logs/sac_lift_gpu_750k_alpha_ablate_te0p25_alr1e4_s1/sac_lift_step_749952.pkl`
+- Checkpoint readiness: PASS; `deterministic_eval_ready=true`; policy/value
+  normalizers present.
+- Small eval: `./logs/sac_eval_alpha_ablate_750k/eval_A4_seed0_4x200_actiondiag.json`
+  returned `EVAL_OK`.
+- Multi-seed eval: `./logs/sac_eval_alpha_ablate_750k_multiseed/` contains
+  five 16 env x 1000 JSON outputs.
+- All evals returned `EVAL_OK`; all action/reward/obs NaN flags were false.
+- No traceback, OOM, fatal CUDA, env, checkpoint, or eval failure was observed.
+
+Training metrics:
+
+| Metric | Value |
+|---|---:|
+| env_steps | 749952 |
+| gradient_steps | 11704 |
+| wall_time | 397.2631 |
+| sps | 1887.7966 |
+| actor_loss | -6.5525 |
+| critic_loss | 0.1441 |
+| alpha | 0.017246 |
+| log_alpha | -4.06016 |
+| alpha_loss | 0.37864 |
+| alpha_log_prob | -14.7051 |
+| alpha_error_log_prob_plus_target | -21.9551 |
+| alpha_error_neg_log_prob_minus_target | 21.9551 |
+| alpha_grad_proxy_exp | 0.37864 |
+| q | 6.1746 |
+| target_q | 6.2776 |
+| reward_mean | -0.0920 |
+| done_fraction | 0.0078125 |
+| discount_mean | 0.9921875 |
+
+Actor drift metrics:
+
+| Metric | Final | Interval |
+|---|---:|---:|
+| actor mean abs | 0.37190 | 0.27588 |
+| actor mean abs max | 2.98192 | 2.04548 |
+| log_std mean | -0.24975 | -0.19484 |
+| log_std min | -0.67336 | -0.60936 |
+| log_std max | 0.04948 | 0.08209 |
+| std mean | 0.78393 | 0.82621 |
+| sampled action abs | 0.53627 | 0.52738 |
+| sampled saturation 0.95 | 0.04943 | 0.04476 |
+| deterministic action abs | 0.31850 | 0.24939 |
+| deterministic saturation 0.95 | 0.00310 | 0.00069 |
+
+Small eval, seed 0, 4 env x 200 steps:
+
+| Mode | reward_mean | reward_std | reward_min | reward_max | action_abs | saturation 0.95 | NaN |
+|---|---:|---:|---:|---:|---:|---:|---|
+| deterministic | -5.1279 | 0.5785 | -5.9269 | -4.5109 | 0.3075 | 0.00151 | false |
+| stochastic | -5.9461 | 0.2064 | -6.3028 | -5.8096 | 0.5247 | 0.04280 | false |
+
+Multi-seed 16 env x 1000 aggregate:
+
+| Mode | reward avg | reward stdev | min avg | max avg | action abs | sat 0.95 | policy mean abs | log_std | std |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| deterministic | -5.7314 | 0.3095 | -11.2225 | -4.3237 | 0.3027 | 0.00201 | 0.3493 | -0.2376 | 0.7924 |
+| stochastic | -6.3802 | 0.4577 | -10.9567 | -4.3543 | 0.5274 | 0.04521 | 0.3551 | -0.2611 | 0.7751 |
+
+Comparisons:
+
+- Versus A4 500k, alpha declined `0.02435 -> 0.01725`, actor mean abs rose
+  `0.29323 -> 0.37190`, deterministic action abs rose
+  `0.26540 -> 0.31850`, log_std narrowed `-0.22279 -> -0.24975`, and std
+  fell `0.80245 -> 0.78393`.
+- Q/target_q moved down versus A4 500k (`8.47/8.41 -> 6.17/6.28`), but
+  critic loss worsened `0.0803 -> 0.1441`.
+- Deterministic 5-seed eval worsened sharply `-4.4075 -> -5.7314`.
+- Stochastic 5-seed eval also worsened `-6.0434 -> -6.3802`.
+- Versus the old fresh 500k baseline, alpha is still better than old `0.00801`,
+  but deterministic reward is worse than the old degraded range around
+  `-4.69` to `-4.82`.
+
+Interpretation:
+
+- A4 750k is runtime stable, but it is not a clean stability improvement.
+- It should block any automatic 1M or longer run.
+- Next action should be a decision review/design pass, not immediate longer
+  training.
 
 ## Current Alpha And Entropy Mechanics
 
