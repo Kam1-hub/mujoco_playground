@@ -1,5 +1,10 @@
 # High-Parallel SAC Capacity Plan
 
+Execution update: this plan has now been run. See
+`reports/sac_integration/14_high_parallel_capacity_results.md` for detailed
+CHECKPOINT AI results. All 512/1024/2048 cases returned `TRAIN_OK` and
+readiness PASS; 1024 envs was fastest and is the next bounded 1M candidate.
+
 ## Context
 
 - User flagged that `num_envs=128` is likely too conservative for G1 SAC.
@@ -7,8 +12,8 @@
   evaluate for policy quality.
 - Prior 10k, 50k, 100k, 250k, and 500k runs should be treated as runtime,
   checkpoint, eval, and diagnostic evidence, not final policy-quality evidence.
-- The next useful step is a high-parallel capacity benchmark, not another
-  128-env quality run and not a direct 10M run.
+- The next useful step at planning time was a high-parallel capacity benchmark,
+  not another 128-env quality run and not a direct 10M run.
 
 ## Current Implementation Relationship
 
@@ -173,7 +178,9 @@ Do not use `max_replay_size=num_timesteps` for huge runs by default.
 
 ## Current Recommendation
 
-Run the 512, 1024, and 2048 env capacity benchmark next. This should precede
-any 500k, 750k, 1M, 3M, or 10M quality claim. The immediate objective is to
-find the highest stable and efficient env parallelism on the 12GB GPU while
-keeping off-policy update pressure comparable to the historical 128-env runs.
+The 512, 1024, and 2048 env capacity benchmark has been completed. `1024` envs
+is the current best next bounded 1M candidate because it was stable and fastest
+at `953.36` SPS. `2048` envs is feasible but slower in this benchmark. Do not
+jump directly to 3M or 10M; first run a bounded 1024-env 1M validation with R3
+settings, `grad_updates_per_step=16`, and a replay cap decoupled from future
+multi-million runs.

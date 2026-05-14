@@ -1,7 +1,7 @@
 # Next Actions
 
 Status: updated on 2026-05-14 after the R3 250k actor-regularization extension
-and high-parallel capacity planning.
+and high-parallel capacity benchmark.
 
 ## Immediate State
 
@@ -174,8 +174,9 @@ and high-parallel capacity planning.
 - User flagged the previous 128-env ladder as likely too conservative for G1
   policy-quality conclusions. Treat 10k through 500k as runtime/diagnostic
   gates, not final learning-quality evidence.
-- High-parallel capacity planning is recorded in
-  `reports/sac_integration/13_high_parallel_capacity_plan.md`.
+- High-parallel capacity results are recorded in
+  `reports/sac_integration/14_high_parallel_capacity_results.md`: 512, 1024,
+  and 2048 envs all passed, and 1024 envs was fastest.
 
 ## Completed WSL2 GPU Validation
 
@@ -340,24 +341,25 @@ or menagerie.
 
 ## Current Recommended Next Step
 
-Do not run 1M or any longer training yet.
+Do not run 3M or 10M training yet.
 
 Fresh 100k alpha/entropy ablation A1/A3/A4, the multi-seed eval-only
 follow-up, the bounded fresh 250k, 500k, and 750k A4 extensions, the fresh 100k
 actor-regularization R1 ablation, the fresh 100k R2/R3 coefficient sweep, and
-the bounded R3 250k extension are complete. R3 is now the strongest current
-stability candidate. The next bottleneck is not another 128-env quality run; it
-is high-parallel capacity and off-policy ratio validation on the 12GB GPU.
+the bounded R3 250k extension are complete. The 512/1024/2048 high-parallel
+capacity benchmark is also complete. All three capacity runs were `TRAIN_OK`
+and readiness PASS with sampled UTD preserved at about `4.0`; `1024` envs was
+fastest at `953.36` SPS, while `2048` envs was feasible but slower.
 
-1. Run a bounded high-parallel capacity benchmark with R3 settings:
-   512/1024/2048 envs, 65k steps, `batch_size=256`, replay cap `262144`, and
-   `grad_updates_per_step=8/16/32` to preserve approximate sampled UTD.
-2. Pick the highest stable and efficient env count, likely 1024 unless 2048 is
-   clearly faster and not memory-fragile.
-3. Only after capacity results, plan a multi-million ladder with `num_timesteps`
-   decoupled from `max_replay_size`.
+1. Plan a bounded 1024-env 1M run with R3 settings, `batch_size=256`,
+   `grad_updates_per_step=16`, and replay cap initially
+   `max_replay_size=1000000`.
+2. Keep `2048` as feasible but not selected unless a later batch/update-ratio
+   pass makes it faster and non-fragile.
+3. Only after the bounded 1M result, plan a multi-million ladder with
+   `num_timesteps` decoupled from `max_replay_size`.
 4. Do not use `max_replay_size=num_timesteps` for 5M or 10M runs on 12GB VRAM.
-5. Do not run 1M, 3M, or 10M directly from this report update.
+5. Do not run 3M or 10M directly from this report update.
 6. Do not tune reward, `action_scale`, or Kp yet.
 
 ## Completed Both-Mode Eval Diagnostic
@@ -451,24 +453,25 @@ CPU, stop and report the CUDA/JAX blocker.
 
 ## Recommended Next Step
 
-Do not automatically run 1M or any longer training. The next useful step is a
-capacity benchmark using R3 250k evidence and coordinated off-policy settings:
-512/1024/2048 envs, 65k steps, replay cap `262144`, and UTD-preserving update
-counts. This tests machine capacity and throughput before any multi-million
-claim.
+Do not automatically run 3M or 10M. The next useful step is a bounded 1024-env
+1M plan using R3 250k and capacity-benchmark evidence:
+
+- `num_envs=1024`
+- `batch_size=256`
+- `grad_updates_per_step=16`
+- `max_replay_size=1000000`
+- R3 coefficients:
+  `target_entropy_coef=0.25`, `alpha_learning_rate=1e-4`,
+  `deterministic_action_l2_coef=0.5`, `actor_mean_l2_coef=0.05`
 
 Recommended diagnostic questions:
 
-1. Does 1024 envs train cleanly with `grad_updates_per_step=16` and acceptable
-   GPU memory/SPS?
-2. Does 2048 envs train cleanly with `grad_updates_per_step=32`, or is it
-   slower/memory-fragile?
-3. Does preserving approximate sampled UTD keep losses, alpha, Q, and actor
-   drift finite during high-parallel short runs?
-4. What replay cap should be used for the first 1M/3M/10M ladder after
-   capacity testing?
+1. Does 1024 envs remain stable for 1M with `grad_updates_per_step=16`?
+2. Does `max_replay_size=1000000` fit the 12GB GPU with XLA/env overhead?
+3. Do losses, alpha, Q, actor drift, and regularization metrics remain finite?
+4. Does checkpoint readiness pass after the bounded 1M run?
 
-Do not jump into 1M, 3M, or 10M from this report update.
+Do not jump into 3M or 10M from this report update.
 
 ## Migration Reminders
 

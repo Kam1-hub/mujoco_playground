@@ -1,7 +1,7 @@
 # G1 SAC Integration Status And Roadmap
 
 Status: updated on 2026-05-14 after the R3 250k actor-regularization extension
-and high-parallel capacity planning.
+and high-parallel capacity benchmark.
 
 ## 1. Mission
 
@@ -190,14 +190,15 @@ Validation ladder:
 25. Fresh 100k actor regularization R2/R3 coefficient sweep
 26. Bounded R3 250k actor regularization extension
 27. High-parallel 512/1024/2048 capacity benchmark
-28. 1M training
+28. Bounded 1024-env 1M run
+29. Multi-million training
 
 Status:
 
-- Steps 1 through 26 are complete.
-- Step 27 is the next recommended benchmark.
-- Step 28 remains `NOT VALIDATED` and requires separate resource and
-  stop-condition planning after capacity results.
+- Steps 1 through 27 are complete.
+- Step 28 is the next recommended bounded run.
+- Step 29 remains `NOT VALIDATED` and requires separate resource and
+  stop-condition planning after the bounded 1M result.
 
 ### Phase 6: Reports, Commits, Migration Handoff
 
@@ -1230,8 +1231,8 @@ claim.
 ## 22. High-Parallel Capacity Plan
 
 The 128-env ladder is now classified as runtime/diagnostic evidence, not a
-policy-quality benchmark for G1. The next step is a capacity benchmark that
-coordinates off-policy update pressure:
+policy-quality benchmark for G1. The high-parallel capacity benchmark was
+planned to coordinate off-policy update pressure:
 
 | num_envs | batch_size | grad_updates_per_step | Replay cap | Logdir |
 |---:|---:|---:|---:|---|
@@ -1251,6 +1252,22 @@ decimal / 12.50GiB raw and 10M replay is about 26.84GB / 25.00GiB before
 overhead. Long runs should begin with about a 1M replay cap, increasing only
 after stress evidence.
 
-## 23. Current Position In One Sentence
+## 23. High-Parallel Capacity Results
 
-SAC Route B is implemented; CPU tiny smoke, WSL2 GPU preflight, Route B GPU 10k smoke, normalizer-ready checkpoint validation, bounded deterministic eval smoke, 50k sanity/eval, 100k sanity/eval, 250k sanity/eval, 500k sanity/eval, both-mode eval diagnostic, full action diagnostic, fresh 100k/250k train-time actor drift diagnostics, fresh 100k alpha/entropy ablation diagnostics, the A1/A3/A4 multi-seed eval-only ablation diagnostic, bounded fresh 250k/500k/750k A4 extensions, fresh 100k actor-regularization R1, fresh 100k actor-regularization R2/R3, and bounded R3 250k have passed runtime gates; 1M, full eval benchmarking, domain randomization, and fine-tuning remain `NOT VALIDATED`; the next step is the 512/1024/2048 high-parallel capacity benchmark before any multi-million quality claim.
+The 512/1024/2048 env capacity benchmark is complete. All three cases returned
+`TRAIN_OK`, wrote checkpoints, and passed checkpoint readiness. Sample UTD was
+kept near `4.0` by scaling `grad_updates_per_step=8/16/32`.
+
+| num_envs | grad_updates_per_step | SPS | critic_loss | alpha | q | target_q | Result |
+|---:|---:|---:|---:|---:|---:|---:|---|
+| 512 | 8 | 773.12 | 0.1166 | 0.04608 | 3.1799 | 3.1973 | PASS |
+| 1024 | 16 | 953.36 | 0.1217 | 0.04605 | 3.4970 | 3.4905 | PASS |
+| 2048 | 32 | 826.26 | 0.0706 | 0.04597 | 3.7519 | 3.7731 | PASS |
+
+`1024` envs is the best next bounded 1M candidate. `2048` is feasible but
+slower in this benchmark; `512` is stable but slower. Full details are recorded
+in `reports/sac_integration/14_high_parallel_capacity_results.md`.
+
+## 24. Current Position In One Sentence
+
+SAC Route B is implemented; CPU tiny smoke, WSL2 GPU preflight, Route B GPU 10k smoke, normalizer-ready checkpoint validation, bounded deterministic eval smoke, 50k sanity/eval, 100k sanity/eval, 250k sanity/eval, 500k sanity/eval, both-mode eval diagnostic, full action diagnostic, fresh 100k/250k train-time actor drift diagnostics, fresh 100k alpha/entropy ablation diagnostics, the A1/A3/A4 multi-seed eval-only ablation diagnostic, bounded fresh 250k/500k/750k A4 extensions, fresh 100k actor-regularization R1, fresh 100k actor-regularization R2/R3, bounded R3 250k, and the 512/1024/2048 high-parallel capacity benchmark have passed runtime gates; 1024 envs is the next bounded 1M candidate; 1M, full eval benchmarking, domain randomization, and fine-tuning remain `NOT VALIDATED`.

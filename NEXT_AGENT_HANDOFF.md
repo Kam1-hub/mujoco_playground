@@ -19,7 +19,7 @@ domain randomization, or fine-tuning as part of the current validation phase.
 - Path: `/home/admin/projects/mujoco_playground/g1_sac_dev`
 - Branch: `sac-integration`
 - Latest recorded diagnostic state: bounded R3 250k actor-regularization
-  extension plus high-parallel capacity plan;
+  extension plus high-parallel 512/1024/2048 capacity benchmark;
   use `git log --oneline -5` for the exact commit hash.
 - Remote: `origin https://github.com/Kam1-hub/mujoco_playground.git`
 - Last known pushed branch: `sac-integration`
@@ -186,16 +186,16 @@ Current validated ladder:
 - Bounded R3 250k actor-regularization extension: PASS
   runtime/checkpoint/eval; R3 retained drift control at 250k and improved
   deterministic/stochastic eval versus R3 100k and A4 250k.
-- High-parallel capacity plan: recorded. Next benchmark should test
-  512/1024/2048 envs with coordinated update ratios before any multi-million
-  quality claim.
+- High-parallel 512/1024/2048 capacity benchmark: PASS. All three cases
+  returned `TRAIN_OK`, wrote checkpoints, and passed readiness. `1024` envs was
+  fastest at `953.36` SPS and is the next bounded 1M candidate.
 - Action joint mapping diagnostic: PASS.
 
 Still not validated:
 
 - 1M training.
 - Full performance benchmark.
-- High-parallel 512/1024/2048 capacity benchmark.
+- Bounded 1024-env 1M run.
 - PPO comparison.
 - Domain randomization.
 - Fine-tuning.
@@ -340,6 +340,16 @@ All paths below are runtime artifacts and should remain ignored:
 - `./logs/sac_eval_actor_reg_250k_multiseed/`
   - Five 16 env x 1000 both-mode eval JSONs from the R3 250k checkpoint.
   - All returned `EVAL_OK`; all action/reward/obs NaN flags false.
+- `./logs/sac_capacity_env512_65k_r3_b256_g8_replay262k/sac_lift_step_65536.pkl`
+  - High-parallel 512-env capacity checkpoint.
+  - `TRAIN_OK`; checkpoint readiness PASS.
+- `./logs/sac_capacity_env1024_65k_r3_b256_g16_replay262k/sac_lift_step_65536.pkl`
+  - High-parallel 1024-env capacity checkpoint.
+  - `TRAIN_OK`; checkpoint readiness PASS; fastest capacity case at
+    `953.36` SPS.
+- `./logs/sac_capacity_env2048_65k_r3_b256_g32_replay262k/sac_lift_step_65536.pkl`
+  - High-parallel 2048-env capacity checkpoint.
+  - `TRAIN_OK`; checkpoint readiness PASS; feasible but slower than 1024.
 - `./logs/sac_lift_schema_dry_run/sac_lift_step_0.pkl`
   - Dry-run schema validation artifact, if still present.
 
@@ -711,8 +721,9 @@ Both-mode eval diagnostic:
   stochastic 5-seed reward `-6.3983 -> -5.9802`, and critic loss improved
   `0.1684 -> 0.0536`.
 - The earlier 128-env ladder is now runtime/diagnostic evidence, not a
-  policy-quality conclusion for G1. Next work should test 512/1024/2048 env
-  capacity while preserving approximate sampled update-to-data ratio.
+  policy-quality conclusion for G1. The 512/1024/2048 env capacity benchmark
+  has passed while preserving approximate sampled update-to-data ratio. `1024`
+  envs is now the best next bounded 1M candidate.
 - Action joint mapping now links the 500k deterministic top action dimensions
   mainly to right ankle roll/pitch, waist pitch, right knee, and hip roll. See
   `reports/sac_integration/13_action_joint_mapping_diagnostic.md`.
@@ -727,11 +738,10 @@ Both-mode eval diagnostic:
 1. Do read-only status checks.
 2. Read this file and `reports/sac_integration/09_phase_summary_and_risks.md`.
 3. Review `reports/sac_integration/12_alpha_entropy_ablation_plan.md`.
-4. Run the high-parallel capacity benchmark next: 512/1024/2048 envs, 65k
-   steps, R3 settings, replay cap `262144`, and `grad_updates_per_step`
-   `8/16/32`.
-5. Pick the highest stable and efficient env count before planning 1M/3M/10M.
-6. Do not draft or execute 1M, 3M, or 10M automatically.
+4. Plan a bounded 1024-env 1M run with R3 settings,
+   `grad_updates_per_step=16`, `batch_size=256`, and initial replay cap
+   `max_replay_size=1000000`.
+5. Do not draft or execute 3M or 10M automatically.
 
 Do not start long training automatically. Do not modify reward, action scale,
 Kp, domain randomization, fine-tuning, PPO, or RSL.
@@ -787,8 +797,8 @@ git remote -v, and git check-ignore -v logs .venv
 g1_env/external_deps/mujoco_menagerie || true.
 
 Current HEAD should include the report commit for the R3 250k
-actor-regularization extension and high-parallel capacity plan unless newer
-report commits exist. GPU 10k smoke, deterministic eval smoke, GPU 50k
+actor-regularization extension and high-parallel capacity benchmark unless
+newer report commits exist. GPU 10k smoke, deterministic eval smoke, GPU 50k
 sanity/eval, GPU 100k sanity/eval, GPU 250k sanity/eval, GPU 500k sanity/eval,
 100k/250k/500k both-mode eval diagnostic, and full action distribution /
 reward-component diagnostic have passed. Fresh 100k and fresh 250k actor drift
@@ -796,13 +806,13 @@ diagnostics have also passed. Fresh 100k alpha/entropy A1/A3/A4, A4 250k,
 A4 500k, and A4 750k have passed runtime gates, but A4 750k worsened drift and
 eval quality. Fresh 100k R1 was too weak; fresh 100k R2/R3 found R3 as the
 strongest candidate; bounded R3 250k has now passed and retained drift control.
-1M is not validated.
+The high-parallel 512/1024/2048 capacity benchmark has passed, and 1024 envs is
+the next bounded 1M candidate. 1M is not validated.
 
 Do not run training, eval, preflight, installs, downloads, or git commits unless
-explicitly asked. Next recommended work is the 512/1024/2048 high-parallel
-capacity benchmark using R3 settings and coordinated update ratios:
-`grad_updates_per_step=8/16/32` with `batch_size=256` and replay cap `262144`.
-Do not start 1M, 3M, or 10M without capacity results and a separate
-resource/stop-condition plan. Do not change reward, action_scale, Kp, domain
-randomization, fine-tuning, PPO, or RSL.
+explicitly asked. Next recommended work is a bounded 1024-env 1M plan using R3
+settings, `grad_updates_per_step=16`, `batch_size=256`, and initial replay cap
+`max_replay_size=1000000`. Do not start 3M or 10M without the 1M result and a
+separate resource/stop-condition plan. Do not change reward, action_scale, Kp,
+domain randomization, fine-tuning, PPO, or RSL.
 ```

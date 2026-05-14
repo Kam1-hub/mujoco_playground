@@ -1,7 +1,35 @@
 # Smoke Results
 
 Status: updated on 2026-05-14 after the R3 250k actor-regularization extension
-and high-parallel capacity planning.
+and high-parallel capacity benchmark.
+
+## 2026-05-14 High-Parallel Capacity Benchmark
+
+- Scope: capacity benchmark only; no extra eval, code change, or commit during
+  the benchmark run.
+- Cases: `512`, `1024`, and `2048` envs with R3 settings and UTD-preserving
+  `grad_updates_per_step=8/16/32`.
+- All three cases: `TRAIN_OK`, checkpoint exists, checkpoint readiness PASS.
+- Checkpoints:
+  - `./logs/sac_capacity_env512_65k_r3_b256_g8_replay262k/sac_lift_step_65536.pkl`
+  - `./logs/sac_capacity_env1024_65k_r3_b256_g16_replay262k/sac_lift_step_65536.pkl`
+  - `./logs/sac_capacity_env2048_65k_r3_b256_g32_replay262k/sac_lift_step_65536.pkl`
+- No NaN, Inf, OOM, fatal CUDA, checkpoint failure, or unignored artifact was
+  reported.
+
+Summary:
+
+| envs | UTD | gradient_steps | wall_time | SPS | critic_loss | alpha | q | target_q |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 512 | 4.0 | 776 | 84.768s | 773.12 | 0.1166 | 0.04608 | 3.1799 | 3.1973 |
+| 1024 | 4.0 | 784 | 68.742s | 953.36 | 0.1217 | 0.04605 | 3.4970 | 3.4905 |
+| 2048 | 4.0 | 800 | 79.317s | 826.26 | 0.0706 | 0.04597 | 3.7519 | 3.7731 |
+
+Interpretation: `1024` envs is the best next bounded 1M candidate. It was
+fastest at `953.36` SPS and retained finite stable metrics with readiness PASS.
+`2048` envs is feasible but slower in this test; `512` envs is stable but
+slower. Full detail is in
+`reports/sac_integration/14_high_parallel_capacity_results.md`.
 
 ## 2026-05-14 R3 250k Actor-Regularization Extension
 
@@ -74,8 +102,7 @@ policy-quality claim.
   - `512 envs`: `grad_updates_per_step=8`
   - `1024 envs`: `grad_updates_per_step=16`
   - `2048 envs`: `grad_updates_per_step=32`
-- Recommended next step: run 65k capacity benchmarks at 512/1024/2048 envs
-  using R3 settings and `max_replay_size=262144`; do not go direct to 10M.
+- This plan was executed in the high-parallel capacity benchmark above.
 
 ## 2026-05-14 Fresh 100k Actor-Regularization R2/R3 Sweep
 
