@@ -10,7 +10,7 @@ continue without relying on chat history.
 - Path: `/home/admin/projects/mujoco_playground/g1_sac_dev`
 - Branch: `sac-integration`
 - Current diagnostic/report baseline before this report update:
-  `2dcf287 Add SAC reset disturbance scale overrides`
+  `5d61e3c Add SAC action rate reward scale override`
 - Remote: `origin https://github.com/Kam1-hub/mujoco_playground.git`
 - External menagerie commit: `1b86ece576591213e2b666ebf59508454200ca97`
 
@@ -69,6 +69,7 @@ Runtime artifacts are local and ignored. Do not commit `logs/`, `.venv/`,
 | Eval-only 100k termination/contact diagnostic sweep | PASS_EVAL_FALL_DOMINATED | `./logs/sac_eval_termination_diag_100k/`, `9` JSON outputs; push-disable, phase-freeze, and feet-air-time-mask checkpoints; fixed `fwd0.5`, `fwd1.0`, and stand; all `EVAL_OK`, NaN flags false, `reward/termination=-100` in all 18 mode cases, first done mostly around `51-55` steps, fall-dominated rather than contact-dominated or numerical |
 | Short render terminal diagnostic sweep | PASS_RENDER_FALL_DOMINATED | `./logs/sac_render_terminal_diag_100k/`, `9` matching JSON/MP4 pairs; push-disable, phase-freeze, and feet-air-time-mask checkpoints; deterministic fixed `fwd0.5`, `fwd1.0`, and stand; all terminate via fall at step `51-52`, with negative torso-up z, negative root height, high torso XY angular velocity, and no contact/NaN reason |
 | Fresh env1024 R3 100k reset-calm diagnostic | PASS_RUNTIME_PARTIAL_STABILITY_SIGNAL | `./logs/sac_lift_gpu_100k_env1024_r3_reset_calm/sac_lift_step_99328.pkl`, `--env_reset_joint_noise_scale 0.0 --env_reset_root_qvel_scale 0.0`, `TRAIN_OK`, readiness PASS, train `done_fraction=0.00391`, deterministic terminal renders delayed fall to step `68`, but fixed fwd0.5/fwd1.0/stand still terminate by fall with `reward/termination=-100` |
+| Fresh env1024 R3 100k reset-calm action-rate diagnostic | PASS_RUNTIME_NO_STABILITY_GAIN | `./logs/sac_lift_gpu_100k_env1024_r3_reset_calm_action_rate_m0p01/sac_lift_step_99328.pkl`, reset-calm plus `--env_reward_action_rate_scale -0.01`, `TRAIN_OK`, readiness PASS, fixed-command eval/render NaN flags false, but first fall remained around step `68`, deterministic reward worsened slightly versus reset-calm, and `fwd1.0` tracking weakened |
 | 10M training | NOT VALIDATED | Blocked by fixed-forward weakness and stochastic collapse; requires alpha/entropy decision review, resource plan, and stop conditions |
 
 ## Completed Outcomes
@@ -290,6 +291,18 @@ Runtime artifacts are local and ignored. Do not commit `logs/`, `.venv/`,
   stand eval/render cases all terminate by fall with `reward/termination=-100`,
   torso-up z below `0`, and negative terminal root height. This confirms reset
   disturbance contributes to early fall but is not the whole blocker.
+- Validated fresh env1024 R3 100k reset-calm action-rate diagnostic. The run
+  retained reset-calm and added `--env_reward_action_rate_scale -0.01`. It
+  produced checkpoint
+  `./logs/sac_lift_gpu_100k_env1024_r3_reset_calm_action_rate_m0p01/sac_lift_step_99328.pkl`,
+  returned `TRAIN_OK`, and passed checkpoint readiness. Fixed-command eval and
+  deterministic render smokes completed with no NaN, OOM, fatal CUDA,
+  checkpoint, eval, or render failure. The gate failed: deterministic first
+  done stayed around step `68`, deterministic render first done stayed `68`,
+  deterministic rewards worsened slightly versus reset-calm, and deterministic
+  `fwd1.0` tracking weakened `16.2483 -> 13.4108`. This weakens small
+  action-rate smoothing as the next standalone fix and points back to explicit
+  base/upright stability design.
 
 ### Full Action Diagnostic Summary
 
@@ -1145,12 +1158,15 @@ zero-command phase-freeze gate was runtime-valid but also left termination
 saturated and did not improve stand. The feet-air-time command-mask gate
 correctly zeroed `reward/feet_air_time` on stand, but termination remained
 saturated and stand did not improve. The termination/contact and render sweeps
-now identify the immediate failure as early torso/base fall around `51-52`
-steps, not illegal contact and not qpos/qvel NaN. Prioritize:
+identified the immediate failure as early torso/base fall around `51-52`
+steps, not illegal contact and not qpos/qvel NaN. Reset-calm delayed this to
+about step `68`, but reset-calm plus `action_rate=-0.01` did not materially
+improve fall timing and slightly worsened deterministic reward/tracking.
+Prioritize:
 
-1. early-fall stabilization/curriculum design around reset disturbance/warmup,
-   command warmup, base-height/alive/orientation/angular-velocity stabilizers,
-   and action-rate smoothing;
+1. early-fall stabilization/curriculum design around explicit base/upright
+   terms: orientation, angular-velocity, base-height, alive, and possibly
+   vertical velocity support;
 2. detailed video inspection only if needed to distinguish fall direction or
    posture collapse; do not overclaim direction from terminal JSON alone;
 3. keep reward/action scale/Kp unchanged until the termination/contact source

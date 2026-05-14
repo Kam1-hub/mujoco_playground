@@ -1,6 +1,86 @@
 # Smoke Results
 
-Status: updated on 2026-05-15 after the isolated reset-calm 100k diagnostic.
+Status: updated on 2026-05-15 after the reset-calm action-rate 100k diagnostic.
+
+## 2026-05-15 Fresh Env1024 R3 100k Reset-Calm Action-Rate Diagnostic
+
+- Scope: fresh env1024/R3/UTD-preserving 100k diagnostic using the reset-calm
+  baseline plus `--env_reward_action_rate_scale -0.01`.
+- Reset-calm overrides retained:
+  `--env_reset_joint_noise_scale 0.0 --env_reset_root_qvel_scale 0.0`.
+- Related code commit:
+  `5d61e3c Add SAC action rate reward scale override`.
+- Isolation: no push-disable, zero-command phase-freeze, feet-air-time
+  command mask, feet-slip mode, or feet-slip scale override was combined with
+  this run.
+- Status: `TRAIN_OK`.
+- Checkpoint:
+  `./logs/sac_lift_gpu_100k_env1024_r3_reset_calm_action_rate_m0p01/sac_lift_step_99328.pkl`.
+- Checkpoint readiness: PASS.
+- Env steps: `99328`.
+- Gradient steps: `1552`.
+- Wall time: `76.891s`.
+- SPS: `1291.80`.
+- Actor loss: `-6.0360`.
+- Critic loss: `0.1037`.
+- Q / target Q: `5.2058 / 5.2693`.
+- Reward mean: `-0.07426`.
+- Done fraction: `0.003906`.
+- Discount mean: `0.996094`.
+- Alpha / log alpha: `0.04278 / -3.1516`.
+
+Actor drift summary:
+
+| Metric | Final |
+|---|---:|
+| actor policy mean abs mean | 0.1190 |
+| actor policy mean abs max | 1.2029 |
+| actor log_std mean/min/max | -0.1419 / -0.5583 / 0.0611 |
+| actor policy std mean | 0.8691 |
+| sampled action abs mean | 0.5206 |
+| sampled action saturation 0.95 | 0.03637 |
+| deterministic action abs mean | 0.1164 |
+| deterministic action saturation 0.95 | 0.0 |
+
+Fixed-command and stand eval smokes:
+
+| Command | Mode | Reward | action_rate | tracking_lin_vel | tracking_ang_vel | termination | first done | reason |
+|---|---|---:|---:|---:|---:|---:|---:|---|
+| `[0.5,0,0]` | deterministic | -2.2099 | -0.0165 | 31.6174 | 40.0881 | -100 | 68.0 | fall 4/4 |
+| `[0.5,0,0]` | stochastic | -6.4904 | -11.8008 | 20.8587 | 4.1166 | -100 | 62.0 | fall 4/4 |
+| `[1.0,0,0]` | deterministic | -2.5499 | -0.0167 | 13.4108 | 40.7461 | -100 | 68.5 | fall 4/4 |
+| `[1.0,0,0]` | stochastic | -6.8279 | -12.0762 | 8.8962 | 4.8678 | -100 | 63.5 | fall 4/4 |
+| `[0,0,0]` | deterministic | -4.8924 | -0.0164 | 29.5168 | 39.3451 | -100 | 68.0 | fall 4/4 |
+| `[0,0,0]` | stochastic | -12.2471 | -12.0383 | 23.8466 | 5.0292 | -100 | 63.5 | fall 4/4 |
+
+Deterministic render smokes remained fall-limited:
+
+- `fwd0.5`: first done `68`, terminal
+  `root_h=-0.0976`, `up_z=-0.0422`, `torso_ang_xy=4.1292`.
+- `fwd1.0`: first done `68`, terminal
+  `root_h=-0.0892`, `up_z=-0.0251`, `torso_ang_xy=3.8114`.
+- `stand`: first done `68`, terminal
+  `root_h=-0.1035`, `up_z=-0.0586`, `torso_ang_xy=4.3298`.
+
+Conclusion:
+
+- The action-rate gate failed.
+- Fall timing did not materially improve over reset-calm: deterministic eval
+  first done stayed around `68`, and render first done stayed `68` for all
+  commands.
+- Deterministic reward worsened slightly versus reset-calm
+  (`fwd0.5 -2.0443 -> -2.2099`, `fwd1.0 -2.3095 -> -2.5499`,
+  `stand -4.4102 -> -4.8924`).
+- Deterministic `fwd1.0` `tracking_lin_vel` weakened
+  `16.2483 -> 13.4108`.
+- The action-rate penalty is tiny on deterministic trajectories but large on
+  stochastic trajectories; it did not fix early torso/base fall.
+- Do not continue to 250k, 5M, or 10M from this result.
+- Next targeted work should be explicit base/upright stability design around
+  orientation, `ang_vel_xy`, `base_height`, `alive`, and possibly `lin_vel_z`.
+
+See `reports/sac_integration/27_action_rate_diagnostic.md` for the focused
+record.
 
 ## 2026-05-15 Fresh Env1024 R3 100k Reset-Calm Diagnostic
 
@@ -72,9 +152,8 @@ Conclusion:
   by fall, `reward/termination=-100` remains saturated, torso-up z crosses
   below `0`, and root height is still negative.
 - Do not continue to 250k, 5M, or 10M from this result.
-- Next targeted work should be controlled base-stability/action-smoothness
-  design: alive, base_height, lin_vel_z, orientation/ang_vel stabilization, or
-  action-rate smoothing.
+- Next targeted work should be explicit base/upright stability design:
+  orientation, `ang_vel_xy`, base_height, alive, and possibly `lin_vel_z`.
 
 See `reports/sac_integration/26_reset_calm_diagnostic.md` for the focused
 record.

@@ -34,6 +34,7 @@ Required reports:
 - `24_termination_contact_diagnostics.md`
 - `25_terminal_render_diagnostics.md`
 - `26_reset_calm_diagnostic.md`
+- `27_action_rate_diagnostic.md`
 
 Repo-root continuation handoff:
 

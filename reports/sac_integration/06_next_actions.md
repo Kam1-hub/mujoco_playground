@@ -1,6 +1,6 @@
 # Next Actions
 
-Status: updated on 2026-05-15 after the isolated reset-calm 100k diagnostic.
+Status: updated on 2026-05-15 after the reset-calm action-rate 100k diagnostic.
 
 ## Immediate State
 
@@ -344,8 +344,9 @@ Status: updated on 2026-05-15 after the isolated reset-calm 100k diagnostic.
   torso/base failure visually and in render JSON: every variant falls around
   `51-52` steps and no variant meaningfully improves survival. Move to
   early-fall stabilization/curriculum design next: reset disturbance/warmup,
-  command warmup, base-height/alive/orientation/angular-velocity stabilizers,
-  and action-rate smoothing. Keep
+  command warmup, and explicit base/upright stability terms such as
+  orientation, angular velocity, base-height, alive, and possibly `lin_vel_z`.
+  Treat the reset-calm action-rate gate as a negative smoothing reference. Keep
   `alpha_floor=0.03` only as a secondary alpha/entropy diagnostic. Do not patch
   alpha sign blindly; the sign audit found no direct Brax-style sign bug.
 - Detailed video inspection may still help distinguish fall direction and
@@ -635,17 +636,19 @@ fixed-alpha diagnostics, the `foot_velocity` feet-slip gate, the
 `feet_slip_scale=0` gate, the push-disable gate, the zero-command phase-freeze
 gate, the feet-air-time command-mask gate, the eval-only termination/contact
 sweep, the short render terminal sweep, and the reset-calm 100k gate have now
-been executed and recorded. Do not automatically run 250k, 5M, or 10M. The
-next useful step is controlled base-stability/action-smoothness design, with
-alpha-floor only as a secondary diagnostic:
+been executed and recorded. The reset-calm plus `action_rate=-0.01` gate has
+also been executed and recorded; it did not materially improve first-fall
+timing and slightly worsened deterministic reward/tracking versus reset-calm.
+Do not automatically run 250k, 5M, or 10M. The next useful step is controlled
+base/upright stability design, with alpha-floor only as a secondary diagnostic:
 
-1. Stabilization path: design a narrow default-off ablation around alive,
-   base-height, lin_vel_z, stronger orientation/angular-velocity stabilization,
-   or action-rate smoothing.
+1. Stabilization path: design a narrow default-off ablation around orientation,
+   `ang_vel_xy`, base-height, alive, and possibly `lin_vel_z`.
 2. Termination path: reset-calm delayed fall from `51-52` to about `68` steps,
    so reset disturbance is a contributor, but all fixed-command cases still
-   fall. Current evidence points to upright/base instability, not illegal
-   contact and not qpos/qvel NaN.
+   fall. The action-rate gate stayed around step `68`, so current evidence
+   points to upright/base instability, not action smoothness alone, illegal
+   contact, or qpos/qvel NaN.
 3. Reward/prior follow-up: do not touch broad reward terms, `action_scale`, or
    Kp without a targeted base-stability/action-smoothness ablation plan.
 4. Entropy path: keep `alpha_floor=0.03` as a secondary diagnostic; do not keep
