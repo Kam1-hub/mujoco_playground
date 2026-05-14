@@ -1,6 +1,6 @@
 # G1 SAC Integration Status And Roadmap
 
-Status: updated on 2026-05-15 after the fixed-command forward eval gate.
+Status: updated on 2026-05-15 after the fresh env1024 R3 100k fixed-alpha diagnostic.
 
 ## 1. Mission
 
@@ -195,7 +195,8 @@ Validation ladder:
 31. Fixed-command checkpoint render helper smoke
 32. Fixed-command eval helper smoke and alpha sign audit
 33. Fixed-command forward eval gate
-34. 10M-scale training
+34. Fresh env1024 R3 100k fixed-alpha diagnostic
+35. 10M-scale training
 
 Status:
 
@@ -216,7 +217,12 @@ Status:
   direct 5M/10M because `fwd0.5` deterministic is only near break-even/noisy,
   `fwd1.0` deterministic is weak, and stochastic fixed-forward eval remains
   poor.
-- Step 34 remains `NOT VALIDATED` and requires alpha/entropy ablation review,
+- Step 34 passed runtime/checkpoint gates with weak fixed-command smoke:
+  fresh env1024 R3 100k `fixed_alpha=0.03` returned `TRAIN_OK`, checkpoint
+  readiness PASS, and effective alpha stayed fixed at `0.03`, but `fwd0.5` and
+  `fwd1.0` small fixed-command smokes had negative rewards, low
+  `tracking_lin_vel`, and `termination=-100`.
+- Step 35 remains `NOT VALIDATED` and requires alpha/entropy ablation review,
   resource plan, and stop conditions.
 
 ### Phase 6: Reports, Commits, Migration Handoff
@@ -1324,6 +1330,53 @@ found versus Brax-style SAC, but persistent downward alpha pressure remains a
 likely risk because the observed log-probability range keeps
 `-log_prob - target_entropy` positive and there is no alpha floor.
 
-## 26. Current Position In One Sentence
+## 26. Fresh Env1024 R3 100k Fixed-Alpha Diagnostic
 
-SAC Route B is implemented; CPU tiny smoke, WSL2 GPU preflight, Route B GPU 10k smoke, normalizer-ready checkpoint validation, bounded deterministic eval smoke, 50k sanity/eval, 100k sanity/eval, 250k sanity/eval, 500k sanity/eval, both-mode eval diagnostic, full action diagnostic, fresh 100k/250k train-time actor drift diagnostics, fresh 100k alpha/entropy ablation diagnostics, the A1/A3/A4 multi-seed eval-only ablation diagnostic, bounded fresh 250k/500k/750k A4 extensions, fresh 100k actor-regularization R1, fresh 100k actor-regularization R2/R3, bounded R3 250k, the 512/1024/2048 high-parallel capacity benchmark, bounded 1024-env 1M R3, bounded 1024-env 3M R3, fixed-command render support, fixed-command eval support, alpha sign audit, and fixed-command forward eval gate have passed their bounded gates; 3M provides the first strong deterministic-policy improvement signal but also severe alpha/std collapse, stochastic degradation, and weak `[1,0,0]` forward tracking; 5M/10M, full eval benchmarking, domain randomization, and fine-tuning remain `NOT VALIDATED`.
+Status: `TRAIN_OK`.
+
+- Variant: `fixed_alpha=0.03`.
+- Checkpoint:
+  `./logs/sac_lift_gpu_100k_env1024_r3_fixed_alpha_0p03/sac_lift_step_99328.pkl`
+- Checkpoint readiness: PASS.
+- `env_steps`: `99328`.
+- `gradient_steps`: `1312`.
+- `wall_time`: `46.3008s`.
+- `sps`: `2145.2764`.
+- `actor_loss`: `-3.45169`.
+- `critic_loss`: `0.114333`.
+- `q / target_q`: `2.87063 / 2.87375`.
+- `reward_mean`: `-0.134369`.
+- `done_fraction`: `0.0234375`.
+- `discount_mean`: `0.976563`.
+
+Alpha behavior:
+
+- `alpha_raw=0.0497871`.
+- `log_alpha_raw=-3.0`.
+- `alpha_effective=0.03`.
+- `log_alpha_effective=-3.50656`.
+- `alpha_loss=1.29717`.
+- `alpha_log_prob=-18.8043`.
+- `alpha_grad_proxy_exp=1.29717`.
+- `alpha_grad_proxy_log=26.0543`.
+
+Fixed-alpha mechanics worked: effective alpha stayed fixed at `0.03`, and raw
+`log_alpha` stayed at init `-3.0`.
+
+Small fixed-command smoke was weak:
+
+- `fwd0.5` deterministic reward `-3.9345`, action abs `0.1268`,
+  `tracking_lin_vel=8.0171`, `termination=-100`.
+- `fwd1.0` deterministic reward `-3.9779`, action abs `0.1255`,
+  `tracking_lin_vel=1.8457`, `termination=-100`.
+- Stochastic smokes were also negative (`-5.9812` and `-5.9239`) with sampled
+  action magnitude around `0.519`.
+
+Interpretation: runtime/checkpoint are fine, but `fixed_alpha=0.03` does not
+solve forward tracking at 100k. Do not run 250k, 5M, or 10M from this result.
+Next short diagnostic should be fresh env1024 R3 100k `fixed_alpha=0.05`, with
+`alpha_floor=0.03` as the next alternative.
+
+## 27. Current Position In One Sentence
+
+SAC Route B is implemented; CPU tiny smoke, WSL2 GPU preflight, Route B GPU 10k smoke, normalizer-ready checkpoint validation, bounded deterministic eval smoke, 50k sanity/eval, 100k sanity/eval, 250k sanity/eval, 500k sanity/eval, both-mode eval diagnostic, full action diagnostic, fresh 100k/250k train-time actor drift diagnostics, fresh 100k alpha/entropy ablation diagnostics, the A1/A3/A4 multi-seed eval-only ablation diagnostic, bounded fresh 250k/500k/750k A4 extensions, fresh 100k actor-regularization R1, fresh 100k actor-regularization R2/R3, bounded R3 250k, the 512/1024/2048 high-parallel capacity benchmark, bounded 1024-env 1M R3, bounded 1024-env 3M R3, fixed-command render support, fixed-command eval support, alpha sign audit, fixed-command forward eval gate, and fresh env1024 R3 100k `fixed_alpha=0.03` diagnostic have passed their bounded gates; 3M provides the first strong deterministic-policy improvement signal but also severe alpha/std collapse, stochastic degradation, and weak `[1,0,0]` forward tracking; `fixed_alpha=0.03` preserved alpha but did not solve 100k fixed-forward tracking; 5M/10M, full eval benchmarking, domain randomization, and fine-tuning remain `NOT VALIDATED`.

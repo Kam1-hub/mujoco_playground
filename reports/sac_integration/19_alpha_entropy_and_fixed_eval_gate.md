@@ -178,6 +178,88 @@ Audit conclusion:
 - alpha: `0.000766`
 - gradient proxy: about `0.00995`
 
+## Fresh 100k Fixed-Alpha Diagnostic
+
+Gate name: fresh env1024 R3 100k fixed-alpha diagnostic.
+
+- Variant: `fixed_alpha=0.03`.
+- Scope: short diagnostic training, checkpoint readiness, and small
+  fixed-command smoke already completed before this report update.
+- No 250k, 5M, 10M, render, code change, reward, `action_scale`, Kp, PPO/RSL,
+  or checkpoint schema change was made for this report update.
+- Training status: `TRAIN_OK`.
+- Checkpoint:
+  `./logs/sac_lift_gpu_100k_env1024_r3_fixed_alpha_0p03/sac_lift_step_99328.pkl`
+- Checkpoint readiness: PASS.
+
+Training metrics:
+
+| env_steps | gradient_steps | wall_time | sps | actor_loss | critic_loss | q | target_q | reward_mean | done_fraction | discount_mean |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 99328 | 1312 | 46.3008s | 2145.2764 | -3.45169 | 0.114333 | 2.87063 | 2.87375 | -0.134369 | 0.0234375 | 0.976563 |
+
+Alpha metrics:
+
+| alpha_raw | log_alpha_raw | alpha_effective | log_alpha_effective | fixed_alpha | alpha_loss_type_id | alpha_loss | alpha_log_prob | alpha_grad_proxy_exp | alpha_grad_proxy_log |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 0.0497871 | -3.0 | 0.03 | -3.50656 | 0.03 | 0 | 1.29717 | -18.8043 | 1.29717 | 26.0543 |
+
+Interpretation: the fixed-alpha mechanism worked. Effective alpha stayed fixed
+at `0.03`, and raw `log_alpha` stayed at init `-3.0`.
+
+Actor drift metrics:
+
+| Metric | Final | Interval |
+|---|---:|---:|
+| actor policy mean abs mean | 0.147356 | 0.125020 |
+| actor policy mean abs max | 1.25299 | 0.826388 |
+| actor log_std mean | -0.157015 | -0.138324 |
+| actor log_std min | -0.602285 | -0.608109 |
+| actor log_std max | 0.086500 | 0.235712 |
+| actor policy std mean | 0.856957 | 0.875592 |
+| sampled action abs mean | 0.523311 | 0.519919 |
+| sampled action saturation 0.95 | 0.0387931 | 0.0417752 |
+| deterministic action abs mean | 0.141470 | 0.122110 |
+| deterministic action saturation 0.95 | 0.0 | 0.0 |
+
+Small fixed-command smoke:
+
+- `fwd0.5` JSON:
+  `./logs/sac_eval_fixed_alpha_100k_smoke/eval_fwd0p5_seed0_both_4x200.json`
+- `fwd1.0` JSON:
+  `./logs/sac_eval_fixed_alpha_100k_smoke/eval_fwd1p0_seed0_both_4x200.json`
+- Both outputs returned `EVAL_OK`, `policy_mode=both`, `fixed_command=true`,
+  action diagnostics and reward components present, and action/reward/obs NaN
+  flags false.
+
+| Command | Mode | Reward | Action Abs | tracking_lin_vel | tracking_ang_vel | ang_vel_xy | orientation | termination |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| `[0.5,0,0]` | deterministic | -3.9345 | 0.1268 | 8.0171 | 21.7543 | -56.3528 | -35.5030 | -100 |
+| `[0.5,0,0]` | stochastic | -5.9812 | 0.5193 | 6.3323 | 4.3008 | -122.0122 | -46.7654 | -100 |
+| `[1.0,0,0]` | deterministic | -3.9779 | 0.1255 | 1.8457 | 21.7867 | -53.9996 | -34.8214 | -100 |
+| `[1.0,0,0]` | stochastic | -5.9239 | 0.5188 | 2.7226 | 3.8782 | -118.0140 | -44.9634 | -100 |
+
+Interpretation:
+
+- This is not an infrastructure failure: train, checkpoint readiness, and smoke
+  eval all passed.
+- `fixed_alpha=0.03` preserves alpha but does not solve forward tracking at
+  100k.
+- Both `fwd0.5` and `fwd1.0` smokes have negative reward, low
+  `tracking_lin_vel`, and `termination=-100`.
+- Do not run 250k, 5M, or 10M from this result.
+- Next short diagnostic should be `fixed_alpha=0.05` 100k first, with
+  `alpha_floor=0.03` as the next alternative.
+
+Warnings:
+
+- Known non-fatal WSL2 CUDA driver warning.
+- Known non-fatal JAX cast overflow warning.
+- Sandbox `snap-confine` blocked some `uv` attempts; same commands were rerun
+  externally unchanged.
+- No traceback, OOM, fatal CUDA error, NaN, checkpoint readiness failure, or
+  eval failure was observed.
+
 ## Interpretation
 
 - Fixed-command eval support closes the gap between render-only command
@@ -204,3 +286,9 @@ standard log-alpha update variants as the main ablation candidates. Remaining
 fixed-command coverage for `[0.0, 0.3, 0.0]`, `[0.0, 0.0, 0.5]`, and
 `[0.0, 0.0, 0.0]` is still useful, but should not be used to justify 5M/10M
 without resolving the forward tracking weakness and stochastic collapse.
+
+The first fixed-alpha gate (`fixed_alpha=0.03`, fresh env1024 R3 100k) preserved
+effective alpha but produced weak fixed-command smoke. Do not extend it to 250k
+or longer from this result. If continuing alpha/entropy diagnostics, run another
+short 100k gate with `fixed_alpha=0.05` first; use `alpha_floor=0.03` as the
+next alternative.

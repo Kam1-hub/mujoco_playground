@@ -18,10 +18,11 @@ domain randomization, or fine-tuning as part of the current validation phase.
 
 - Path: `/home/admin/projects/mujoco_playground/g1_sac_dev`
 - Branch: `sac-integration`
-- Latest recorded diagnostic state: fixed-command forward eval gate after
-  fixed-command eval support and alpha sign audit, fixed-command 3M render
-  helper smoke, deterministic 3M render helper smoke, bounded 1024-env 3M R3
-  run, high-parallel 512/1024/2048 capacity benchmark, and 1M follow-up; use
+- Latest recorded diagnostic state: fresh env1024 R3 100k fixed-alpha
+  diagnostic after the fixed-command forward eval gate, fixed-command eval
+  support, alpha sign audit, fixed-command 3M render helper smoke,
+  deterministic 3M render helper smoke, bounded 1024-env 3M R3 run,
+  high-parallel 512/1024/2048 capacity benchmark, and 1M follow-up; use
   `git log --oneline -5` for the exact commit hash.
 - Remote: `origin https://github.com/Kam1-hub/mujoco_playground.git`
 - Last known pushed branch: `sac-integration`
@@ -242,6 +243,16 @@ Current validated ladder:
   `tracking_lin_vel` collapsed from `183.95` at `fwd0.5` to `25.94` at
   `fwd1.0`, and stochastic fixed-forward eval remained poor (`-9.9480` and
   `-11.5115`). This is not a runtime failure, but it blocks direct 5M/10M.
+- Fresh env1024 R3 100k fixed-alpha diagnostic: PASS runtime/checkpoint with
+  weak fixed-command smoke. `fixed_alpha=0.03` kept effective alpha fixed at
+  `0.03` while raw `log_alpha` stayed at `-3.0`. The run returned `TRAIN_OK`,
+  checkpoint
+  `./logs/sac_lift_gpu_100k_env1024_r3_fixed_alpha_0p03/sac_lift_step_99328.pkl`,
+  and readiness PASS. However small fixed-command smoke was weak:
+  `fwd0.5` deterministic reward `-3.9345`, `fwd1.0` deterministic reward
+  `-3.9779`, low `tracking_lin_vel`, and `termination=-100` in both smokes.
+  This is not infrastructure failure, but it does not justify 250k/5M/10M from
+  `fixed_alpha=0.03`.
 - Action joint mapping diagnostic: PASS.
 
 Still not validated:
@@ -888,9 +899,11 @@ weak (`-3.2302` reward avg) and deterministic `tracking_lin_vel` collapsed from
 `183.95` to `25.94`. Stochastic remained poor for both commands.
 
 Do not run training, eval, preflight, installs, downloads, or git commits unless
-explicitly asked. Next recommended work is targeted alpha/entropy ablation
-planning or execution before any longer run, with alpha floor, fixed alpha, or
-standard log-alpha update as leading candidates. A fixed-command `fwd1.0`
+explicitly asked. The latest short gate shows `fixed_alpha=0.03` preserves
+alpha but does not solve 100k fixed-forward tracking. Next recommended work is
+another short alpha/entropy diagnostic, preferably fresh env1024 R3 100k
+`fixed_alpha=0.05`; `alpha_floor=0.03` is the next alternative. Do not run
+250k, 5M, or 10M from the `fixed_alpha=0.03` result. A fixed-command `fwd1.0`
 render/video review is useful, and remaining command coverage for `[0,0.3,0]`,
 `[0,0,0.5]`, and `[0,0,0]` remains useful, but neither should justify 5M/10M
 without resolving forward tracking weakness and stochastic collapse. Do not

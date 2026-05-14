@@ -10,7 +10,7 @@ continue without relying on chat history.
 - Path: `/home/admin/projects/mujoco_playground/g1_sac_dev`
 - Branch: `sac-integration`
 - Current diagnostic code baseline before this report update:
-  `5a8b339 Add SAC fixed-command eval support`
+  `f36f04d Add SAC alpha ablation controls`
 - Remote: `origin https://github.com/Kam1-hub/mujoco_playground.git`
 - External menagerie commit: `1b86ece576591213e2b666ebf59508454200ca97`
 
@@ -59,6 +59,7 @@ Runtime artifacts are local and ignored. Do not commit `logs/`, `.venv/`,
 | Fixed-command 3M eval helper smoke | PASS_EVAL_SMOKE | `./logs/sac_eval_fixedcmd_smoke_3m/eval_cmd_x0p5_seed0_both_4x200.json` |
 | Alpha sign audit | SIGN_OK_BUT_COLLAPSE_RISK | No direct Brax-style SAC sign bug found; persistent downward alpha pressure remains a risk |
 | Fixed-command forward eval gate | PASS_EVAL_MIXED_POLICY | `./logs/sac_eval_fixedcmd_3m_gate/`, commands `[0.5, 0.0, 0.0]` and `[1.0, 0.0, 0.0]`, seeds `0..4`, all `EVAL_OK`, NaN flags false |
+| Fresh env1024 R3 100k fixed-alpha diagnostic | PASS_RUNTIME_WEAK_FIXED_COMMAND | `./logs/sac_lift_gpu_100k_env1024_r3_fixed_alpha_0p03/sac_lift_step_99328.pkl`, `fixed_alpha=0.03`, `TRAIN_OK`, readiness PASS, but small fixed-command smoke was weak |
 | 10M training | NOT VALIDATED | Blocked by fixed-forward weakness and stochastic collapse; requires alpha/entropy decision review, resource plan, and stop conditions |
 
 ## Completed Outcomes
@@ -189,6 +190,16 @@ Runtime artifacts are local and ignored. Do not commit `logs/`, `.venv/`,
   `183.95` at `fwd0.5` to `25.94` at `fwd1.0`, and stochastic fixed-forward
   eval remained poor (`-9.9480` and `-11.5115`). This is not a runtime failure,
   but it blocks direct 5M/10M continuation.
+- Validated fresh env1024 R3 100k `fixed_alpha=0.03` diagnostic. The run
+  produced checkpoint
+  `./logs/sac_lift_gpu_100k_env1024_r3_fixed_alpha_0p03/sac_lift_step_99328.pkl`,
+  returned `TRAIN_OK`, and passed checkpoint readiness. Effective alpha stayed
+  fixed at `0.03`, and raw `log_alpha` stayed at init `-3.0`, so the mechanism
+  worked. However small fixed-command smoke remained weak: `fwd0.5`
+  deterministic reward was `-3.9345`, `fwd1.0` deterministic reward was
+  `-3.9779`, `tracking_lin_vel` was low, and `termination=-100` appeared in
+  both deterministic smokes. This does not justify extending this variant to
+  250k, 5M, or 10M.
 
 ### Full Action Diagnostic Summary
 
@@ -1037,8 +1048,10 @@ commands.
 The next recommended step is a targeted alpha/entropy decision and ablation
 plan, not longer training. Prioritize:
 
-1. alpha floor, fixed alpha, or standard log-alpha update as controlled
-   short-run ablations;
+1. another short fixed-alpha or floor gate: the first `fixed_alpha=0.03`
+   env1024 R3 100k gate preserved alpha but did not solve fixed-forward
+   tracking, so prefer `fixed_alpha=0.05` next and keep `alpha_floor=0.03` as
+   the next alternative;
 2. optional fixed-command `fwd1.0` render/video to distinguish upright shuffle
    from partial forward locomotion;
 3. remaining command coverage for `[0,0.3,0]`, `[0,0,0.5]`, and `[0,0,0]`

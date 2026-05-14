@@ -1,6 +1,88 @@
 # Smoke Results
 
-Status: updated on 2026-05-15 after the fixed-command forward eval gate.
+Status: updated on 2026-05-15 after the fresh env1024 R3 100k fixed-alpha diagnostic.
+
+## 2026-05-15 Fresh Env1024 R3 100k Fixed-Alpha Diagnostic
+
+- Scope: short alpha/entropy diagnostic using `fixed_alpha=0.03`; no 250k,
+  5M, 10M, render, code, reward, `action_scale`, Kp, PPO/RSL, or checkpoint
+  schema change was made for this report update.
+- Status: `TRAIN_OK`.
+- Checkpoint:
+  `./logs/sac_lift_gpu_100k_env1024_r3_fixed_alpha_0p03/sac_lift_step_99328.pkl`
+- Checkpoint readiness: PASS.
+- Env steps: `99328`.
+- Gradient steps: `1312`.
+- Wall time: `46.3008s`.
+- SPS: `2145.2764`.
+- Actor loss: `-3.45169`.
+- Critic loss: `0.114333`.
+- Q / target Q: `2.87063 / 2.87375`.
+- Reward mean: `-0.134369`.
+- Done fraction: `0.0234375`.
+- Discount mean: `0.976563`.
+
+Alpha metrics:
+
+- `alpha_raw=0.0497871`.
+- `log_alpha_raw=-3.0`.
+- `alpha_effective=0.03`.
+- `log_alpha_effective=-3.50656`.
+- `fixed_alpha=0.03`.
+- `alpha_loss_type_id=0`.
+- `alpha_loss=1.29717`.
+- `alpha_log_prob=-18.8043`.
+- `alpha_grad_proxy_exp=1.29717`.
+- `alpha_grad_proxy_log=26.0543`.
+
+Interpretation: fixed-alpha mechanics worked as intended. Effective alpha stayed
+fixed at `0.03`, and raw `log_alpha` stayed at init `-3.0`.
+
+Actor drift summary:
+
+| Metric | Final | Interval |
+|---|---:|---:|
+| actor policy mean abs mean | 0.147356 | 0.125020 |
+| actor policy mean abs max | 1.25299 | 0.826388 |
+| actor log_std mean/min/max | -0.157015 / -0.602285 / 0.086500 | -0.138324 / -0.608109 / 0.235712 |
+| actor policy std mean | 0.856957 | 0.875592 |
+| sampled action abs mean | 0.523311 | 0.519919 |
+| sampled action saturation 0.95 | 0.0387931 | 0.0417752 |
+| deterministic action abs mean | 0.141470 | 0.122110 |
+| deterministic action saturation 0.95 | 0.0 | 0.0 |
+
+Small fixed-command smoke:
+
+| Command | Mode | Reward | Action Abs | tracking_lin_vel | tracking_ang_vel | ang_vel_xy | orientation | termination |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| `[0.5,0,0]` | deterministic | -3.9345 | 0.1268 | 8.0171 | 21.7543 | -56.3528 | -35.5030 | -100 |
+| `[0.5,0,0]` | stochastic | -5.9812 | 0.5193 | 6.3323 | 4.3008 | -122.0122 | -46.7654 | -100 |
+| `[1.0,0,0]` | deterministic | -3.9779 | 0.1255 | 1.8457 | 21.7867 | -53.9996 | -34.8214 | -100 |
+| `[1.0,0,0]` | stochastic | -5.9239 | 0.5188 | 2.7226 | 3.8782 | -118.0140 | -44.9634 | -100 |
+
+JSON outputs:
+
+- `./logs/sac_eval_fixed_alpha_100k_smoke/eval_fwd0p5_seed0_both_4x200.json`
+- `./logs/sac_eval_fixed_alpha_100k_smoke/eval_fwd1p0_seed0_both_4x200.json`
+
+Both eval outputs returned `EVAL_OK`, `policy_mode=both`,
+`fixed_command=true`, action diagnostics and reward components present, and no
+action/reward/obs NaN flags.
+
+Conclusion:
+
+- Runtime and checkpoint readiness are fine.
+- `fixed_alpha=0.03` preserves alpha, but it does not solve forward tracking at
+  100k.
+- `fwd0.5` and `fwd1.0` both show weak fixed-command smoke with low
+  `tracking_lin_vel` and `termination=-100`.
+- Do not run 250k, 5M, or 10M from this result.
+- Next short diagnostic should be `fixed_alpha=0.05` 100k first, with
+  `alpha_floor=0.03` as the next alternative.
+
+Warnings: known non-fatal WSL2 CUDA driver warning, known non-fatal JAX cast
+overflow warning, and sandbox `snap-confine` rerun noise. No traceback, OOM,
+fatal CUDA error, NaN, checkpoint failure, or eval failure was observed.
 
 ## 2026-05-15 Fixed-Command Forward Eval Gate
 

@@ -1,6 +1,6 @@
 # Next Actions
 
-Status: updated on 2026-05-15 after the fixed-command forward eval gate.
+Status: updated on 2026-05-15 after the fresh env1024 R3 100k fixed-alpha diagnostic.
 
 ## Immediate State
 
@@ -222,6 +222,14 @@ Status: updated on 2026-05-15 after the fixed-command forward eval gate.
   `183.95` at `fwd0.5` to `25.94` at `fwd1.0`. Stochastic fixed-forward eval
   remained poor (`-9.9480` and `-11.5115`), consistent with entropy/std
   collapse.
+- Fresh env1024 R3 100k `fixed_alpha=0.03` diagnostic passed runtime and
+  checkpoint gates. Checkpoint:
+  `./logs/sac_lift_gpu_100k_env1024_r3_fixed_alpha_0p03/sac_lift_step_99328.pkl`.
+  Effective alpha stayed fixed at `0.03`, and raw `log_alpha` stayed at init
+  `-3.0`.
+- The same gate did not solve fixed-forward tracking at 100k. Small smoke
+  showed `fwd0.5` deterministic reward `-3.9345`, `fwd1.0` deterministic
+  reward `-3.9779`, low `tracking_lin_vel`, and `termination=-100`.
 
 ## Current Recommendation
 
@@ -230,9 +238,12 @@ Status: updated on 2026-05-15 after the fixed-command forward eval gate.
 - The fixed-forward gate has enough evidence to block a direct longer run:
   `[1,0,0]` velocity tracking is weak and stochastic fixed-forward eval remains
   poor.
-- Next main route should be targeted alpha/entropy ablation design/execution:
-  alpha floor, fixed alpha, or standard log-alpha update. Do not patch alpha
-  sign blindly; the sign audit found no direct Brax-style sign bug.
+- Next main route should remain targeted alpha/entropy ablation execution.
+  The first short fixed-alpha gate shows `fixed_alpha=0.03` preserves alpha but
+  is too weak for 100k fixed-forward tracking. Prefer fresh env1024 R3 100k
+  `fixed_alpha=0.05` next; use `alpha_floor=0.03` as the next alternative. Do
+  not patch alpha sign blindly; the sign audit found no direct Brax-style sign
+  bug.
 - A fixed-command `fwd1.0` render/video review is useful to inspect whether the
   policy is upright shuffling or producing partial locomotion, but it should
   not be used to justify 5M/10M by itself.
