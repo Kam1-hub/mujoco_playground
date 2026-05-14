@@ -138,6 +138,15 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
           "unset to preserve the env default."
       ),
   )
+  parser.add_argument(
+      "--env_reward_ang_vel_xy_scale",
+      type=float,
+      default=None,
+      help=(
+          "Optional override for reward_config.scales.ang_vel_xy. Leave "
+          "unset to preserve the env default."
+      ),
+  )
   parser.add_argument("--normalize_observations", type=_str_to_bool, default=None)
   parser.add_argument("--deterministic_eval", type=_str_to_bool, default=None)
   parser.add_argument("--logdir", default=None)
@@ -197,6 +206,10 @@ def _build_config(args: argparse.Namespace):
     config.env_reward_action_rate_scale = (
         sac_config.DEFAULT_ENV_REWARD_ACTION_RATE_SCALE
     )
+  if "env_reward_ang_vel_xy_scale" not in config:
+    config.env_reward_ang_vel_xy_scale = (
+        sac_config.DEFAULT_ENV_REWARD_ANG_VEL_XY_SCALE
+    )
   for name in (
       "seed",
       "impl",
@@ -230,6 +243,7 @@ def _build_config(args: argparse.Namespace):
       "env_reset_joint_noise_scale",
       "env_reset_root_qvel_scale",
       "env_reward_action_rate_scale",
+      "env_reward_ang_vel_xy_scale",
       "normalize_observations",
       "deterministic_eval",
       "logdir",

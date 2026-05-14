@@ -223,6 +223,11 @@ def _eval_env_overrides(config: Mapping[str, Any], impl: str) -> dict[str, Any]:
     overrides["reward_config.scales.action_rate"] = float(
         env_reward_action_rate_scale
     )
+  env_reward_ang_vel_xy_scale = config.get("env_reward_ang_vel_xy_scale")
+  if env_reward_ang_vel_xy_scale is not None:
+    overrides["reward_config.scales.ang_vel_xy"] = float(
+        env_reward_ang_vel_xy_scale
+    )
   return overrides
 
 

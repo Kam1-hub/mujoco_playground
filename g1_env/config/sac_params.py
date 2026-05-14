@@ -79,6 +79,7 @@ def lift_sac_config(
       env_reset_joint_noise_scale=None,
       env_reset_root_qvel_scale=None,
       env_reward_action_rate_scale=None,
+      env_reward_ang_vel_xy_scale=None,
       normalize_observations=True,
       deterministic_eval=True,
       num_envs=128,

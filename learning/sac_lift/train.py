@@ -207,6 +207,13 @@ def train(config: Any) -> dict[str, Any]:
     env_overrides["reward_config.scales.action_rate"] = float(
         env_reward_action_rate_scale
     )
+  env_reward_ang_vel_xy_scale = config.get(
+      "env_reward_ang_vel_xy_scale", None
+  )
+  if env_reward_ang_vel_xy_scale is not None:
+    env_overrides["reward_config.scales.ang_vel_xy"] = float(
+        env_reward_ang_vel_xy_scale
+    )
   env = registry.load(
       config.env_name,
       config=env_cfg,
