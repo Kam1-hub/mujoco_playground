@@ -1,7 +1,7 @@
 # Next Actions
 
-Status: updated on 2026-05-15 after the eval-only 100k
-termination/contact diagnostic sweep.
+Status: updated on 2026-05-15 after the short render terminal diagnostic
+sweep.
 
 ## Immediate State
 
@@ -300,6 +300,15 @@ termination/contact diagnostic sweep.
   appeared in all 18 variant/command/mode cases. Failures are fall-dominated:
   first done happens around `51-55` steps, qpos/qvel NaN counts are always `0`,
   and illegal contact appears only once while fall remains the dominant reason.
+- Terminal render diagnostics are committed at
+  `5b3f393 Add SAC terminal render diagnostics` and the completed short render
+  sweep is recorded under ignored `./logs/sac_render_terminal_diag_100k/` with
+  `9` matching `.json`/`.mp4` pairs. The sweep covered the same existing 100k
+  push-disable, phase-freeze, and feet-air-time-mask checkpoints for
+  deterministic fixed `fwd0.5`, `fwd1.0`, and stand commands. All cases
+  terminated via fall at step `51-52`, with contact and NaN reasons absent.
+  Terminal states consistently show negative torso-up z, negative root height,
+  high torso XY angular velocity around `6.9-8.0`, and large local velocity.
 
 ## Current Recommendation
 
@@ -321,13 +330,18 @@ termination/contact diagnostic sweep.
   correctly zeroed `reward/feet_air_time` on stand but also failed termination
   and did not improve stand. The termination/contact sweep now shows the
   immediate failure is early torso fall/upright instability, not illegal
-  contact or NaN. Move to torso fall/orientation/base-stability diagnostics or
-  controlled stabilization/curriculum design next. Keep
+  contact or NaN. The terminal render sweep confirms the same early
+  torso/base failure visually and in render JSON: every variant falls around
+  `51-52` steps and no variant meaningfully improves survival. Move to
+  early-fall stabilization/curriculum design next: reset disturbance/warmup,
+  command warmup, base-height/alive/orientation/angular-velocity stabilizers,
+  and action-rate smoothing. Keep
   `alpha_floor=0.03` only as a secondary alpha/entropy diagnostic. Do not patch
   alpha sign blindly; the sign audit found no direct Brax-style sign bug.
-- A fixed-command `fwd1.0` render/video review is useful to inspect whether the
-  policy is upright shuffling or producing partial locomotion, but it should
-  not be used to justify 5M/10M by itself.
+- Detailed video inspection may still help distinguish fall direction and
+  posture collapse, but do not overclaim forward/backward direction from the
+  terminal JSON alone and do not use render artifacts to justify 5M/10M by
+  themselves.
 - Remaining fixed-command coverage for `[0,0.3,0]`, `[0,0,0.5]`, and
   `[0,0,0]` is still useful after the forward gate is recorded.
 
@@ -609,20 +623,20 @@ CPU, stop and report the CUDA/JAX blocker.
 The bounded 1024-env 3M R3 result, fixed-forward eval gate, two short
 fixed-alpha diagnostics, the `foot_velocity` feet-slip gate, the
 `feet_slip_scale=0` gate, the push-disable gate, the zero-command phase-freeze
-gate, the feet-air-time command-mask gate, and the eval-only
-termination/contact sweep have now been executed and recorded. Do not
-automatically run 250k, 5M, or 10M. The next useful step is torso
-fall/orientation/base-stability diagnosis or a controlled stabilization
-curriculum design, with alpha-floor only as a secondary diagnostic:
+gate, the feet-air-time command-mask gate, the eval-only termination/contact
+sweep, and the short render terminal sweep have now been executed and
+recorded. Do not automatically run 250k, 5M, or 10M. The next useful step is
+early-fall stabilization/curriculum design, with alpha-floor only as a
+secondary diagnostic:
 
-1. Termination path: inspect why the torso falls around `51-55` steps across
+1. Stabilization path: review reset disturbance/warmup, command warmup or
+   curriculum, base-height/alive/orientation/angular-velocity stabilizers, and
+   action-rate smoothing.
+2. Termination path: explain why the torso falls around `51-52` steps across
    all 100k reward/prior variants. Current evidence points to upright/base
    instability, not illegal contact and not qpos/qvel NaN.
-2. Fixed-command path: inspect or render `fwd1.0` if visual evidence is needed,
-   because deterministic `tracking_lin_vel` collapsed from `183.95` at
-   `fwd0.5` to `25.94` at `fwd1.0`.
 3. Reward/prior follow-up: do not touch broader reward terms, `action_scale`,
-   or Kp until the torso fall source is understood.
+   or Kp until the early-fall source is understood.
 4. Entropy path: keep `alpha_floor=0.03` as a secondary diagnostic; do not keep
    increasing fixed alpha blindly.
 5. Training path: only after that review, decide whether a carefully gated

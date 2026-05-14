@@ -18,9 +18,10 @@ domain randomization, or fine-tuning as part of the current validation phase.
 
 - Path: `/home/admin/projects/mujoco_playground/g1_sac_dev`
 - Branch: `sac-integration`
-- Latest recorded diagnostic state: eval-only 100k termination/contact
-  diagnostic sweep after the fresh env1024 R3 100k feet-air-time command-mask
-  diagnostic, zero-command phase-freeze, push-disable,
+- Latest recorded diagnostic state: short render terminal diagnostic sweep
+  after the eval-only 100k termination/contact diagnostic sweep, fresh env1024
+  R3 100k feet-air-time command-mask diagnostic, zero-command phase-freeze,
+  push-disable,
   `feet_slip_scale=0`,
   `foot_velocity`, `fixed_alpha=0.03`, and `fixed_alpha=0.05` gates,
   fixed-command forward eval gate, fixed-command eval support, alpha sign audit,
@@ -110,7 +111,8 @@ SAC Route B code lives in local files and should not disturb PPO/RSL:
 - `scripts/render_sac_checkpoint.py`: eval-only checkpoint render/export
   helper for MP4/GIF/PNG-frame visual inspection. It supports default
   reset-sampled joystick commands and optional fixed joystick commands with
-  `--fixed_command`, `--command_x`, `--command_y`, and `--command_yaw`.
+  `--fixed_command`, `--command_x`, `--command_y`, and `--command_yaw`, plus
+  optional terminal render diagnostics through `--termination_diagnostics`.
 - `scripts/inspect_g1_action_mapping.py`: no-training action dimension to
   actuator/joint mapping helper.
 - `scripts/summarize_sac_action_diag.py`: no-training summary helper that joins
@@ -308,6 +310,15 @@ Current validated ladder:
   was negative or near threshold with high torso angular velocity, pointing to
   early torso fall/upright instability rather than contact or numerical
   failure.
+- Short render terminal diagnostic sweep: PASS diagnostic, failure mode
+  reinforced. The deterministic sweep used the same existing 100k
+  push-disable, phase-freeze, and feet-air-time-mask checkpoints under fixed
+  `fwd0.5`, `fwd1.0`, and stand commands. It produced `9` matching `.json` and
+  `.mp4` pairs under `./logs/sac_render_terminal_diag_100k/`. All cases
+  terminated via fall at step `51-52`; contact and NaN reasons were absent.
+  Terminal states consistently had negative torso-up z, negative root height,
+  high torso XY angular velocity around `6.9-8.0`, and large local velocity.
+  No variant meaningfully improved survival.
 - Action joint mapping diagnostic: PASS.
 
 Still not validated:
@@ -1003,13 +1014,18 @@ inherited eval, but it did not remove termination saturation and did not
 improve stand. The feet-air-time command-mask gate also passed runtime,
 checkpoint, and inherited eval checks; it correctly zeroed
 `reward/feet_air_time` on stand, but termination remained saturated and stand
-did not improve. Next recommended work is component-level termination/contact
-analysis; `alpha_floor=0.03` is only a secondary diagnostic. Do not run
+did not improve. The termination/contact sweep and terminal render sweep now
+show the common failure is early torso/base fall around `51-52` steps, with
+negative torso-up z, negative root height, high torso XY angular velocity, and
+no contact/NaN root cause. Next recommended work is early-fall
+stabilization/curriculum design: reset disturbance/warmup, command warmup,
+base-height/alive/orientation/angular-velocity stabilizers, and action-rate
+smoothing. `alpha_floor=0.03` is only a secondary diagnostic. Do not run
 fixed-alpha, foot-velocity, feet-slip-scale-zero, push-disable, phase-freeze,
-or feet-air-time-mask 250k, 5M, or 10M from these results. A
-fixed-command `fwd1.0` render/video review is useful, and remaining command
-coverage for `[0,0.3,0]`, `[0,0,0.5]`, and `[0,0,0]` remains useful, but
-neither should justify 5M/10M without resolving forward tracking weakness and
-stochastic collapse. Do not change reward, action_scale, Kp, domain
-randomization, fine-tuning, PPO, or RSL without a targeted audit/ablation plan.
+or feet-air-time-mask 250k, 5M, or 10M from these results. Detailed video
+inspection may still help distinguish fall direction or posture collapse, but
+it should not justify 5M/10M without resolving early fall, forward tracking
+weakness, and stochastic collapse. Do not change reward, action_scale, Kp,
+domain randomization, fine-tuning, PPO, or RSL without a targeted
+audit/ablation plan.
 ```

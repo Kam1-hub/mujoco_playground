@@ -1,7 +1,57 @@
 # Smoke Results
 
-Status: updated on 2026-05-15 after the eval-only 100k
-termination/contact diagnostic sweep.
+Status: updated on 2026-05-15 after the short render terminal diagnostic
+sweep.
+
+## 2026-05-15 Short Render Terminal Diagnostic Sweep
+
+- Scope: deterministic short render terminal diagnostic sweep over existing
+  failed 100k `push_disable`, `phase_freeze`, and `feet_air_time_mask`
+  checkpoints; no training, eval benchmark, preflight, code change, reward,
+  `action_scale`, Kp, PPO/RSL, or checkpoint schema change was made for this
+  report update.
+- Related code commit: `5b3f393 Add SAC terminal render diagnostics`.
+- Output directory: `./logs/sac_render_terminal_diag_100k/`.
+- Outputs: `9` matching `.json` and `.mp4` pairs named
+  `render_<variant>_<command>_seed0_det.*`.
+- Commands: `fwd0.5`, `fwd1.0`, and `stand`.
+- Checkpoint readiness: PASS for all three checkpoints.
+- Runtime: JAX GPU.
+- The repository stayed clean during the sweep.
+- No NaN, OOM, fatal CUDA, or render failure was observed.
+
+Result summary:
+
+| Variant | Command | Done step/frame | Reason | torso_up_z | root_h | torso_ang_xy |
+|---|---|---:|---|---:|---:|---:|
+| push_disable | fwd0.5 | 51 / 50 | fall | -0.0356 | -0.1275 | 7.2921 |
+| push_disable | fwd1.0 | 51 / 50 | fall | -0.0533 | -0.1337 | 7.2625 |
+| push_disable | stand | 52 / 51 | fall | -0.1073 | -0.1687 | 7.4798 |
+| phase_freeze | fwd0.5 | 51 / 50 | fall | -0.0498 | -0.1728 | 7.2386 |
+| phase_freeze | fwd1.0 | 51 / 50 | fall | -0.0501 | -0.1727 | 7.1651 |
+| phase_freeze | stand | 51 / 50 | fall | -0.1161 | -0.2228 | 8.0283 |
+| feet_air_time_mask | fwd0.5 | 52 / 51 | fall | -0.0832 | -0.1923 | 6.9256 |
+| feet_air_time_mask | fwd1.0 | 52 / 51 | fall | -0.1059 | -0.2027 | 6.9432 |
+| feet_air_time_mask | stand | 52 / 51 | fall | -0.0672 | -0.1870 | 6.9997 |
+
+Conclusion:
+
+- All 9 deterministic renders terminate via fall, not illegal contact or NaN.
+- Survival is effectively identical across variants: `51` to `52` control
+  steps, about `1.0s` at `ctrl_dt=0.02`.
+- Terminal state consistently has negative torso-up z, negative root height,
+  high torso XY angular velocity around `6.9` to `8.0`, and large local
+  velocity.
+- The render JSON supports early torso/base stability failure. Do not overclaim
+  forward/backward fall direction without detailed video inspection.
+- No variant meaningfully improves survival.
+- Do not continue to 250k, 5M, or 10M from these results.
+- Next targeted work should be early-fall stabilization/curriculum design:
+  reset disturbance/warmup, command warmup, base-height/alive/orientation/
+  angular-velocity stabilizers, and action-rate smoothing.
+
+See `reports/sac_integration/25_terminal_render_diagnostics.md` for the
+focused record.
 
 ## 2026-05-15 Eval-Only 100k Termination/Contact Diagnostic Sweep
 

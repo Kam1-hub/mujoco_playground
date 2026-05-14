@@ -10,7 +10,7 @@ continue without relying on chat history.
 - Path: `/home/admin/projects/mujoco_playground/g1_sac_dev`
 - Branch: `sac-integration`
 - Current diagnostic/report baseline before this report update:
-  `fe69d8d Add SAC termination eval diagnostics`
+  `5b3f393 Add SAC terminal render diagnostics`
 - Remote: `origin https://github.com/Kam1-hub/mujoco_playground.git`
 - External menagerie commit: `1b86ece576591213e2b666ebf59508454200ca97`
 
@@ -67,6 +67,7 @@ Runtime artifacts are local and ignored. Do not commit `logs/`, `.venv/`,
 | Fresh env1024 R3 100k zero-command phase-freeze diagnostic | PASS_RUNTIME_WEAK_FIXED_COMMAND | `./logs/sac_lift_gpu_100k_env1024_r3_phase_freeze/sac_lift_step_99328.pkl`, `--env_zero_command_phase_freeze True`, `TRAIN_OK`, readiness PASS, inherited eval reports `zero_command_phase_freeze=true`, forward tracking similar to push-disable, but `reward/termination=-100` remains saturated for fwd0.5, fwd1.0, and stand |
 | Fresh env1024 R3 100k feet-air-time command-mask diagnostic | PASS_RUNTIME_WEAK_FIXED_COMMAND | `./logs/sac_lift_gpu_100k_env1024_r3_feet_air_time_mask/sac_lift_step_99328.pkl`, `--env_feet_air_time_command_mask True`, `TRAIN_OK`, readiness PASS, inherited eval reports `feet_air_time_command_mask=true`, stand eval correctly reports `reward/feet_air_time=0.0`, but `reward/termination=-100` remains saturated for fwd0.5, fwd1.0, and stand |
 | Eval-only 100k termination/contact diagnostic sweep | PASS_EVAL_FALL_DOMINATED | `./logs/sac_eval_termination_diag_100k/`, `9` JSON outputs; push-disable, phase-freeze, and feet-air-time-mask checkpoints; fixed `fwd0.5`, `fwd1.0`, and stand; all `EVAL_OK`, NaN flags false, `reward/termination=-100` in all 18 mode cases, first done mostly around `51-55` steps, fall-dominated rather than contact-dominated or numerical |
+| Short render terminal diagnostic sweep | PASS_RENDER_FALL_DOMINATED | `./logs/sac_render_terminal_diag_100k/`, `9` matching JSON/MP4 pairs; push-disable, phase-freeze, and feet-air-time-mask checkpoints; deterministic fixed `fwd0.5`, `fwd1.0`, and stand; all terminate via fall at step `51-52`, with negative torso-up z, negative root height, high torso XY angular velocity, and no contact/NaN reason |
 | 10M training | NOT VALIDATED | Blocked by fixed-forward weakness and stochastic collapse; requires alpha/entropy decision review, resource plan, and stop conditions |
 
 ## Completed Outcomes
@@ -267,6 +268,15 @@ Runtime artifacts are local and ignored. Do not commit `logs/`, `.venv/`,
   only one stochastic fwd1.0 case, and terminal states showed torso-up z
   negative or near threshold with high torso angular velocity. This identifies
   early torso fall/upright instability as the 100k blocker.
+- Recorded the short render terminal diagnostic sweep over the same existing
+  100k push-disable, phase-freeze, and feet-air-time-mask checkpoints. The
+  sweep produced `9` matching `.json`/`.mp4` pairs under
+  `./logs/sac_render_terminal_diag_100k/` for deterministic fixed `fwd0.5`,
+  `fwd1.0`, and stand commands. All cases terminated via fall at step `51-52`;
+  contact and NaN reasons were absent. Terminal states consistently had
+  negative torso-up z, negative root height, high torso XY angular velocity
+  around `6.9-8.0`, and large local velocity. This reinforces early torso/base
+  stability failure and blocks longer training from these gates.
 
 ### Full Action Diagnostic Summary
 
@@ -1121,12 +1131,15 @@ fixed-forward tracking somewhat, but termination remained saturated. The
 zero-command phase-freeze gate was runtime-valid but also left termination
 saturated and did not improve stand. The feet-air-time command-mask gate
 correctly zeroed `reward/feet_air_time` on stand, but termination remained
-saturated and stand did not improve. Prioritize:
+saturated and stand did not improve. The termination/contact and render sweeps
+now identify the immediate failure as early torso/base fall around `51-52`
+steps, not illegal contact and not qpos/qvel NaN. Prioritize:
 
-1. component-level termination/contact analysis, because the isolated reward
-   and prior ablations did not remove `termination=-100`;
-2. optional fixed-command `fwd1.0` render/video to distinguish upright shuffle
-   from partial forward locomotion;
+1. early-fall stabilization/curriculum design around reset disturbance/warmup,
+   command warmup, base-height/alive/orientation/angular-velocity stabilizers,
+   and action-rate smoothing;
+2. detailed video inspection only if needed to distinguish fall direction or
+   posture collapse; do not overclaim direction from terminal JSON alone;
 3. keep reward/action scale/Kp unchanged until the termination/contact source
    is understood;
 4. `alpha_floor=0.03` only as a secondary alpha/entropy diagnostic, not as the

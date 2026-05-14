@@ -1,6 +1,6 @@
 # G1 SAC Integration Status And Roadmap
 
-Status: updated on 2026-05-15 after the eval-only 100k termination/contact diagnostic sweep.
+Status: updated on 2026-05-15 after the short render terminal diagnostic sweep.
 
 ## 1. Mission
 
@@ -202,7 +202,8 @@ Validation ladder:
 38. Fresh env1024 R3 100k `--env_zero_command_phase_freeze True` diagnostic
 39. Fresh env1024 R3 100k `--env_feet_air_time_command_mask True` diagnostic
 40. Eval-only 100k termination/contact diagnostic sweep
-41. 10M-scale training
+41. Short render terminal diagnostic sweep
+42. 10M-scale training
 
 Status:
 
@@ -273,7 +274,13 @@ Status:
   were false; `reward/termination=-100` appeared in all 18 mode cases; first
   done happened around `51-55` steps; and failure was fall-dominated rather
   than contact-dominated or numerical.
-- Step 41 remains `NOT VALIDATED` and requires reward/prior targeted audit,
+- Step 41 passed as a deterministic render diagnostic. The sweep covered the
+  same 100k push-disable, phase-freeze, and feet-air-time-mask checkpoints with
+  fixed `fwd0.5`, `fwd1.0`, and stand commands. It produced `9` matching
+  `.json`/`.mp4` pairs under `./logs/sac_render_terminal_diag_100k/`; all
+  cases terminated via fall at step `51-52`, with negative torso-up z, negative
+  root height, high torso XY angular velocity, and no contact/NaN reason.
+- Step 42 remains `NOT VALIDATED` and requires reward/prior targeted audit,
   resource plan, and stop conditions.
 
 ### Phase 6: Reports, Commits, Migration Handoff
@@ -343,8 +350,8 @@ WSL2 target workspace state:
   `--env_feet_slip_scale 0.0` gate also passed and confirmed
   `reward/feet_slip=0.0` in inherited eval after `442d297`, but `fwd1.0`
   tracking remained weak and `termination=-100` remained present.
-  The latest termination/contact sweep now indicates those 100k failures are
-  early torso fall/upright failures, not illegal contact or NaN.
+  The latest termination/contact and terminal render sweeps now indicate those
+  100k failures are early torso/base fall failures, not illegal contact or NaN.
 - Menagerie: present at `1b86ece576591213e2b666ebf59508454200ca97`
 - Python env: present under ignored `.venv`
 - CUDA JAX: validated, backend `gpu`, device `cuda:0`
@@ -1487,4 +1494,4 @@ keep `alpha_floor=0.03` only as a secondary diagnostic.
 
 ## 28. Current Position In One Sentence
 
-SAC Route B is implemented; CPU tiny smoke, WSL2 GPU preflight, Route B GPU 10k smoke, normalizer-ready checkpoint validation, bounded deterministic eval smoke, 50k sanity/eval, 100k sanity/eval, 250k sanity/eval, 500k sanity/eval, both-mode eval diagnostic, full action diagnostic, fresh 100k/250k train-time actor drift diagnostics, fresh 100k alpha/entropy ablation diagnostics, the A1/A3/A4 multi-seed eval-only ablation diagnostic, bounded fresh 250k/500k/750k A4 extensions, fresh 100k actor-regularization R1, fresh 100k actor-regularization R2/R3, bounded R3 250k, the 512/1024/2048 high-parallel capacity benchmark, bounded 1024-env 1M R3, bounded 1024-env 3M R3, fixed-command render support, fixed-command eval support, alpha sign audit, fixed-command forward eval gate, fresh env1024 R3 100k `fixed_alpha=0.03`/`0.05` diagnostics, fresh env1024 R3 100k `foot_velocity` feet-slip diagnostic, fresh env1024 R3 100k `feet_slip_scale=0` diagnostic, fresh env1024 R3 100k push-disable diagnostic, fresh env1024 R3 100k zero-command phase-freeze diagnostic, and fresh env1024 R3 100k feet-air-time command-mask diagnostic have passed their bounded runtime gates; 3M provides the first strong deterministic-policy improvement signal but also severe alpha/std collapse, stochastic degradation, and weak `[1,0,0]` forward tracking; fixed-alpha, feet-slip, push-disable, phase-freeze, and feet-air-time command-mask short gates did not solve 100k fixed-forward/stand termination; 5M/10M, full eval benchmarking, domain randomization, and fine-tuning remain `NOT VALIDATED`.
+SAC Route B is implemented; CPU tiny smoke, WSL2 GPU preflight, Route B GPU 10k smoke, normalizer-ready checkpoint validation, bounded deterministic eval smoke, 50k sanity/eval, 100k sanity/eval, 250k sanity/eval, 500k sanity/eval, both-mode eval diagnostic, full action diagnostic, fresh 100k/250k train-time actor drift diagnostics, fresh 100k alpha/entropy ablation diagnostics, the A1/A3/A4 multi-seed eval-only ablation diagnostic, bounded fresh 250k/500k/750k A4 extensions, fresh 100k actor-regularization R1, fresh 100k actor-regularization R2/R3, bounded R3 250k, the 512/1024/2048 high-parallel capacity benchmark, bounded 1024-env 1M R3, bounded 1024-env 3M R3, fixed-command render support, fixed-command eval support, alpha sign audit, fixed-command forward eval gate, fresh env1024 R3 100k `fixed_alpha=0.03`/`0.05` diagnostics, fresh env1024 R3 100k `foot_velocity` feet-slip diagnostic, fresh env1024 R3 100k `feet_slip_scale=0` diagnostic, fresh env1024 R3 100k push-disable diagnostic, fresh env1024 R3 100k zero-command phase-freeze diagnostic, fresh env1024 R3 100k feet-air-time command-mask diagnostic, eval-only termination/contact sweep, and short render terminal sweep have passed their bounded runtime or diagnostic gates; 3M provides the first strong deterministic-policy improvement signal but also severe alpha/std collapse, stochastic degradation, and weak `[1,0,0]` forward tracking; fixed-alpha, feet-slip, push-disable, phase-freeze, and feet-air-time command-mask short gates did not solve 100k fixed-forward/stand termination; the latest sweeps identify early torso/base fall around 1s as the immediate blocker; 5M/10M, full eval benchmarking, domain randomization, and fine-tuning remain `NOT VALIDATED`.
