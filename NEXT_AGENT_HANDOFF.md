@@ -18,11 +18,11 @@ domain randomization, or fine-tuning as part of the current validation phase.
 
 - Path: `/home/admin/projects/mujoco_playground/g1_sac_dev`
 - Branch: `sac-integration`
-- Latest recorded diagnostic state: fixed-command eval support and alpha sign
-  audit after the fixed-command 3M render helper smoke, deterministic 3M render
-  helper smoke, bounded 1024-env 3M R3 run, high-parallel 512/1024/2048
-  capacity benchmark, and 1M follow-up; use `git log --oneline -5` for the
-  exact commit hash.
+- Latest recorded diagnostic state: fixed-command forward eval gate after
+  fixed-command eval support and alpha sign audit, fixed-command 3M render
+  helper smoke, deterministic 3M render helper smoke, bounded 1024-env 3M R3
+  run, high-parallel 512/1024/2048 capacity benchmark, and 1M follow-up; use
+  `git log --oneline -5` for the exact commit hash.
 - Remote: `origin https://github.com/Kam1-hub/mujoco_playground.git`
 - Last known pushed branch: `sac-integration`
 
@@ -232,11 +232,21 @@ Current validated ladder:
   log-alpha equivalent. The unresolved risk is persistent downward alpha
   pressure in the observed log-probability range plus no alpha floor; the
   `exp(log_alpha)` form also weakens updates as alpha approaches zero.
+- Fixed-command forward eval gate: PASS runtime/eval with mixed policy result.
+  The 3M R3 checkpoint was evaluated on `[0.5,0,0]` and `[1.0,0,0]`, seeds
+  `0..4`, `num_eval_envs=16`, `episode_length=1000`, `policy_mode=both`,
+  action diagnostics, and reward components. All evals returned `EVAL_OK`; all
+  action/reward/obs NaN flags were false. `fwd0.5` deterministic was near
+  break-even but noisy (`0.0192` reward avg, `0.6026` stdev), `fwd1.0`
+  deterministic was weak (`-3.2302` reward avg), deterministic
+  `tracking_lin_vel` collapsed from `183.95` at `fwd0.5` to `25.94` at
+  `fwd1.0`, and stochastic fixed-forward eval remained poor (`-9.9480` and
+  `-11.5115`). This is not a runtime failure, but it blocks direct 5M/10M.
 - Action joint mapping diagnostic: PASS.
 
 Still not validated:
 
-- 10M training.
+- 5M and 10M training.
 - Full performance benchmark.
 - Human/video inspection of the 3M deterministic and fixed-command renders.
 - PPO comparison.
@@ -870,10 +880,19 @@ stochastic reward mean `-2.3354`, and no action/reward/obs NaN flags. Alpha
 sign audit found `SIGN_OK_BUT_COLLAPSE_RISK`: no direct sign bug, but current
 target entropy and observed log-probability ranges keep downward pressure on
 alpha and there is still no alpha floor.
+Fixed-command forward eval gate has also been run for `[0.5,0,0]` and
+`[1.0,0,0]`, seeds `0..4`, with both deterministic and stochastic policy
+modes. All evals were `EVAL_OK` with NaN flags false. `fwd0.5` deterministic
+was near break-even but noisy (`0.0192` reward avg); `fwd1.0` deterministic was
+weak (`-3.2302` reward avg) and deterministic `tracking_lin_vel` collapsed from
+`183.95` to `25.94`. Stochastic remained poor for both commands.
 
 Do not run training, eval, preflight, installs, downloads, or git commits unless
-explicitly asked. Next recommended work is full fixed-command eval/render
-coverage for `[0.5,0,0]`, `[1,0,0]`, `[0,0.3,0]`, `[0,0,0.5]`, and `[0,0,0]`,
-then an entropy/alpha decision review before any longer run. Do not change
-reward, action_scale, Kp, domain randomization, fine-tuning, PPO, or RSL.
+explicitly asked. Next recommended work is targeted alpha/entropy ablation
+planning or execution before any longer run, with alpha floor, fixed alpha, or
+standard log-alpha update as leading candidates. A fixed-command `fwd1.0`
+render/video review is useful, and remaining command coverage for `[0,0.3,0]`,
+`[0,0,0.5]`, and `[0,0,0]` remains useful, but neither should justify 5M/10M
+without resolving forward tracking weakness and stochastic collapse. Do not
+change reward, action_scale, Kp, domain randomization, fine-tuning, PPO, or RSL.
 ```

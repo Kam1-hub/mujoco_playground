@@ -1,7 +1,6 @@
 # Next Actions
 
-Status: updated on 2026-05-14 after fixed-command eval support and the alpha
-sign audit.
+Status: updated on 2026-05-15 after the fixed-command forward eval gate.
 
 ## Immediate State
 
@@ -212,18 +211,33 @@ sign audit.
 - Alpha sign audit result: `SIGN_OK_BUT_COLLAPSE_RISK`. No direct sign bug was
   found versus Brax-style SAC, but the observed log-probability range keeps
   downward pressure on alpha and there is still no alpha floor.
+- Fixed-command forward eval gate has run on the 3M R3 checkpoint for
+  `[0.5,0,0]` and `[1.0,0,0]`, seeds `0..4`, `num_eval_envs=16`,
+  `episode_length=1000`, `policy_mode=both`, action diagnostics, and reward
+  components. All evals returned `EVAL_OK`; all action/reward/obs NaN flags
+  were false.
+- Gate result: `fwd0.5` deterministic reward averaged `0.0192` with `0.6026`
+  stdev and is near break-even but noisy. `fwd1.0` deterministic reward
+  averaged `-3.2302`; deterministic `tracking_lin_vel` collapsed from
+  `183.95` at `fwd0.5` to `25.94` at `fwd1.0`. Stochastic fixed-forward eval
+  remained poor (`-9.9480` and `-11.5115`), consistent with entropy/std
+  collapse.
 
 ## Current Recommendation
 
-- Do not jump directly to 10M.
+- Do not jump directly to 5M or 10M.
 - Do not declare stable SAC integration from the 3M result.
-- Next step should run full fixed-command eval/render coverage before any
-  longer run. Cover `[0.5,0,0]`, `[1,0,0]`, `[0,0.3,0]`, `[0,0,0.5]`, and
-  `[0,0,0]` with bounded deterministic/stochastic eval, action diagnostics,
-  reward components, NaN checks, and command-specific visual inspection.
-- After fixed-command coverage, run an entropy/alpha decision review. Do not
-  patch the alpha sign blindly; consider controlled alpha-floor, fixed-alpha,
-  standard log-alpha, or target-entropy ablations only after the command gate.
+- The fixed-forward gate has enough evidence to block a direct longer run:
+  `[1,0,0]` velocity tracking is weak and stochastic fixed-forward eval remains
+  poor.
+- Next main route should be targeted alpha/entropy ablation design/execution:
+  alpha floor, fixed alpha, or standard log-alpha update. Do not patch alpha
+  sign blindly; the sign audit found no direct Brax-style sign bug.
+- A fixed-command `fwd1.0` render/video review is useful to inspect whether the
+  policy is upright shuffling or producing partial locomotion, but it should
+  not be used to justify 5M/10M by itself.
+- Remaining fixed-command coverage for `[0,0.3,0]`, `[0,0,0.5]`, and
+  `[0,0,0]` is still useful after the forward gate is recorded.
 
 ## Completed WSL2 GPU Validation
 
@@ -500,15 +514,16 @@ CPU, stop and report the CUDA/JAX blocker.
 
 ## Recommended Next Step
 
-The bounded 1024-env 3M R3 result has now been executed and recorded. Do not
-automatically run 10M. The next useful step is a decision review using the 3M
-evidence:
+The bounded 1024-env 3M R3 result and the fixed-forward eval gate have now
+been executed and recorded. Do not automatically run 5M or 10M. The next useful
+step is a targeted alpha/entropy ablation decision:
 
-1. Entropy path: review alpha/log_std handling because alpha collapsed to
-   `0.000766`, log_std to `-0.9573`, and stochastic reward worsened to
-   `-10.9904`.
-2. Inspection path: plan a render helper for deterministic visual inspection,
-   because deterministic eval improved strongly to `-2.3314`.
+1. Entropy path: test alpha/log_std handling because alpha collapsed to
+   `0.000766`, log_std to `-0.9573`, stochastic random-command reward worsened
+   to `-10.9904`, and fixed-forward stochastic eval remains poor.
+2. Fixed-command path: inspect or render `fwd1.0` if visual evidence is needed,
+   because deterministic `tracking_lin_vel` collapsed from `183.95` at
+   `fwd0.5` to `25.94` at `fwd1.0`.
 3. Training path: only after that review, decide whether a carefully gated
    longer run is justified.
 

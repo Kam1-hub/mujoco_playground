@@ -10,6 +10,78 @@
   changes were made.
 - Runtime artifacts remain under ignored `logs/` and must not be committed.
 
+## Fixed-Command Forward Eval Gate
+
+Gate name: fixed-command forward eval gate on the 3M R3 checkpoint.
+
+- Checkpoint:
+  `./logs/sac_lift_gpu_3m_env1024_r3_b256_g16_replay1m/sac_lift_step_2999296.pkl`
+- Scope: eval-only, fixed forward commands, no training, no render, and no code
+  changes during the gate.
+- Output directory: `./logs/sac_eval_fixedcmd_3m_gate/` under ignored `logs/`;
+  these JSON artifacts must not be committed.
+- Commands:
+  - `fwd0.5`: `[0.5, 0.0, 0.0]`, seeds `0..4`.
+  - `fwd1.0`: `[1.0, 0.0, 0.0]`, seeds `0..4`.
+- Eval settings for both commands: `num_eval_envs=16`,
+  `episode_length=1000`, `policy_mode=both`, action diagnostics enabled, and
+  reward components enabled.
+- Result: all evals returned `EVAL_OK`; all action/reward/obs NaN flags were
+  false.
+
+Forward `0.5` aggregate:
+
+| Mode | Reward Avg | Reward Stdev | Reward Min | Reward Max | Done Avg | Action Abs | Sat 0.95 | NaN |
+|---|---:|---:|---:|---:|---:|---:|---:|---|
+| deterministic | 0.0192 | 0.6026 | -0.9842 | 0.6049 | 1.0 | 0.1630 | 0.00327 | false |
+| stochastic | -9.9480 | 0.8755 | -10.8305 | -8.5759 | 1.0 | 0.3614 | 0.00471 | false |
+
+Forward `0.5` key reward components:
+
+| Mode | tracking_lin_vel | tracking_ang_vel | feet_phase | ang_vel_xy | orientation | feet_slip | termination |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| deterministic | 183.95 | 220.87 | 380.34 | -130.85 | -49.64 | -115.53 | -43.75 |
+| stochastic | 115.39 | 83.96 | 354.06 | -287.69 | -42.68 | -124.65 | -56.25 |
+
+Forward `1.0` aggregate:
+
+| Mode | Reward Avg | Reward Stdev | Reward Min | Reward Max | Done Avg | Action Abs | Sat 0.95 | NaN |
+|---|---:|---:|---:|---:|---:|---:|---:|---|
+| deterministic | -3.2302 | 0.3845 | -3.5655 | -2.6177 | 1.0 | 0.1646 | 0.00348 | false |
+| stochastic | -11.5115 | 0.6616 | -12.3932 | -10.8398 | 1.0 | 0.3608 | 0.00475 | false |
+
+Forward `1.0` key reward components:
+
+| Mode | tracking_lin_vel | tracking_ang_vel | feet_phase | ang_vel_xy | orientation | feet_slip | termination |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| deterministic | 25.94 | 212.79 | 363.20 | -125.97 | -45.45 | -109.40 | -56.25 |
+| stochastic | 23.01 | 80.69 | 346.02 | -276.85 | -42.63 | -122.04 | -62.50 |
+
+Interpretation:
+
+- This is not a runtime failure.
+- `fwd0.5` deterministic is near break-even but noisy; it is not a robust
+  solved gait.
+- `fwd1.0` deterministic is weak. The main signal is that deterministic
+  `tracking_lin_vel` collapses from `183.95` at `fwd0.5` to `25.94` at
+  `fwd1.0`.
+- Stochastic fixed-forward eval remains poor for both commands, consistent with
+  the existing entropy/std collapse diagnosis.
+- This gate blocks any direct 5M/10M continuation.
+- The main route should be targeted ablation before longer training: alpha
+  floor, fixed alpha, standard log-alpha update, or another controlled
+  entropy/temperature diagnostic. A fixed-command `fwd1.0` render/video review
+  is also useful, but should not replace the alpha/entropy ablation decision.
+
+Warnings:
+
+- Sandbox `snap-confine` blocked some `uv` attempts; the same commands were
+  rerun with approved external execution.
+- The known non-fatal WSL2 CUDA driver version warning was observed.
+- The known non-fatal JAX cast overflow warning was observed.
+- No traceback, OOM, fatal CUDA error, non-`EVAL_OK` result, or NaN flag was
+  observed in successful gate outputs.
+
 ## Fixed-Command Eval Support
 
 `scripts/eval_sac_checkpoint.py` now supports:
@@ -124,14 +196,11 @@ Audit conclusion:
 
 Do not run 5M or 10M yet.
 
-Before longer training, run full fixed-command eval-only coverage across:
-
-- `[0.5, 0.0, 0.0]`
-- `[1.0, 0.0, 0.0]`
-- `[0.0, 0.3, 0.0]`
-- `[0.0, 0.0, 0.5]`
-- `[0.0, 0.0, 0.0]`
-
-Each command should use bounded deterministic/stochastic eval, action
-diagnostics, reward components, and NaN checks. Then decide whether the next
-step is an alpha-floor/fixed-alpha/log-alpha ablation or a gated longer run.
+The fixed-forward gate has now covered `[0.5, 0.0, 0.0]` and
+`[1.0, 0.0, 0.0]`. The results are not strong enough to justify longer
+training. The next route should be targeted alpha/entropy ablation or a
+fixed-command `fwd1.0` render/video review, with alpha-floor, fixed-alpha, and
+standard log-alpha update variants as the main ablation candidates. Remaining
+fixed-command coverage for `[0.0, 0.3, 0.0]`, `[0.0, 0.0, 0.5]`, and
+`[0.0, 0.0, 0.0]` is still useful, but should not be used to justify 5M/10M
+without resolving the forward tracking weakness and stochastic collapse.

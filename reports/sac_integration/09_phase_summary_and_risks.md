@@ -1,6 +1,6 @@
 # Phase Summary and Risks
 
-Date: 2026-05-14
+Date: 2026-05-15
 
 This report freezes the current SAC Route B validation state so a new agent can
 continue without relying on chat history.
@@ -10,7 +10,7 @@ continue without relying on chat history.
 - Path: `/home/admin/projects/mujoco_playground/g1_sac_dev`
 - Branch: `sac-integration`
 - Current diagnostic code baseline before this report update:
-  `fd8a014 Add SAC fixed-command render support`
+  `5a8b339 Add SAC fixed-command eval support`
 - Remote: `origin https://github.com/Kam1-hub/mujoco_playground.git`
 - External menagerie commit: `1b86ece576591213e2b666ebf59508454200ca97`
 
@@ -58,7 +58,8 @@ Runtime artifacts are local and ignored. Do not commit `logs/`, `.venv/`,
 | Fixed-command 3M render helper smoke | PASS_RENDER_SMOKE | `./logs/sac_render_3m_r3_fixedcmd/`, commands `[0.5, 0.0, 0.0]`, `[0.0, 0.0, 0.0]`, and `[0.0, 0.0, 0.5]` |
 | Fixed-command 3M eval helper smoke | PASS_EVAL_SMOKE | `./logs/sac_eval_fixedcmd_smoke_3m/eval_cmd_x0p5_seed0_both_4x200.json` |
 | Alpha sign audit | SIGN_OK_BUT_COLLAPSE_RISK | No direct Brax-style SAC sign bug found; persistent downward alpha pressure remains a risk |
-| 10M training | NOT VALIDATED | Requires full fixed-command coverage, entropy/alpha decision review, resource plan, and stop conditions |
+| Fixed-command forward eval gate | PASS_EVAL_MIXED_POLICY | `./logs/sac_eval_fixedcmd_3m_gate/`, commands `[0.5, 0.0, 0.0]` and `[1.0, 0.0, 0.0]`, seeds `0..4`, all `EVAL_OK`, NaN flags false |
+| 10M training | NOT VALIDATED | Blocked by fixed-forward weakness and stochastic collapse; requires alpha/entropy decision review, resource plan, and stop conditions |
 
 ## Completed Outcomes
 
@@ -178,6 +179,16 @@ Runtime artifacts are local and ignored. Do not commit `logs/`, `.venv/`,
   sign bug was found relative to Brax-style SAC, but the observed
   log-probability range keeps downward alpha pressure active and no alpha floor
   is present.
+- Completed fixed-command forward eval gate on the 3M R3 checkpoint. The gate
+  covered `[0.5,0,0]` and `[1,0,0]`, seeds `0..4`, `num_eval_envs=16`,
+  `episode_length=1000`, `policy_mode=both`, action diagnostics, and reward
+  components. All evals returned `EVAL_OK`; all action/reward/obs NaN flags
+  were false. `fwd0.5` deterministic was near break-even but noisy
+  (`0.0192` reward avg, `0.6026` stdev), `fwd1.0` deterministic was weak
+  (`-3.2302` reward avg), deterministic `tracking_lin_vel` collapsed from
+  `183.95` at `fwd0.5` to `25.94` at `fwd1.0`, and stochastic fixed-forward
+  eval remained poor (`-9.9480` and `-11.5115`). This is not a runtime failure,
+  but it blocks direct 5M/10M continuation.
 
 ### Full Action Diagnostic Summary
 
@@ -1011,24 +1022,27 @@ follow-up.
 
 ## Post-3M Decision Plan
 
-Do not automatically jump to 10M from this report update. The bounded 1024-env
-3M R3 run proved the high-parallel runtime path and 1M replay cap remain
-feasible on the 12GB GPU and produced the first strong deterministic-policy
-improvement signal. However, alpha/std collapsed and stochastic eval degraded
-severely.
+Do not automatically jump to 5M or 10M from this report update. The bounded
+1024-env 3M R3 run proved the high-parallel runtime path and 1M replay cap
+remain feasible on the 12GB GPU and produced the first strong
+deterministic-policy improvement signal. However, alpha/std collapsed and
+stochastic eval degraded severely.
 
-The next recommended step is full fixed-command eval/render coverage before
-any longer run. Cover `[0.5,0,0]`, `[1,0,0]`, `[0,0.3,0]`, `[0,0,0.5]`, and
-`[0,0,0]` with bounded deterministic/stochastic eval, action diagnostics,
-reward components, NaN checks, and command-specific visual inspection.
+The fixed-command forward gate now adds a more specific blocker: `[0.5,0,0]`
+deterministic is only near break-even/noisy, `[1,0,0]` deterministic is weak,
+and deterministic `tracking_lin_vel` collapses from `183.95` at `fwd0.5` to
+`25.94` at `fwd1.0`. Stochastic fixed-forward eval remains poor for both
+commands.
 
-After that command gate, run a decision review focused on:
+The next recommended step is a targeted alpha/entropy decision and ablation
+plan, not longer training. Prioritize:
 
-1. entropy/alpha handling, including possible alpha/log_std floor, fixed alpha,
-   standard log-alpha update, or target-entropy ablation;
-2. whether fixed-command evidence shows real velocity tracking or upright
-   shuffle/reward exploitation;
-3. whether the deterministic recovery justifies a carefully gated longer run.
+1. alpha floor, fixed alpha, or standard log-alpha update as controlled
+   short-run ablations;
+2. optional fixed-command `fwd1.0` render/video to distinguish upright shuffle
+   from partial forward locomotion;
+3. remaining command coverage for `[0,0.3,0]`, `[0,0,0.5]`, and `[0,0,0]`
+   after the forward weakness is recorded.
 
 Any 10M plan should include:
 

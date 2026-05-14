@@ -1,6 +1,49 @@
 # Smoke Results
 
-Status: updated on 2026-05-14 after the fixed-command 3M render helper smoke.
+Status: updated on 2026-05-15 after the fixed-command forward eval gate.
+
+## 2026-05-15 Fixed-Command Forward Eval Gate
+
+- Scope: eval-only forward-command coverage on the 3M R3 checkpoint; no
+  training, render, code, reward, `action_scale`, Kp, PPO/RSL, or checkpoint
+  schema change was made during the gate.
+- Checkpoint:
+  `./logs/sac_lift_gpu_3m_env1024_r3_b256_g16_replay1m/sac_lift_step_2999296.pkl`
+- Output directory under ignored logs:
+  `./logs/sac_eval_fixedcmd_3m_gate/`.
+- Commands:
+  - `fwd0.5` `[0.5, 0.0, 0.0]`, seeds `0..4`.
+  - `fwd1.0` `[1.0, 0.0, 0.0]`, seeds `0..4`.
+- Eval settings: `num_eval_envs=16`, `episode_length=1000`,
+  `policy_mode=both`, action diagnostics, and reward components.
+- Result: all evals returned `EVAL_OK`; all action/reward/obs NaN flags were
+  false.
+
+Aggregate summary:
+
+| Command | Mode | Reward Avg | Reward Stdev | Reward Min | Reward Max | Done Avg | Action Abs | Sat 0.95 | NaN |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---|
+| `[0.5,0,0]` | deterministic | 0.0192 | 0.6026 | -0.9842 | 0.6049 | 1.0 | 0.1630 | 0.00327 | false |
+| `[0.5,0,0]` | stochastic | -9.9480 | 0.8755 | -10.8305 | -8.5759 | 1.0 | 0.3614 | 0.00471 | false |
+| `[1.0,0,0]` | deterministic | -3.2302 | 0.3845 | -3.5655 | -2.6177 | 1.0 | 0.1646 | 0.00348 | false |
+| `[1.0,0,0]` | stochastic | -11.5115 | 0.6616 | -12.3932 | -10.8398 | 1.0 | 0.3608 | 0.00475 | false |
+
+Interpretation:
+
+- This is not a runtime failure.
+- `fwd0.5` deterministic is near break-even but noisy, not a robust solved gait.
+- `fwd1.0` deterministic is weak; deterministic `tracking_lin_vel` collapses
+  from `183.95` at `fwd0.5` to `25.94` at `fwd1.0`.
+- Stochastic fixed-forward eval remains poor, consistent with entropy/std
+  collapse.
+- Do not proceed directly to 5M/10M. Prefer targeted alpha/fixed-alpha/floor or
+  standard log-alpha ablation, with fixed-command `fwd1.0` render/video as a
+  useful visual follow-up.
+
+Warnings: sandbox `snap-confine` blocked some `uv` attempts; known non-fatal
+WSL2 CUDA driver and JAX cast overflow warnings were observed. No traceback,
+OOM, fatal CUDA error, non-`EVAL_OK`, or NaN flag was observed in successful
+gate outputs.
 
 ## 2026-05-14 Fixed-Command 3M Render Helper Smoke
 

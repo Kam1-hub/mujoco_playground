@@ -1,7 +1,6 @@
 # G1 SAC Integration Status And Roadmap
 
-Status: updated on 2026-05-14 after fixed-command eval support and the alpha
-sign audit.
+Status: updated on 2026-05-15 after the fixed-command forward eval gate.
 
 ## 1. Mission
 
@@ -195,11 +194,12 @@ Validation ladder:
 30. Deterministic checkpoint render helper smoke
 31. Fixed-command checkpoint render helper smoke
 32. Fixed-command eval helper smoke and alpha sign audit
-33. 10M-scale training
+33. Fixed-command forward eval gate
+34. 10M-scale training
 
 Status:
 
-- Steps 1 through 32 are complete.
+- Steps 1 through 33 are complete.
 - Step 29 is runtime/checkpoint/eval PASS with the first strong deterministic
   policy improvement signal, but not a clean stable-SAC declaration because
   stochastic eval degraded and alpha/std collapsed.
@@ -210,9 +210,14 @@ Status:
   The `[0.5,0,0]` 3M R3 eval smoke returned `EVAL_OK`; the alpha sign audit
   found no direct sign bug but confirmed persistent downward alpha pressure is
   still a stability risk.
-- Step 33 remains `NOT VALIDATED` and requires full fixed-command eval/render
-  coverage, an entropy/alpha decision review, resource plan, and stop
-  conditions.
+- Step 33 ran fixed-forward eval on the 3M R3 checkpoint for `[0.5,0,0]` and
+  `[1,0,0]`, seeds `0..4`, `policy_mode=both`, action diagnostics, and reward
+  components. All evals returned `EVAL_OK` and NaN flags false. The gate blocks
+  direct 5M/10M because `fwd0.5` deterministic is only near break-even/noisy,
+  `fwd1.0` deterministic is weak, and stochastic fixed-forward eval remains
+  poor.
+- Step 34 remains `NOT VALIDATED` and requires alpha/entropy ablation review,
+  resource plan, and stop conditions.
 
 ### Phase 6: Reports, Commits, Migration Handoff
 
@@ -271,9 +276,10 @@ WSL2 target workspace state:
 - Latest recorded validation state before this report update: bounded
   `1024`-env 3M R3 runtime/checkpoint/eval PASS, with deterministic recovery,
   deterministic and fixed-command render helper smokes, fixed-command eval
-  helper smoke, and alpha sign audit. Fixed-command render artifacts are under
-  `./logs/sac_render_3m_r3_fixedcmd/`; fixed-command eval smoke artifacts are
-  under `./logs/sac_eval_fixedcmd_smoke_3m/`.
+  helper smoke, alpha sign audit, and fixed-command forward eval gate. The
+  forward gate artifacts are under ignored `./logs/sac_eval_fixedcmd_3m_gate/`.
+  `fwd0.5` deterministic averaged `0.0192`, `fwd1.0` deterministic averaged
+  `-3.2302`, and stochastic fixed-forward eval remained poor.
 - Menagerie: present at `1b86ece576591213e2b666ebf59508454200ca97`
 - Python env: present under ignored `.venv`
 - CUDA JAX: validated, backend `gpu`, device `cuda:0`
@@ -1320,4 +1326,4 @@ likely risk because the observed log-probability range keeps
 
 ## 26. Current Position In One Sentence
 
-SAC Route B is implemented; CPU tiny smoke, WSL2 GPU preflight, Route B GPU 10k smoke, normalizer-ready checkpoint validation, bounded deterministic eval smoke, 50k sanity/eval, 100k sanity/eval, 250k sanity/eval, 500k sanity/eval, both-mode eval diagnostic, full action diagnostic, fresh 100k/250k train-time actor drift diagnostics, fresh 100k alpha/entropy ablation diagnostics, the A1/A3/A4 multi-seed eval-only ablation diagnostic, bounded fresh 250k/500k/750k A4 extensions, fresh 100k actor-regularization R1, fresh 100k actor-regularization R2/R3, bounded R3 250k, the 512/1024/2048 high-parallel capacity benchmark, bounded 1024-env 1M R3, bounded 1024-env 3M R3, fixed-command render support, fixed-command eval support, and alpha sign audit have passed their bounded gates; 3M provides the first strong deterministic-policy improvement signal but also severe alpha/std collapse and stochastic degradation; 10M, full fixed-command coverage, full eval benchmarking, domain randomization, and fine-tuning remain `NOT VALIDATED`.
+SAC Route B is implemented; CPU tiny smoke, WSL2 GPU preflight, Route B GPU 10k smoke, normalizer-ready checkpoint validation, bounded deterministic eval smoke, 50k sanity/eval, 100k sanity/eval, 250k sanity/eval, 500k sanity/eval, both-mode eval diagnostic, full action diagnostic, fresh 100k/250k train-time actor drift diagnostics, fresh 100k alpha/entropy ablation diagnostics, the A1/A3/A4 multi-seed eval-only ablation diagnostic, bounded fresh 250k/500k/750k A4 extensions, fresh 100k actor-regularization R1, fresh 100k actor-regularization R2/R3, bounded R3 250k, the 512/1024/2048 high-parallel capacity benchmark, bounded 1024-env 1M R3, bounded 1024-env 3M R3, fixed-command render support, fixed-command eval support, alpha sign audit, and fixed-command forward eval gate have passed their bounded gates; 3M provides the first strong deterministic-policy improvement signal but also severe alpha/std collapse, stochastic degradation, and weak `[1,0,0]` forward tracking; 5M/10M, full eval benchmarking, domain randomization, and fine-tuning remain `NOT VALIDATED`.
