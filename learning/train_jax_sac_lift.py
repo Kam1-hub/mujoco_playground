@@ -84,6 +84,15 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
           "to preserve the env default."
       ),
   )
+  parser.add_argument(
+      "--env_push_enable",
+      type=_str_to_bool,
+      default=None,
+      help=(
+          "Optional override for push_config.enable. Leave unset to preserve "
+          "the env default."
+      ),
+  )
   parser.add_argument("--normalize_observations", type=_str_to_bool, default=None)
   parser.add_argument("--deterministic_eval", type=_str_to_bool, default=None)
   parser.add_argument("--logdir", default=None)
@@ -121,6 +130,8 @@ def _build_config(args: argparse.Namespace):
     config.env_feet_slip_mode = sac_config.DEFAULT_ENV_FEET_SLIP_MODE
   if "env_feet_slip_scale" not in config:
     config.env_feet_slip_scale = sac_config.DEFAULT_ENV_FEET_SLIP_SCALE
+  if "env_push_enable" not in config:
+    config.env_push_enable = sac_config.DEFAULT_ENV_PUSH_ENABLE
   for name in (
       "seed",
       "impl",
@@ -148,6 +159,7 @@ def _build_config(args: argparse.Namespace):
       "alpha_loss_type",
       "env_feet_slip_mode",
       "env_feet_slip_scale",
+      "env_push_enable",
       "normalize_observations",
       "deterministic_eval",
       "logdir",

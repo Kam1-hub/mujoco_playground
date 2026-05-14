@@ -177,6 +177,9 @@ def train(config: Any) -> dict[str, Any]:
   env_feet_slip_scale = config.get("env_feet_slip_scale", None)
   if env_feet_slip_scale is not None:
     env_overrides["reward_config.scales.feet_slip"] = float(env_feet_slip_scale)
+  env_push_enable = config.get("env_push_enable", None)
+  if env_push_enable is not None:
+    env_overrides["push_config.enable"] = bool(env_push_enable)
   env = registry.load(
       config.env_name,
       config=env_cfg,

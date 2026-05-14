@@ -138,6 +138,9 @@ def _eval_env_overrides(config: Mapping[str, Any], impl: str) -> dict[str, Any]:
   env_feet_slip_scale = config.get("env_feet_slip_scale")
   if env_feet_slip_scale is not None:
     overrides["reward_config.scales.feet_slip"] = float(env_feet_slip_scale)
+  env_push_enable = config.get("env_push_enable")
+  if env_push_enable is not None:
+    overrides["push_config.enable"] = _str_to_bool(env_push_enable)
   return overrides
 
 
