@@ -1,7 +1,83 @@
 # Smoke Results
 
-Status: updated on 2026-05-15 after the short render terminal diagnostic
-sweep.
+Status: updated on 2026-05-15 after the isolated reset-calm 100k diagnostic.
+
+## 2026-05-15 Fresh Env1024 R3 100k Reset-Calm Diagnostic
+
+- Scope: isolated fresh env1024/R3/UTD-preserving 100k diagnostic using
+  `--env_reset_joint_noise_scale 0.0 --env_reset_root_qvel_scale 0.0`.
+- Related code commit:
+  `2dcf287 Add SAC reset disturbance scale overrides`.
+- Isolation: no push-disable, phase-freeze, feet-air-time command mask,
+  feet-slip mode, or feet-slip scale override was combined with this run.
+- Status: `TRAIN_OK`.
+- Checkpoint:
+  `./logs/sac_lift_gpu_100k_env1024_r3_reset_calm/sac_lift_step_99328.pkl`.
+- Checkpoint readiness: PASS.
+- Env steps: `99328`.
+- Gradient steps: `1552`.
+- Wall time: `77.4890s`.
+- SPS: `1281.8339`.
+- Actor loss: `-6.0832`.
+- Critic loss: `0.1122`.
+- Q / target Q: `5.2516 / 5.2811`.
+- Reward mean: `-0.06960`.
+- Done fraction: `0.00391`.
+- Discount mean: `0.99609`.
+- Alpha / log alpha / effective alpha:
+  `0.04278 / -3.15161 / 0.04278`.
+
+Actor drift summary:
+
+| Metric | Final |
+|---|---:|
+| actor policy mean abs mean | 0.12152 |
+| actor policy mean abs max | 1.31191 |
+| actor log_std mean/min/max | -0.14480 / -0.45237 / 0.08262 |
+| actor policy std mean | 0.86669 |
+| sampled action abs mean | 0.52066 |
+| sampled action saturation 0.95 | 0.03650 |
+| deterministic action abs mean | 0.11827 |
+| deterministic action saturation 0.95 | 0.0 |
+
+Small fixed-command and stand eval smokes inherited both reset scale overrides
+at `0.0`:
+
+| Command | Mode | Reward | tracking_lin_vel | tracking_ang_vel | termination | first done | reason |
+|---|---|---:|---:|---:|---:|---:|---|
+| `[0.5,0,0]` | deterministic | -2.0443 | 32.8000 | 42.3541 | -100 | 67.5 | fall 4/4 |
+| `[0.5,0,0]` | stochastic | -6.4242 | 20.4621 | 4.6537 | -100 | 63.0 | fall 4/4 |
+| `[1.0,0,0]` | deterministic | -2.3095 | 16.2483 | 44.3136 | -100 | 67.5 | fall 4/4 |
+| `[1.0,0,0]` | stochastic | -6.7478 | 7.5346 | 4.3731 | -100 | 62.75 | fall 4/4 |
+| `[0,0,0]` | deterministic | -4.4102 | 30.1104 | 41.6209 | -100 | 67.5 | fall 4/4 |
+| `[0,0,0]` | stochastic | -11.9690 | 25.2253 | 5.1955 | -100 | 66.0 | fall 4/4 |
+
+Deterministic render smokes also improved survival but still fell:
+
+- `fwd0.5`: first done `68`, fall, terminal
+  `-0.0705 / -0.1075 / 3.7879`.
+- `fwd1.0`: first done `68`, fall, terminal
+  `-0.0654 / -0.1109 / 3.7555`.
+- `stand`: first done `68`, fall, terminal
+  `-0.0748 / -0.1018 / 3.9088`.
+
+Conclusion:
+
+- Reset-calm is a meaningful positive signal: previous terminal renders fell at
+  step `51-52`; reset-calm deterministic renders fell at step `68`.
+- Eval first done also moved later, mostly `63-68`.
+- Training `done_fraction` improved to `0.00391`, and `reward_mean` improved
+  to `-0.06960`.
+- The fixed-command gate still fails because all eval/render cases terminate
+  by fall, `reward/termination=-100` remains saturated, torso-up z crosses
+  below `0`, and root height is still negative.
+- Do not continue to 250k, 5M, or 10M from this result.
+- Next targeted work should be controlled base-stability/action-smoothness
+  design: alive, base_height, lin_vel_z, orientation/ang_vel stabilization, or
+  action-rate smoothing.
+
+See `reports/sac_integration/26_reset_calm_diagnostic.md` for the focused
+record.
 
 ## 2026-05-15 Short Render Terminal Diagnostic Sweep
 

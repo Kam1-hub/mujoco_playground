@@ -1,7 +1,6 @@
 # Next Actions
 
-Status: updated on 2026-05-15 after the short render terminal diagnostic
-sweep.
+Status: updated on 2026-05-15 after the isolated reset-calm 100k diagnostic.
 
 ## Immediate State
 
@@ -309,6 +308,17 @@ sweep.
   terminated via fall at step `51-52`, with contact and NaN reasons absent.
   Terminal states consistently show negative torso-up z, negative root height,
   high torso XY angular velocity around `6.9-8.0`, and large local velocity.
+- Default-preserving reset disturbance scale controls are committed at
+  `2dcf287 Add SAC reset disturbance scale overrides`. Fresh env1024 R3 100k
+  with `--env_reset_joint_noise_scale 0.0 --env_reset_root_qvel_scale 0.0`
+  passed runtime and checkpoint gates. Checkpoint:
+  `./logs/sac_lift_gpu_100k_env1024_r3_reset_calm/sac_lift_step_99328.pkl`.
+  Training improved the early-fall signal (`done_fraction=0.00391`,
+  `reward_mean=-0.06960`), and deterministic terminal renders delayed first
+  fall from the previous `51-52` steps to step `68`. The gate still failed:
+  fixed `fwd0.5`, `fwd1.0`, and stand eval/render cases all terminate by fall,
+  with `reward/termination=-100`, torso-up z below `0`, and negative terminal
+  root height.
 
 ## Current Recommendation
 
@@ -624,19 +634,20 @@ The bounded 1024-env 3M R3 result, fixed-forward eval gate, two short
 fixed-alpha diagnostics, the `foot_velocity` feet-slip gate, the
 `feet_slip_scale=0` gate, the push-disable gate, the zero-command phase-freeze
 gate, the feet-air-time command-mask gate, the eval-only termination/contact
-sweep, and the short render terminal sweep have now been executed and
-recorded. Do not automatically run 250k, 5M, or 10M. The next useful step is
-early-fall stabilization/curriculum design, with alpha-floor only as a
-secondary diagnostic:
+sweep, the short render terminal sweep, and the reset-calm 100k gate have now
+been executed and recorded. Do not automatically run 250k, 5M, or 10M. The
+next useful step is controlled base-stability/action-smoothness design, with
+alpha-floor only as a secondary diagnostic:
 
-1. Stabilization path: review reset disturbance/warmup, command warmup or
-   curriculum, base-height/alive/orientation/angular-velocity stabilizers, and
-   action-rate smoothing.
-2. Termination path: explain why the torso falls around `51-52` steps across
-   all 100k reward/prior variants. Current evidence points to upright/base
-   instability, not illegal contact and not qpos/qvel NaN.
-3. Reward/prior follow-up: do not touch broader reward terms, `action_scale`,
-   or Kp until the early-fall source is understood.
+1. Stabilization path: design a narrow default-off ablation around alive,
+   base-height, lin_vel_z, stronger orientation/angular-velocity stabilization,
+   or action-rate smoothing.
+2. Termination path: reset-calm delayed fall from `51-52` to about `68` steps,
+   so reset disturbance is a contributor, but all fixed-command cases still
+   fall. Current evidence points to upright/base instability, not illegal
+   contact and not qpos/qvel NaN.
+3. Reward/prior follow-up: do not touch broad reward terms, `action_scale`, or
+   Kp without a targeted base-stability/action-smoothness ablation plan.
 4. Entropy path: keep `alpha_floor=0.03` as a secondary diagnostic; do not keep
    increasing fixed alpha blindly.
 5. Training path: only after that review, decide whether a carefully gated

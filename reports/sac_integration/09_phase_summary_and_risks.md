@@ -10,7 +10,7 @@ continue without relying on chat history.
 - Path: `/home/admin/projects/mujoco_playground/g1_sac_dev`
 - Branch: `sac-integration`
 - Current diagnostic/report baseline before this report update:
-  `5b3f393 Add SAC terminal render diagnostics`
+  `2dcf287 Add SAC reset disturbance scale overrides`
 - Remote: `origin https://github.com/Kam1-hub/mujoco_playground.git`
 - External menagerie commit: `1b86ece576591213e2b666ebf59508454200ca97`
 
@@ -68,6 +68,7 @@ Runtime artifacts are local and ignored. Do not commit `logs/`, `.venv/`,
 | Fresh env1024 R3 100k feet-air-time command-mask diagnostic | PASS_RUNTIME_WEAK_FIXED_COMMAND | `./logs/sac_lift_gpu_100k_env1024_r3_feet_air_time_mask/sac_lift_step_99328.pkl`, `--env_feet_air_time_command_mask True`, `TRAIN_OK`, readiness PASS, inherited eval reports `feet_air_time_command_mask=true`, stand eval correctly reports `reward/feet_air_time=0.0`, but `reward/termination=-100` remains saturated for fwd0.5, fwd1.0, and stand |
 | Eval-only 100k termination/contact diagnostic sweep | PASS_EVAL_FALL_DOMINATED | `./logs/sac_eval_termination_diag_100k/`, `9` JSON outputs; push-disable, phase-freeze, and feet-air-time-mask checkpoints; fixed `fwd0.5`, `fwd1.0`, and stand; all `EVAL_OK`, NaN flags false, `reward/termination=-100` in all 18 mode cases, first done mostly around `51-55` steps, fall-dominated rather than contact-dominated or numerical |
 | Short render terminal diagnostic sweep | PASS_RENDER_FALL_DOMINATED | `./logs/sac_render_terminal_diag_100k/`, `9` matching JSON/MP4 pairs; push-disable, phase-freeze, and feet-air-time-mask checkpoints; deterministic fixed `fwd0.5`, `fwd1.0`, and stand; all terminate via fall at step `51-52`, with negative torso-up z, negative root height, high torso XY angular velocity, and no contact/NaN reason |
+| Fresh env1024 R3 100k reset-calm diagnostic | PASS_RUNTIME_PARTIAL_STABILITY_SIGNAL | `./logs/sac_lift_gpu_100k_env1024_r3_reset_calm/sac_lift_step_99328.pkl`, `--env_reset_joint_noise_scale 0.0 --env_reset_root_qvel_scale 0.0`, `TRAIN_OK`, readiness PASS, train `done_fraction=0.00391`, deterministic terminal renders delayed fall to step `68`, but fixed fwd0.5/fwd1.0/stand still terminate by fall with `reward/termination=-100` |
 | 10M training | NOT VALIDATED | Blocked by fixed-forward weakness and stochastic collapse; requires alpha/entropy decision review, resource plan, and stop conditions |
 
 ## Completed Outcomes
@@ -277,6 +278,18 @@ Runtime artifacts are local and ignored. Do not commit `logs/`, `.venv/`,
   negative torso-up z, negative root height, high torso XY angular velocity
   around `6.9-8.0`, and large local velocity. This reinforces early torso/base
   stability failure and blocks longer training from these gates.
+- Validated fresh env1024 R3 100k reset-calm diagnostic. The run used
+  `--env_reset_joint_noise_scale 0.0 --env_reset_root_qvel_scale 0.0` without
+  combining push-disable, phase-freeze, feet-air-time command mask, or
+  feet-slip overrides. It produced checkpoint
+  `./logs/sac_lift_gpu_100k_env1024_r3_reset_calm/sac_lift_step_99328.pkl`,
+  returned `TRAIN_OK`, and passed checkpoint readiness. Training
+  `done_fraction` improved to `0.00391`, `reward_mean` improved to `-0.06960`,
+  and deterministic terminal renders delayed fall from the previous `51-52`
+  steps to step `68`. The fixed-command gate still fails: fwd0.5, fwd1.0, and
+  stand eval/render cases all terminate by fall with `reward/termination=-100`,
+  torso-up z below `0`, and negative terminal root height. This confirms reset
+  disturbance contributes to early fall but is not the whole blocker.
 
 ### Full Action Diagnostic Summary
 

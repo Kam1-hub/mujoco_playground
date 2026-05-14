@@ -33,6 +33,7 @@ Required reports:
 - `23_feet_air_time_mask_diagnostic.md`
 - `24_termination_contact_diagnostics.md`
 - `25_terminal_render_diagnostics.md`
+- `26_reset_calm_diagnostic.md`
 
 Repo-root continuation handoff:
 

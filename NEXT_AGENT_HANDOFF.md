@@ -18,10 +18,10 @@ domain randomization, or fine-tuning as part of the current validation phase.
 
 - Path: `/home/admin/projects/mujoco_playground/g1_sac_dev`
 - Branch: `sac-integration`
-- Latest recorded diagnostic state: short render terminal diagnostic sweep
-  after the eval-only 100k termination/contact diagnostic sweep, fresh env1024
-  R3 100k feet-air-time command-mask diagnostic, zero-command phase-freeze,
-  push-disable,
+- Latest recorded diagnostic state: fresh env1024 R3 100k reset-calm
+  diagnostic after the short render terminal diagnostic sweep, eval-only 100k
+  termination/contact diagnostic sweep, fresh env1024 R3 100k feet-air-time
+  command-mask diagnostic, zero-command phase-freeze, push-disable,
   `feet_slip_scale=0`,
   `foot_velocity`, `fixed_alpha=0.03`, and `fixed_alpha=0.05` gates,
   fixed-command forward eval gate, fixed-command eval support, alpha sign audit,
@@ -319,6 +319,18 @@ Current validated ladder:
   Terminal states consistently had negative torso-up z, negative root height,
   high torso XY angular velocity around `6.9-8.0`, and large local velocity.
   No variant meaningfully improved survival.
+- Fresh env1024 R3 100k reset-calm diagnostic: PASS runtime/checkpoint with a
+  partial stability signal, but fixed-command gate still fails. The run used
+  `--env_reset_joint_noise_scale 0.0 --env_reset_root_qvel_scale 0.0` without
+  push-disable, phase-freeze, feet-air-time command mask, or feet-slip
+  overrides. Checkpoint:
+  `./logs/sac_lift_gpu_100k_env1024_r3_reset_calm/sac_lift_step_99328.pkl`.
+  It returned `TRAIN_OK`, passed readiness, improved training
+  `done_fraction` to `0.00391`, and delayed deterministic terminal-render
+  falls from the previous `51-52` steps to step `68`. The gate still fails:
+  fixed fwd0.5, fwd1.0, and stand eval/render cases all terminate by fall with
+  `reward/termination=-100`, torso-up z below `0`, and negative terminal root
+  height.
 - Action joint mapping diagnostic: PASS.
 
 Still not validated:
@@ -909,9 +921,10 @@ Both-mode eval diagnostic:
 
 1. Do read-only status checks.
 2. Read this file and `reports/sac_integration/09_phase_summary_and_risks.md`.
-3. Review `reports/sac_integration/19_alpha_entropy_and_fixed_eval_gate.md`.
-4. Plan an isolated default-off `feet_air_time` command-mask prior ablation
-   before any longer run.
+3. Review `reports/sac_integration/26_reset_calm_diagnostic.md`.
+4. Plan a controlled base-stability/action-smoothness design before any longer
+   run. Candidate areas: alive, base_height, lin_vel_z, stronger
+   orientation/angular-velocity stabilization, or action-rate smoothing.
 5. Do not draft or execute 10M automatically.
 
 Do not start long training automatically. Do not modify reward, action scale,
@@ -1017,12 +1030,16 @@ checkpoint, and inherited eval checks; it correctly zeroed
 did not improve. The termination/contact sweep and terminal render sweep now
 show the common failure is early torso/base fall around `51-52` steps, with
 negative torso-up z, negative root height, high torso XY angular velocity, and
-no contact/NaN root cause. Next recommended work is early-fall
-stabilization/curriculum design: reset disturbance/warmup, command warmup,
-base-height/alive/orientation/angular-velocity stabilizers, and action-rate
-smoothing. `alpha_floor=0.03` is only a secondary diagnostic. Do not run
+no contact/NaN root cause. The reset-calm gate then showed reset disturbance is
+a real contributor: deterministic render fall moved to step `68`, training
+`done_fraction` improved to `0.00391`, and `reward_mean` improved to
+`-0.06960`, but all fixed-command eval/render cases still fell with
+`reward/termination=-100`. Next recommended work is controlled
+base-stability/action-smoothness design: alive, base_height, lin_vel_z,
+stronger orientation/angular-velocity stabilization, or action-rate smoothing.
+`alpha_floor=0.03` is only a secondary diagnostic. Do not run
 fixed-alpha, foot-velocity, feet-slip-scale-zero, push-disable, phase-freeze,
-or feet-air-time-mask 250k, 5M, or 10M from these results. Detailed video
+feet-air-time-mask, or reset-calm 250k, 5M, or 10M from these results. Detailed video
 inspection may still help distinguish fall direction or posture collapse, but
 it should not justify 5M/10M without resolving early fall, forward tracking
 weakness, and stochastic collapse. Do not change reward, action_scale, Kp,
