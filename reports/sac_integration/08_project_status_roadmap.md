@@ -1,6 +1,6 @@
 # G1 SAC Integration Status And Roadmap
 
-Status: updated on 2026-05-13 after fresh 250k actor drift diagnostic.
+Status: updated on 2026-05-14 after fresh 100k alpha/entropy ablation diagnostics.
 
 ## 1. Mission
 
@@ -180,12 +180,13 @@ Validation ladder:
 16. Full action distribution / reward-component eval diagnostic
 17. Fresh 100k train-time actor drift diagnostic
 18. Fresh 250k train-time actor drift diagnostic
-19. 1M training
+19. Fresh 100k alpha/entropy ablation diagnostics
+20. 1M training
 
 Status:
 
-- Steps 1 through 18 are complete.
-- Step 19 remains `NOT VALIDATED` and requires separate user confirmation and
+- Steps 1 through 19 are complete.
+- Step 20 remains `NOT VALIDATED` and requires separate user confirmation and
   an explicit resource/stop-condition plan.
 
 ### Phase 6: Reports, Commits, Migration Handoff
@@ -316,8 +317,16 @@ WSL2 target workspace state:
   deterministic action abs increased `0.218864 -> 0.270944`, final log_std
   moved down `-0.157116 -> -0.205270`, and alpha declined
   `0.032585 -> 0.018768`.
+- Fresh 100k alpha/entropy ablation diagnostics:
+  A1, A3, and A4 all returned `TRAIN_OK`, passed checkpoint readiness, and
+  passed 4 env x 200 both-mode action diagnostic eval. A4 is the best current
+  100k drift candidate with alpha `0.042848`, actor mean abs `0.206928`,
+  deterministic action abs `0.193139`, log_std mean `-0.151827`, std mean
+  `0.861342`, and the best deterministic 4x200 reward among A1/A3/A4.
+  A4 stochastic 4x200 reward was worse than A1/A3, so this is a diagnostic
+  signal rather than final policy-quality evidence.
 - Latest diagnostic report:
-  `reports/sac_integration/11_actor_drift_train_diagnostic.md`.
+  `reports/sac_integration/12_alpha_entropy_ablation_plan.md`.
 - Logs, checkpoints, `.venv`, and menagerie remain ignored and are not
   committed.
 
@@ -985,4 +994,4 @@ fresh 500k, 750k, or 1M.
 
 ## 17. Current Position In One Sentence
 
-SAC Route B is implemented; CPU tiny smoke, WSL2 GPU preflight, Route B GPU 10k smoke, normalizer-ready checkpoint validation, bounded deterministic eval smoke, 50k sanity/eval, 100k sanity/eval, 250k sanity/eval, 500k sanity/eval, both-mode eval diagnostic, full action diagnostic, and fresh 100k/250k train-time actor drift diagnostics have passed; 1M, full eval benchmarking, domain randomization, and fine-tuning remain `NOT VALIDATED`.
+SAC Route B is implemented; CPU tiny smoke, WSL2 GPU preflight, Route B GPU 10k smoke, normalizer-ready checkpoint validation, bounded deterministic eval smoke, 50k sanity/eval, 100k sanity/eval, 250k sanity/eval, 500k sanity/eval, both-mode eval diagnostic, full action diagnostic, fresh 100k/250k train-time actor drift diagnostics, and fresh 100k alpha/entropy ablation diagnostics have passed; 1M, full eval benchmarking, domain randomization, and fine-tuning remain `NOT VALIDATED`.

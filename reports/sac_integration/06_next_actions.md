@@ -1,6 +1,6 @@
 # Next Actions
 
-Status: updated on 2026-05-14 after alpha/entropy ablation planning.
+Status: updated on 2026-05-14 after fresh 100k alpha/entropy ablation diagnostics.
 
 ## Immediate State
 
@@ -94,12 +94,15 @@ Status: updated on 2026-05-14 after alpha/entropy ablation planning.
   `reports/sac_integration/13_action_joint_mapping_diagnostic.md`; it maps the
   500k deterministic top action dimensions mainly to right ankle roll/pitch,
   waist pitch, right knee, and hip roll.
-- The next alpha/entropy ablation plan is recorded in
+- Fresh 100k alpha/entropy ablation A1/A3/A4 passed runtime, checkpoint
+  readiness, and small eval gates. Results are recorded in
   `reports/sac_integration/12_alpha_entropy_ablation_plan.md`.
-- The first fresh 100k ablation training command still needs explicit user
-  approval because the external execution reviewer rejected the new training
-  run after prior read-only instructions. This is an execution-policy gate, not
-  a SAC technical blocker.
+- A4 is the best current 100k candidate: `alpha=0.042848`, actor mean abs
+  `0.206928`, deterministic action abs `0.193139`, log_std mean `-0.151827`,
+  and std mean `0.861342`; it had the best deterministic 4x200 reward among
+  A1/A3/A4.
+- Caveat: A4 stochastic 4x200 reward was worse than A1/A3, so this remains a
+  diagnostic signal rather than a final policy-quality benchmark.
 
 ## Completed WSL2 GPU Validation
 
@@ -266,17 +269,15 @@ or menagerie.
 
 Do not run 750k or 1M yet.
 
-Recommended next step is explicit approval and execution of the fresh 100k
-alpha/entropy ablation plan:
+Fresh 100k alpha/entropy ablation A1/A3/A4 is complete. A4 is the best current
+100k candidate, but the next step should still be bounded:
 
-1. Run A1: `--alpha_learning_rate 1e-4`.
-2. Run A3: `--target_entropy_coef 0.25`.
-3. Run A4 only if A1 or A3 passes runtime gates.
-4. For each variant, run checkpoint readiness and small both-mode action
-   diagnostic eval.
-5. Do not run fresh 250k extension until a 100k variant improves actor drift.
-6. Do not run fresh 500k, 750k, or 1M.
-7. Do not tune reward, `action_scale`, or Kp yet.
+1. Prefer multi-seed 100k ablation eval for A4, optionally including A1 for a
+   direct slow-alpha comparison.
+2. Alternatively, plan a fresh 250k A4 extension only after user/main-agent
+   confirmation and with the same checkpoint/eval gates.
+3. Do not run fresh 500k, 750k, or 1M.
+4. Do not tune reward, `action_scale`, or Kp yet.
 
 ## Completed Both-Mode Eval Diagnostic
 
@@ -370,20 +371,18 @@ CPU, stop and report the CUDA/JAX blocker.
 ## Recommended Next Step
 
 Do not automatically run fresh 500k, 750k, or 1M. The next useful step is a
-decision review.
+bounded A4 follow-up decision.
 
 Recommended diagnostic questions:
 
-1. Is a fresh 500k diagnostic worth the runtime cost, or is the 100k/250k trend
-   already sufficient?
-2. Should alpha/entropy behavior be reviewed before more training?
-3. Should deterministic actor regularization or an eval-policy design be
-   discussed before changing any code?
-4. Do reward components continue to implicate angular velocity, orientation, or
-   stand-still penalties?
-5. What stop conditions would apply if a fresh 500k diagnostic is approved?
+1. Should A4 get multi-seed 100k eval before any longer run?
+2. Is A4 strong enough for a fresh 250k extension, or should A1 be compared by
+   multi-seed eval first?
+3. Does A4 preserve its actor mean/log_std advantage beyond a single seed 0
+   4x200 eval?
+4. What stop conditions would apply if a fresh 250k A4 extension is approved?
 
-Do not jump into 750k or 1M from this report update.
+Do not jump into fresh 500k, 750k, or 1M from this report update.
 
 ## Migration Reminders
 
@@ -397,7 +396,7 @@ Do not jump into 750k or 1M from this report update.
 
 ## Recommended Follow-Ups After Deterministic Eval Smoke
 
-1. Run a decision review before any fresh 500k diagnostic.
+1. Run a bounded A4 follow-up decision before any fresh 250k A4 extension.
 2. Keep eval scales bounded unless the user asks for a benchmark.
 3. Do not start fresh 500k, 750k, or 1M automatically from this report update.
 4. Compare against PPO baseline only after SAC smoke plus eval have clean

@@ -312,10 +312,79 @@ Stochastic positives:
 
 - Fresh 100k supports the early actor mean drift hypothesis, and fresh 250k
   shows the drift amplifies in absolute level.
+- Fresh 100k alpha/entropy ablation A1/A3/A4 has since run; see below.
 - Do not run fresh 500k, 750k, or 1M automatically.
-- Next step should be a decision review comparing:
-  1. fresh 500k diagnostic to complete the trajectory,
-  2. alpha/entropy hyperparameter review,
-  3. deterministic actor regularization / eval-policy design,
-  4. action/reward component targeted analysis.
+- Next step should review the A4 100k signal before any longer extension.
 - Do not tune reward, `action_scale`, or Kp yet.
+
+## Fresh 100k Alpha/Entropy Ablation
+
+### Context
+
+- Scope: fresh 100k alpha/entropy ablation training plus small action
+  diagnostic eval.
+- Purpose: test whether slower alpha decay and/or smaller target entropy
+  magnitude improves the early actor mean / deterministic action drift signal.
+- Variants:
+  - A1: `alpha_learning_rate=1e-4`, `target_entropy_coef=0.5`.
+  - A3: `alpha_learning_rate=3e-4`, `target_entropy_coef=0.25`.
+  - A4: `alpha_learning_rate=1e-4`, `target_entropy_coef=0.25`.
+- A4 was run because A1 and A3 passed runtime, checkpoint, and eval gates.
+- No 250k, 500k, 750k, or 1M run was executed in this ablation phase.
+- No reward, `action_scale`, Kp, PPO, or RSL changes were made.
+
+### Gate Summary
+
+| Variant | Checkpoint | Train | Readiness | Eval |
+|---|---|---:|---:|---:|
+| A1 | `./logs/sac_lift_gpu_100k_alpha_ablate_alr1e4_s1/sac_lift_step_99968.pkl` | TRAIN_OK | PASS | EVAL_OK |
+| A3 | `./logs/sac_lift_gpu_100k_alpha_ablate_te0p25_s1/sac_lift_step_99968.pkl` | TRAIN_OK | PASS | EVAL_OK |
+| A4 | `./logs/sac_lift_gpu_100k_alpha_ablate_te0p25_alr1e4_s1/sac_lift_step_99968.pkl` | TRAIN_OK | PASS | EVAL_OK |
+
+### Training And Drift Metrics
+
+| Variant | alpha | log_alpha | actor mean abs | det action abs | log_std mean | std mean | reward_mean |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Fresh 100k baseline | 0.032585 | -3.423901 | 0.238568 | 0.218864 | -0.157116 | 0.857329 | -0.128194 |
+| A1 | 0.04285280779004097 | -3.149984121322632 | 0.21597573161125183 | 0.20185625553131104 | -0.15477555990219116 | 0.8587937355041504 | -0.09942552447319031 |
+| A3 | 0.032598935067653656 | -3.423475742340088 | 0.24479639530181885 | 0.22468040883541107 | -0.15980812907218933 | 0.8549157381057739 | -0.11961531639099121 |
+| A4 | 0.04284820705652237 | -3.1500914096832275 | 0.2069278359413147 | 0.19313891232013702 | -0.15182653069496155 | 0.8613420128822327 | -0.11797440052032471 |
+
+Interval metrics:
+
+| Variant | interval actor mean abs | interval det action abs | interval log_std mean | interval std mean |
+|---|---:|---:|---:|---:|
+| A1 | 0.16891714930534363 | 0.1619931809479029 | -0.13590599107495882 | 0.877461152406318 |
+| A3 | 0.17016767629588297 | 0.16267807873625317 | -0.13607482575914925 | 0.8774873124151575 |
+| A4 | 0.16146480113036873 | 0.1549823469017904 | -0.13399408028511575 | 0.8791330905308711 |
+
+### Small Action Diagnostic Eval
+
+| Variant | Mode | Reward Mean | Reward SD | Reward Min | Reward Max | Action Abs | Sat 0.95 | NaN |
+|---|---|---:|---:|---:|---:|---:|---:|---|
+| A1 | deterministic | -4.416665077209473 | 0.3470674157142639 | -4.957084655761719 | -4.006556987762451 | 0.18505924940109253 | 0.0 | false |
+| A1 | stochastic | -6.050605773925781 | 0.42214730381965637 | -6.710614204406738 | -5.661291599273682 | 0.528386652469635 | 0.04306034743785858 | false |
+| A3 | deterministic | -4.555072784423828 | 0.6614199280738831 | -5.202037334442139 | -3.4488778114318848 | 0.18952174484729767 | 0.000043103449570480734 | false |
+| A3 | stochastic | -6.32877779006958 | 0.5614966750144958 | -7.13820743560791 | -5.716131210327148 | 0.532009482383728 | 0.04543103650212288 | false |
+| A4 | deterministic | -4.366635799407959 | 0.3521541357040405 | -4.8208231925964355 | -3.8527913093566895 | 0.17405447363853455 | 0.0 | false |
+| A4 | stochastic | -6.495170593261719 | 0.6918737888336182 | -7.607295036315918 | -5.806713104248047 | 0.5309661030769348 | 0.046120692044496536 | false |
+
+### Interpretation
+
+- A1 improves the main 100k drift metrics versus the fresh 100k baseline.
+- A3 does not improve the drift metrics: alpha is near baseline, but actor mean
+  and deterministic action magnitude are worse and std is slightly lower.
+- A4 is the best current 100k candidate. It combines higher alpha with lower
+  actor mean and deterministic action magnitude, healthier log_std/std, and
+  the best deterministic 4x200 reward among A1/A3/A4.
+- A4 stochastic 4x200 reward was worse than A1/A3, so this remains a diagnostic
+  signal rather than a final policy-quality benchmark.
+- No traceback, NaN, OOM, fatal CUDA, checkpoint failure, or eval failure was
+  observed.
+
+### Updated Next Action
+
+- Do not run 750k or 1M.
+- Do not run a fresh 250k A4 extension automatically.
+- Recommended next step: multi-seed 100k ablation eval and/or fresh 250k A4
+  extension only after user/main-agent confirmation.

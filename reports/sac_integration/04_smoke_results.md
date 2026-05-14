@@ -1,6 +1,66 @@
 # Smoke Results
 
-Status: updated on 2026-05-13 after fresh 250k actor drift diagnostic.
+Status: updated on 2026-05-14 after fresh 100k alpha/entropy ablation diagnostics.
+
+## 2026-05-14 Fresh 100k Alpha/Entropy Ablation Diagnostics
+
+- Scope: fresh 100k ablation training plus small action diagnostic eval.
+- Variants:
+  - A1: `alpha_learning_rate=1e-4`, `target_entropy_coef=0.5`.
+  - A3: `alpha_learning_rate=3e-4`, `target_entropy_coef=0.25`.
+  - A4: `alpha_learning_rate=1e-4`, `target_entropy_coef=0.25`.
+- A4 was run because A1 and A3 both passed runtime, checkpoint, and eval gates.
+- No 250k, 500k, 750k, or 1M run was executed in this ablation phase.
+- No reward, `action_scale`, Kp, PPO, RSL, domain-randomization, or
+  fine-tuning changes were made.
+- Runtime artifacts are under ignored `logs/` and are not committed.
+
+Gate summary:
+
+| Variant | Train | Checkpoint readiness | Eval | JSON |
+|---|---:|---:|---:|---|
+| A1 | TRAIN_OK | PASS | EVAL_OK | `logs/sac_eval_alpha_ablate/alr1e4_seed0_4x200_actiondiag.json` |
+| A3 | TRAIN_OK | PASS | EVAL_OK | `logs/sac_eval_alpha_ablate/te0p25_seed0_4x200_actiondiag.json` |
+| A4 | TRAIN_OK | PASS | EVAL_OK | `logs/sac_eval_alpha_ablate/te0p25_alr1e4_seed0_4x200_actiondiag.json` |
+
+Training summary:
+
+| Variant | Checkpoint | env_steps | gradient_steps | wall_time | sps | actor_loss | critic_loss | alpha | log_alpha | q | target_q |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| A1 | `./logs/sac_lift_gpu_100k_alpha_ablate_alr1e4_s1/sac_lift_step_99968.pkl` | 99968 | 1548 | 72.58993083500536 | 1377.1607005277926 | -5.957967758178711 | 0.051446348428726196 | 0.04285280779004097 | -3.149984121322632 | 5.1932373046875 | 5.197819709777832 |
+| A3 | `./logs/sac_lift_gpu_100k_alpha_ablate_te0p25_s1/sac_lift_step_99968.pkl` | 99968 | 1548 | 70.95217173699348 | 1408.9491209735313 | -4.622934341430664 | 0.05104774236679077 | 0.032598935067653656 | -3.423475742340088 | 4.00905704498291 | 4.069530963897705 |
+| A4 | `./logs/sac_lift_gpu_100k_alpha_ablate_te0p25_alr1e4_s1/sac_lift_step_99968.pkl` | 99968 | 1548 | 71.56172043700644 | 1396.947968683882 | -5.977431297302246 | 0.04582885652780533 | 0.04284820705652237 | -3.1500914096832275 | 5.179529666900635 | 5.181567192077637 |
+
+Actor drift comparison against fresh 100k baseline
+(`alpha=0.032585`, actor mean abs `0.238568`, deterministic action abs
+`0.218864`, log_std mean `-0.157116`, std mean `0.857329`):
+
+| Variant | actor mean abs | deterministic action abs | log_std mean | std mean | Interpretation |
+|---|---:|---:|---:|---:|---|
+| A1 | 0.21597573161125183 | 0.20185625553131104 | -0.15477555990219116 | 0.8587937355041504 | Better than baseline on drift metrics |
+| A3 | 0.24479639530181885 | 0.22468040883541107 | -0.15980812907218933 | 0.8549157381057739 | Slightly worse than baseline |
+| A4 | 0.2069278359413147 | 0.19313891232013702 | -0.15182653069496155 | 0.8613420128822327 | Best 100k drift candidate |
+
+Small eval summary, seed 0, 4 env x 200 steps:
+
+| Variant | Mode | Reward Mean | Reward SD | Reward Min | Reward Max | Action Abs | Sat 0.95 | NaN |
+|---|---|---:|---:|---:|---:|---:|---:|---|
+| A1 | deterministic | -4.416665077209473 | 0.3470674157142639 | -4.957084655761719 | -4.006556987762451 | 0.18505924940109253 | 0.0 | false |
+| A1 | stochastic | -6.050605773925781 | 0.42214730381965637 | -6.710614204406738 | -5.661291599273682 | 0.528386652469635 | 0.04306034743785858 | false |
+| A3 | deterministic | -4.555072784423828 | 0.6614199280738831 | -5.202037334442139 | -3.4488778114318848 | 0.18952174484729767 | 0.000043103449570480734 | false |
+| A3 | stochastic | -6.32877779006958 | 0.5614966750144958 | -7.13820743560791 | -5.716131210327148 | 0.532009482383728 | 0.04543103650212288 | false |
+| A4 | deterministic | -4.366635799407959 | 0.3521541357040405 | -4.8208231925964355 | -3.8527913093566895 | 0.17405447363853455 | 0.0 | false |
+| A4 | stochastic | -6.495170593261719 | 0.6918737888336182 | -7.607295036315918 | -5.806713104248047 | 0.5309661030769348 | 0.046120692044496536 | false |
+
+Interpretation: A4 is the best current 100k candidate because it preserved
+higher alpha, reduced actor mean and deterministic action magnitude, kept
+log_std/std healthier than baseline, and had the best deterministic 4x200 reward
+among A1/A3/A4. Caveat: A4 stochastic 4x200 reward was worse than A1/A3, so
+this is a diagnostic signal, not a final policy-quality benchmark.
+
+Warnings: known non-fatal WSL2 CUDA driver version warning, known non-fatal JAX
+cast overflow warning, and sandbox `snap-confine` execution noise. No traceback,
+NaN, OOM, fatal CUDA error, checkpoint failure, or eval failure was observed.
 
 ## 2026-05-13 Fresh 250k Actor Drift Diagnostic
 

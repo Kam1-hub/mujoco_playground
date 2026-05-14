@@ -43,7 +43,7 @@ Runtime artifacts are local and ignored. Do not commit `logs/`, `.venv/`,
 | Full action distribution diagnostic | PASS | `reports/sac_integration/10_action_distribution_diagnostics.md` |
 | Fresh 100k actor drift train diagnostic | PASS | `reports/sac_integration/11_actor_drift_train_diagnostic.md` |
 | Fresh 250k actor drift train diagnostic | PASS | `reports/sac_integration/11_actor_drift_train_diagnostic.md` |
-| Alpha/entropy ablation plan | READY_NOT_RUN | `reports/sac_integration/12_alpha_entropy_ablation_plan.md` |
+| Fresh 100k alpha/entropy ablation A1/A3/A4 | PASS | `reports/sac_integration/12_alpha_entropy_ablation_plan.md` |
 | 1M training | NOT VALIDATED | Requires explicit user confirmation and resource/stop plan |
 
 ## Completed Outcomes
@@ -75,8 +75,10 @@ Runtime artifacts are local and ignored. Do not commit `logs/`, `.venv/`,
 - Validated a fresh 250k actor drift diagnostic run. The run produced
   checkpoint `./logs/sac_lift_gpu_250k_actor_diag/sac_lift_step_249984.pkl`,
   passed checkpoint readiness, and passed a 4 env x 200 action diagnostic eval.
-- Added no-training action mapping tools and recorded the fresh 100k
-  alpha/entropy ablation plan. The ablation training itself has not been run.
+- Added no-training action mapping tools.
+- Validated fresh 100k alpha/entropy ablation A1/A3/A4. All three variants
+  returned `TRAIN_OK`, passed checkpoint readiness, and passed small both-mode
+  action diagnostic eval. A4 is the best current 100k drift candidate.
 
 ### Full Action Diagnostic Summary
 
@@ -195,6 +197,31 @@ Small action diagnostic eval:
 
 Interpretation: drift amplifies in absolute level by fresh 250k. This is not a
 runtime failure.
+
+### Fresh 100k Alpha/Entropy Ablation Summary
+
+All three ablation variants passed runtime, checkpoint readiness, and small
+eval gates:
+
+| Variant | Parameters | alpha | actor mean abs | det action abs | log_std mean | std mean | det reward mean |
+|---|---|---:|---:|---:|---:|---:|---:|
+| A1 | `alpha_lr=1e-4`, `target_entropy_coef=0.5` | 0.04285280779004097 | 0.21597573161125183 | 0.20185625553131104 | -0.15477555990219116 | 0.8587937355041504 | -4.416665077209473 |
+| A3 | `alpha_lr=3e-4`, `target_entropy_coef=0.25` | 0.032598935067653656 | 0.24479639530181885 | 0.22468040883541107 | -0.15980812907218933 | 0.8549157381057739 | -4.555072784423828 |
+| A4 | `alpha_lr=1e-4`, `target_entropy_coef=0.25` | 0.04284820705652237 | 0.2069278359413147 | 0.19313891232013702 | -0.15182653069496155 | 0.8613420128822327 | -4.366635799407959 |
+
+Fresh 100k baseline reference: alpha `0.032585`, actor mean abs `0.238568`,
+deterministic action abs `0.218864`, log_std mean `-0.157116`, std mean
+`0.857329`.
+
+Interpretation:
+
+- A1 improves the main drift metrics versus the fresh 100k baseline.
+- A3 does not improve drift metrics.
+- A4 is the best current 100k candidate: higher alpha, lower actor mean and
+  deterministic action magnitude, healthier log_std/std, and best deterministic
+  4x200 reward among A1/A3/A4.
+- A4 stochastic 4x200 reward was worse than A1/A3, so this remains a diagnostic
+  signal, not a final policy-quality benchmark.
 
 ## Key Metrics
 
@@ -518,12 +545,11 @@ It is not yet reasonable to claim:
   degrades while sampled stochastic reward improves slightly, so the next risk
   area is actor mean / action distribution behavior.
 - Fresh 100k/250k train-time diagnostics support that the actor mean /
-  deterministic action drift starts early and grows in absolute level. The next
-  step is a fresh 100k alpha/entropy ablation, not an automatic fresh
-  500k/750k/1M run.
-- The alpha/entropy ablation is currently blocked only by execution approval:
-  the plan is ready, but the external reviewer requires explicit user approval
-  before another 100k training run.
+  deterministic action drift starts early and grows in absolute level.
+- Fresh 100k alpha/entropy ablation suggests A4 can reduce early actor mean and
+  deterministic action magnitude while preserving higher alpha. This is useful
+  but not sufficient for 750k/1M because it is a single-seed 100k diagnostic and
+  A4 stochastic 4x200 reward was worse than A1/A3.
 - Eval reward is still low and should be treated as a smoke signal, not a
   performance benchmark.
 - Truncation handling is currently synthesized as zero when absent. That passed
@@ -608,9 +634,9 @@ Stop immediately and report if any of these occur:
 ## 1M Decision And Readiness Plan
 
 Do not automatically jump to fresh 500k, 750k, or 1M from this report update.
-The next recommended step is the fresh 100k alpha/entropy ablation plan in
-`12_alpha_entropy_ablation_plan.md`: run A1 and A3, then run A4 only if runtime
-gates pass. A later 1M review should consider whether alpha floor, target
+The next recommended step is a bounded A4 follow-up decision: multi-seed 100k
+ablation eval and/or a fresh 250k A4 extension only after user/main-agent
+confirmation. A later 1M review should consider whether alpha floor, target
 entropy, log-alpha dynamics, or deterministic mean action drift need analysis
 before a longer run. Consider 1M only with:
 

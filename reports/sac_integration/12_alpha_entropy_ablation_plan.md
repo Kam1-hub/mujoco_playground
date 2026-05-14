@@ -1,9 +1,9 @@
 # Alpha Entropy Ablation Plan
 
-Status: plan recorded after `4ffd301 Add SAC action diagnostic mapping tools`.
+Status: results recorded after fresh 100k A1/A3/A4 ablations.
 
-This report records the next controlled diagnostic plan. It is not a training
-result. No alpha/entropy ablation training has been executed in this phase.
+This report records the controlled diagnostic plan and the validated fresh 100k
+A1/A3/A4 alpha/entropy ablation results.
 
 ## Context
 
@@ -17,6 +17,102 @@ result. No alpha/entropy ablation training has been executed in this phase.
   while sampled stochastic reward does not show the same degradation.
 - No reward, `action_scale`, Kp, PPO, RSL, domain randomization, or
   fine-tuning changes are authorized by this plan.
+
+## Fresh 100k Ablation Results
+
+Execution context:
+
+- User explicitly approved fresh 100k alpha/entropy ablation training.
+- A1 and A3 were run first; A4 was run because both passed
+  runtime/checkpoint/eval gates.
+- No 250k, 500k, 750k, or 1M run was executed in this ablation phase.
+- No reward, `action_scale`, Kp, PPO, RSL, domain randomization, or
+  fine-tuning changes were made.
+- Runtime artifacts are under ignored `logs/` and are not committed.
+
+Gate summary:
+
+| ID | Parameters | Train | Readiness | Eval | JSON |
+|---|---|---:|---:|---:|---|
+| A1 | `alpha_learning_rate=1e-4`, `target_entropy_coef=0.5` | TRAIN_OK | PASS | EVAL_OK | `logs/sac_eval_alpha_ablate/alr1e4_seed0_4x200_actiondiag.json` |
+| A3 | `alpha_learning_rate=3e-4`, `target_entropy_coef=0.25` | TRAIN_OK | PASS | EVAL_OK | `logs/sac_eval_alpha_ablate/te0p25_seed0_4x200_actiondiag.json` |
+| A4 | `alpha_learning_rate=1e-4`, `target_entropy_coef=0.25` | TRAIN_OK | PASS | EVAL_OK | `logs/sac_eval_alpha_ablate/te0p25_alr1e4_seed0_4x200_actiondiag.json` |
+
+Training metrics:
+
+| ID | Checkpoint | env_steps | gradient_steps | wall_time | sps | actor_loss | critic_loss | alpha | log_alpha | q | target_q |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| A1 | `./logs/sac_lift_gpu_100k_alpha_ablate_alr1e4_s1/sac_lift_step_99968.pkl` | 99968 | 1548 | 72.58993083500536 | 1377.1607005277926 | -5.957967758178711 | 0.051446348428726196 | 0.04285280779004097 | -3.149984121322632 | 5.1932373046875 | 5.197819709777832 |
+| A3 | `./logs/sac_lift_gpu_100k_alpha_ablate_te0p25_s1/sac_lift_step_99968.pkl` | 99968 | 1548 | 70.95217173699348 | 1408.9491209735313 | -4.622934341430664 | 0.05104774236679077 | 0.032598935067653656 | -3.423475742340088 | 4.00905704498291 | 4.069530963897705 |
+| A4 | `./logs/sac_lift_gpu_100k_alpha_ablate_te0p25_alr1e4_s1/sac_lift_step_99968.pkl` | 99968 | 1548 | 71.56172043700644 | 1396.947968683882 | -5.977431297302246 | 0.04582885652780533 | 0.04284820705652237 | -3.1500914096832275 | 5.179529666900635 | 5.181567192077637 |
+
+Additional training diagnostics:
+
+| ID | alpha_loss | alpha_log_prob | reward_mean | done_fraction | discount_mean |
+|---|---:|---:|---:|---:|---:|
+| A1 | 1.3956815004348755 | -18.069194793701172 | -0.09942552447319031 | 0.0078125 | 0.9921875 |
+| A3 | 0.8089544773101807 | -17.565364837646484 | -0.11961531639099121 | 0.01171875 | 0.98828125 |
+| A4 | 1.0875182151794434 | -18.130718231201172 | -0.11797440052032471 | 0.015625 | 0.984375 |
+
+Fresh 100k baseline reference:
+
+| alpha | actor mean abs | deterministic action abs | log_std mean | std mean |
+|---:|---:|---:|---:|---:|
+| 0.032585 | 0.238568 | 0.218864 | -0.157116 | 0.857329 |
+
+Actor drift comparison:
+
+| ID | actor mean abs | det action abs | log_std mean | std mean | interval actor mean abs | interval det action abs | interval log_std mean | interval std mean |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| A1 | 0.21597573161125183 | 0.20185625553131104 | -0.15477555990219116 | 0.8587937355041504 | 0.16891714930534363 | 0.1619931809479029 | -0.13590599107495882 | 0.877461152406318 |
+| A3 | 0.24479639530181885 | 0.22468040883541107 | -0.15980812907218933 | 0.8549157381057739 | 0.17016767629588297 | 0.16267807873625317 | -0.13607482575914925 | 0.8774873124151575 |
+| A4 | 0.2069278359413147 | 0.19313891232013702 | -0.15182653069496155 | 0.8613420128822327 | 0.16146480113036873 | 0.1549823469017904 | -0.13399408028511575 | 0.8791330905308711 |
+
+Small eval summary, seed 0, 4 env x 200 steps:
+
+| ID | Mode | reward_mean | reward_std | reward_min | reward_max | action_abs | saturation 0.95 | NaN |
+|---|---|---:|---:|---:|---:|---:|---:|---|
+| A1 | deterministic | -4.416665077209473 | 0.3470674157142639 | -4.957084655761719 | -4.006556987762451 | 0.18505924940109253 | 0.0 | false |
+| A1 | stochastic | -6.050605773925781 | 0.42214730381965637 | -6.710614204406738 | -5.661291599273682 | 0.528386652469635 | 0.04306034743785858 | false |
+| A3 | deterministic | -4.555072784423828 | 0.6614199280738831 | -5.202037334442139 | -3.4488778114318848 | 0.18952174484729767 | 0.000043103449570480734 | false |
+| A3 | stochastic | -6.32877779006958 | 0.5614966750144958 | -7.13820743560791 | -5.716131210327148 | 0.532009482383728 | 0.04543103650212288 | false |
+| A4 | deterministic | -4.366635799407959 | 0.3521541357040405 | -4.8208231925964355 | -3.8527913093566895 | 0.17405447363853455 | 0.0 | false |
+| A4 | stochastic | -6.495170593261719 | 0.6918737888336182 | -7.607295036315918 | -5.806713104248047 | 0.5309661030769348 | 0.046120692044496536 | false |
+
+Interpretation:
+
+- A1 improves the main 100k drift metrics versus the fresh 100k baseline:
+  alpha is higher, actor mean abs is lower, deterministic action abs is lower,
+  and log_std/std are slightly healthier.
+- A3 does not improve the drift metrics: alpha is near baseline, but actor
+  mean and deterministic action magnitude are worse and std is slightly lower.
+- A4 is the best current 100k candidate. It combines higher alpha with lower
+  actor mean and deterministic action magnitude, healthier log_std/std, and the
+  best deterministic 4x200 reward among A1/A3/A4.
+- Caveat: A4 stochastic 4x200 reward is worse than A1/A3, so this is a
+  diagnostic signal, not a final policy-quality benchmark.
+- Top recurring saturated dims were `7`, `8`, `1`, `3`, `9`, `17`, `19`, and
+  `20`, with dim `7` strongest across variants.
+- Deterministic negatives are still dominated by `reward/termination`,
+  `reward/ang_vel_xy`, `reward/joint_deviation_hip`, `reward/orientation`, and
+  `reward/feet_slip`; positives remain `reward/feet_phase`,
+  `reward/tracking_ang_vel`, and `reward/tracking_lin_vel`.
+
+Warnings:
+
+- Known non-fatal WSL2 CUDA driver version format warning.
+- Known non-fatal JAX cast overflow warning.
+- Sandboxed `uv` hit the known `snap-confine` issue; commands were executed
+  externally with unchanged parameters.
+- No traceback, OOM, fatal CUDA, env, checkpoint, eval failure, or NaN was
+  observed.
+
+Next action:
+
+- Do not run 750k or 1M.
+- Do not run fresh 250k extension automatically.
+- Recommended next step is multi-seed 100k ablation eval and/or a fresh 250k
+  A4 extension only after user/main-agent confirmation.
 
 ## Current Alpha And Entropy Mechanics
 
@@ -253,29 +349,20 @@ Stop and report immediately if any of these occur:
 - q or target_q grows in scale with critic loss degradation;
 - logs, checkpoints, `.venv`, or menagerie appear as unignored git changes.
 
-## Execution Approval State
+## Execution Notes
 
-The first A1 training attempt was blocked in the sandbox by the known
-`snap-confine` issue. An external execution request was then rejected by the
-execution reviewer because it requires explicit user approval for a new 100k
-training run after prior read-only instructions.
+The user approved fresh 100k alpha/entropy ablation training. A1 and A3 were
+run first; A4 was run only after A1 and A3 passed runtime/checkpoint/eval gates.
 
-Therefore this plan is ready, but training is intentionally not executed here.
-The next turn must include explicit user approval for:
-
-```text
-fresh 100k alpha/entropy ablation training: A1 and A3, then A4 if runtime gates pass
-```
-
-This approval requirement is an execution-policy gate, not a SAC technical
-blocker.
+Sandboxed `uv` execution can still hit the known `snap-confine` issue. In this
+phase, commands were executed externally with unchanged parameters when needed.
+This is tooling noise, not a SAC technical blocker.
 
 ## Reporting After Execution
 
-After validated ablation results exist, add or update:
+The validated ablation results have been recorded here and summarized in:
 
-- `reports/sac_integration/12_alpha_entropy_ablation_plan.md` or a result
-  follow-up section;
+- `reports/sac_integration/12_alpha_entropy_ablation_plan.md`;
 - `NEXT_AGENT_HANDOFF.md`;
 - `reports/sac_integration/README.md`;
 - `reports/sac_integration/04_smoke_results.md`;

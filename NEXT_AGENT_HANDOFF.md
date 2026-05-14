@@ -18,8 +18,8 @@ domain randomization, or fine-tuning as part of the current validation phase.
 
 - Path: `/home/admin/projects/mujoco_playground/g1_sac_dev`
 - Branch: `sac-integration`
-- Latest local diagnostic tooling baseline:
-  `4ffd301 Add SAC action diagnostic mapping tools`
+- Latest local diagnostic report baseline before this update:
+  `f454fef Record SAC action joint mapping diagnostic`
 - Remote: `origin https://github.com/Kam1-hub/mujoco_playground.git`
 - Last known pushed branch: `sac-integration`
 
@@ -170,7 +170,7 @@ Current validated ladder:
   PASS.
 - Fresh 100k train-time actor drift diagnostic: PASS.
 - Fresh 250k train-time actor drift diagnostic: PASS.
-- Alpha/entropy ablation plan: READY_NOT_RUN.
+- Fresh 100k alpha/entropy ablation A1/A3/A4: PASS.
 - Action joint mapping diagnostic: PASS.
 
 Still not validated:
@@ -239,6 +239,21 @@ All paths below are runtime artifacts and should remain ignored:
   - 4 env x 200 action diagnostic eval from the fresh 250k actor drift
     checkpoint.
   - Status `EVAL_OK`; JSON sanity PASS.
+- `./logs/sac_lift_gpu_100k_alpha_ablate_alr1e4_s1/sac_lift_step_99968.pkl`
+  - Fresh 100k A1 alpha/entropy ablation checkpoint.
+  - `alpha_learning_rate=1e-4`, `target_entropy_coef=0.5`.
+  - Checkpoint readiness PASS.
+- `./logs/sac_lift_gpu_100k_alpha_ablate_te0p25_s1/sac_lift_step_99968.pkl`
+  - Fresh 100k A3 alpha/entropy ablation checkpoint.
+  - `alpha_learning_rate=3e-4`, `target_entropy_coef=0.25`.
+  - Checkpoint readiness PASS.
+- `./logs/sac_lift_gpu_100k_alpha_ablate_te0p25_alr1e4_s1/sac_lift_step_99968.pkl`
+  - Fresh 100k A4 alpha/entropy ablation checkpoint.
+  - `alpha_learning_rate=1e-4`, `target_entropy_coef=0.25`.
+  - Checkpoint readiness PASS.
+- `./logs/sac_eval_alpha_ablate/`
+  - Small 4 env x 200 both-mode action diagnostic eval JSONs for A1/A3/A4.
+  - All returned `EVAL_OK`; action/reward/obs NaN flags were false.
 - `./logs/sac_lift_schema_dry_run/sac_lift_step_0.pkl`
   - Dry-run schema validation artifact, if still present.
 
@@ -309,7 +324,23 @@ Fresh 250k actor drift diagnostic:
 - Interpretation: actor mean / deterministic action drift amplifies in
   absolute level by fresh 250k. This is not a runtime failure.
 
-Next recommended step: decision review before any fresh 500k diagnostic. Do not
+Fresh 100k alpha/entropy ablation:
+
+- A1: `alpha_learning_rate=1e-4`, `target_entropy_coef=0.5`,
+  `TRAIN_OK`, checkpoint readiness PASS, eval `EVAL_OK`.
+- A3: `alpha_learning_rate=3e-4`, `target_entropy_coef=0.25`,
+  `TRAIN_OK`, checkpoint readiness PASS, eval `EVAL_OK`.
+- A4: `alpha_learning_rate=1e-4`, `target_entropy_coef=0.25`,
+  `TRAIN_OK`, checkpoint readiness PASS, eval `EVAL_OK`.
+- A4 was run because A1 and A3 both passed runtime/checkpoint/eval gates.
+- A4 is the best current 100k candidate: alpha `0.042848`, actor mean abs
+  `0.206928`, deterministic action abs `0.193139`, log_std mean `-0.151827`,
+  std mean `0.861342`, and best deterministic 4x200 reward among A1/A3/A4.
+- Caveat: A4 stochastic 4x200 reward was worse than A1/A3, so this remains a
+  diagnostic signal rather than final policy-quality evidence.
+
+Next recommended step: bounded A4 follow-up decision. Prefer multi-seed 100k
+ablation eval and/or a fresh 250k A4 extension only after confirmation. Do not
 run fresh 500k, 750k, or 1M automatically.
 
 GPU 10k smoke:
@@ -489,13 +520,10 @@ Both-mode eval diagnostic:
   interval gap widens by fresh 250k.
 - Fresh 250k train-time diagnostics show the drift amplifies in absolute level,
   while log_std/std and alpha continue downward.
-- The next plan is a fresh 100k alpha/entropy ablation:
-  - A1: `--alpha_learning_rate 1e-4`
-  - A3: `--target_entropy_coef 0.25`
-  - A4: combine both only if runtime gates pass
-- The ablation training has not been run. It requires explicit user approval in
-  the current execution environment because the external execution reviewer
-  rejected a new 100k training run after prior read-only instructions.
+- Fresh 100k alpha/entropy ablation A1/A3/A4 has run. A4 is the best current
+  100k drift candidate, but it still needs multi-seed or fresh 250k
+  confirmation before longer training because its stochastic 4x200 reward was
+  worse than A1/A3.
 - Action joint mapping now links the 500k deterministic top action dimensions
   mainly to right ankle roll/pitch, waist pitch, right knee, and hip roll. See
   `reports/sac_integration/13_action_joint_mapping_diagnostic.md`.
@@ -507,10 +535,10 @@ Both-mode eval diagnostic:
 
 1. Do read-only status checks.
 2. Read this file and `reports/sac_integration/09_phase_summary_and_risks.md`.
-3. If the user explicitly approves training, run the fresh 100k alpha/entropy
-   ablation plan from `reports/sac_integration/12_alpha_entropy_ablation_plan.md`.
-4. Do not draft or execute fresh 500k/750k/1M until the 100k ablation results
-   are reviewed.
+3. Review `reports/sac_integration/12_alpha_entropy_ablation_plan.md`.
+4. If the user explicitly approves another bounded diagnostic, run multi-seed
+   100k ablation eval for A4 or plan a fresh 250k A4 extension.
+5. Do not draft or execute fresh 500k/750k/1M until A4 is confirmed.
 
 Do not start fresh 500k, 750k, or 1M automatically. Do not modify reward,
 action scale, Kp, domain randomization, fine-tuning, PPO, or RSL.
@@ -565,17 +593,19 @@ status checks: pwd, git status --short --branch, git log --oneline -5,
 git remote -v, and git check-ignore -v logs .venv
 g1_env/external_deps/mujoco_menagerie || true.
 
-Current HEAD should be at least 4ffd301 Add SAC action diagnostic mapping tools
+Current HEAD should be at least f454fef Record SAC action joint mapping diagnostic
 unless newer report commits exist. GPU 10k smoke, deterministic
 eval smoke, GPU 50k sanity/eval, GPU 100k sanity/eval, GPU 250k sanity/eval,
 GPU 500k sanity/eval, 100k/250k/500k both-mode eval diagnostic, and full action
 distribution / reward-component diagnostic have passed. Fresh 100k and fresh
-250k actor drift diagnostics have also passed. The fresh 100k alpha/entropy
-ablation plan is ready but not run. 750k and 1M are not validated.
+250k actor drift diagnostics have also passed. Fresh 100k alpha/entropy
+ablation A1/A3/A4 has passed runtime/checkpoint/eval gates, and A4 is the best
+current 100k drift candidate. 750k and 1M are not validated.
 
 Do not run training, eval, preflight, installs, downloads, or git commits unless
-explicitly asked. Next recommended work is a decision review before any fresh
-500k diagnostic. Do not start fresh 500k, 750k, or 1M without a separate
-resource/stop-condition plan and user confirmation. Do not change reward,
-action_scale, Kp, domain randomization, fine-tuning, PPO, or RSL.
+explicitly asked. Next recommended work is multi-seed 100k A4 ablation eval
+and/or a fresh 250k A4 extension after confirmation. Do not start fresh 500k,
+750k, or 1M without a separate resource/stop-condition plan and user
+confirmation. Do not change reward, action_scale, Kp, domain randomization,
+fine-tuning, PPO, or RSL.
 ```
