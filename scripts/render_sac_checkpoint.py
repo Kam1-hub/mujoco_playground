@@ -73,6 +73,33 @@ def _parse_args() -> argparse.Namespace:
       help="If true, truncate rendered frames after the first done signal.",
   )
   parser.add_argument(
+      "--fixed_command",
+      type=_str_to_bool,
+      default=False,
+      help=(
+          "If true, force a fixed joystick command throughout the render "
+          "rollout instead of using the command sampled by env reset/resample."
+      ),
+  )
+  parser.add_argument(
+      "--command_x",
+      type=float,
+      default=0.0,
+      help="Fixed joystick x velocity command used with --fixed_command.",
+  )
+  parser.add_argument(
+      "--command_y",
+      type=float,
+      default=0.0,
+      help="Fixed joystick y velocity command used with --fixed_command.",
+  )
+  parser.add_argument(
+      "--command_yaw",
+      type=float,
+      default=0.0,
+      help="Fixed joystick yaw velocity command used with --fixed_command.",
+  )
+  parser.add_argument(
       "--output",
       required=True,
       help=(
@@ -164,6 +191,25 @@ def _build_policy(
   )
 
 
+def _set_state_command(state: Any, command: jax.Array) -> Any:
+  state.info["command"] = command
+  state = state.replace(obs=_replace_obs_command(state.obs, command))
+  return state
+
+
+def _replace_obs_command(obs: Any, command: jax.Array) -> Any:
+  def replace_in_array(value: jax.Array) -> jax.Array:
+    return value.at[9:12].set(command)
+
+  if isinstance(obs, Mapping):
+    replaced = dict(obs)
+    for key in ("state", "privileged_state"):
+      if key in replaced:
+        replaced[key] = replace_in_array(replaced[key])
+    return replaced
+  return replace_in_array(obs)
+
+
 def _rollout(
     env: Any,
     sac_networks: networks.SACNetworks,
@@ -174,10 +220,13 @@ def _rollout(
     seed: int,
     episode_length: int,
     deterministic: bool,
+    fixed_command: jax.Array | None = None,
 ) -> dict[str, Any]:
   def rollout_fn(rng: jax.Array) -> dict[str, Any]:
     reset_key, action_key = jax.random.split(rng)
     state = env.reset(reset_key)
+    if fixed_command is not None:
+      state = _set_state_command(state, fixed_command)
 
     def step_fn(carry: tuple[Any, jax.Array, jax.Array, jax.Array], _: Any):
       current_state, current_key, total_reward, done_any = carry
@@ -194,6 +243,8 @@ def _rollout(
           deterministic=deterministic,
       )
       next_state = env.step(current_state, action)
+      if fixed_command is not None:
+        next_state = _set_state_command(next_state, fixed_command)
       active = 1.0 - done_any
       total_reward = total_reward + next_state.reward * active
       done_any = jnp.maximum(done_any, next_state.done)
@@ -284,6 +335,11 @@ def render_checkpoint(args: argparse.Namespace) -> dict[str, Any]:
     raise ValueError("--width and --height must be >= 1")
   if args.fps <= 0:
     raise ValueError("--fps must be > 0")
+  command = [
+      float(args.command_x),
+      float(args.command_y),
+      float(args.command_yaw),
+  ]
 
   payload = sac_checkpoint.load(args.checkpoint)
   if not isinstance(payload, Mapping):
@@ -327,6 +383,9 @@ def render_checkpoint(args: argparse.Namespace) -> dict[str, Any]:
       seed=int(args.seed),
       episode_length=episode_length,
       deterministic=args.policy_mode == "deterministic",
+      fixed_command=(
+          jnp.asarray(command, dtype=jnp.float32) if args.fixed_command else None
+      ),
   )
   rollout_wall_time = time.monotonic() - start
 
@@ -364,6 +423,8 @@ def render_checkpoint(args: argparse.Namespace) -> dict[str, Any]:
       "render_every": int(args.render_every),
       "policy_mode": args.policy_mode,
       "deterministic": args.policy_mode == "deterministic",
+      "fixed_command": bool(args.fixed_command),
+      "command": command,
       "width": int(args.width),
       "height": int(args.height),
       "fps": float(args.fps),

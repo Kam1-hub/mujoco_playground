@@ -18,9 +18,9 @@ domain randomization, or fine-tuning as part of the current validation phase.
 
 - Path: `/home/admin/projects/mujoco_playground/g1_sac_dev`
 - Branch: `sac-integration`
-- Latest recorded diagnostic state: deterministic 3M render helper smoke after
-  the bounded 1024-env 3M R3 run, high-parallel 512/1024/2048 capacity
-  benchmark, and 1M follow-up;
+- Latest recorded diagnostic state: fixed-command 3M render helper smoke after
+  the deterministic 3M render helper smoke, bounded 1024-env 3M R3 run,
+  high-parallel 512/1024/2048 capacity benchmark, and 1M follow-up;
   use `git log --oneline -5` for the exact commit hash.
 - Remote: `origin https://github.com/Kam1-hub/mujoco_playground.git`
 - Last known pushed branch: `sac-integration`
@@ -102,7 +102,9 @@ SAC Route B code lives in local files and should not disturb PPO/RSL:
   `--action_diagnostics`, optional `--reward_components`, and
   `--top_k_actions`.
 - `scripts/render_sac_checkpoint.py`: eval-only checkpoint render/export
-  helper for MP4/GIF/PNG-frame visual inspection.
+  helper for MP4/GIF/PNG-frame visual inspection. It supports default
+  reset-sampled joystick commands and optional fixed joystick commands with
+  `--fixed_command`, `--command_x`, `--command_y`, and `--command_yaw`.
 - `scripts/inspect_g1_action_mapping.py`: no-training action dimension to
   actuator/joint mapping helper.
 - `scripts/summarize_sac_action_diag.py`: no-training summary helper that joins
@@ -209,13 +211,19 @@ Current validated ladder:
   `RENDER_OK`, total rollout reward `4.084568977355957`, and `done=false`.
   Main sampled-frame inspection found a nonblank upright humanoid with no
   obvious fall.
+- Fixed-command 3M render helper smoke: PASS. The helper now supports
+  `--fixed_command`, `--command_x`, `--command_y`, and `--command_yaw`.
+  Three deterministic 3M R3 fixed-command smokes under
+  `./logs/sac_render_3m_r3_fixedcmd/` all returned `RENDER_OK`, `done=false`,
+  and `600` frames: forward `[0.5, 0.0, 0.0]`, stand `[0.0, 0.0, 0.0]`, and
+  yaw `[0.0, 0.0, 0.5]`.
 - Action joint mapping diagnostic: PASS.
 
 Still not validated:
 
 - 10M training.
 - Full performance benchmark.
-- Human/video inspection of the 3M deterministic render.
+- Human/video inspection of the 3M deterministic and fixed-command renders.
 - PPO comparison.
 - Domain randomization.
 - Fine-tuning.
@@ -837,9 +845,13 @@ The high-parallel 512/1024/2048 capacity benchmark has passed, and 1024 envs is
 now validated at bounded 1M and 3M runtime/checkpoint/eval scale. The 3M
 result is the first strong deterministic-policy improvement signal, but
 stochastic eval degraded and alpha/std collapsed.
+Fixed-command 3M render support has also been added and smoke-validated for
+forward, stand, and yaw commands, with artifacts under ignored
+`./logs/sac_render_3m_r3_fixedcmd/`.
 
 Do not run training, eval, preflight, installs, downloads, or git commits unless
-explicitly asked. Next recommended work is an entropy/alpha decision review and
-deterministic render helper planning before any 10M run. Do not change reward,
-action_scale, Kp, domain randomization, fine-tuning, PPO, or RSL.
+explicitly asked. Next recommended work is command-specific visual inspection
+of the fixed-command renders, then an entropy/alpha decision review before any
+longer run. Do not change reward, action_scale, Kp, domain randomization,
+fine-tuning, PPO, or RSL.
 ```

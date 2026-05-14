@@ -55,6 +55,7 @@ Runtime artifacts are local and ignored. Do not commit `logs/`, `.venv/`,
 | Bounded 1024-env 1M R3 run | PASS_RUNTIME_UNCLEAN_TREND | `./logs/sac_lift_gpu_1m_env1024_r3_b256_g16_replay1m/sac_lift_step_999424.pkl` |
 | Bounded 1024-env 3M R3 run | PASS_RUNTIME_MIXED_POLICY | `./logs/sac_lift_gpu_3m_env1024_r3_b256_g16_replay1m/sac_lift_step_2999296.pkl` |
 | Deterministic 3M render helper smoke | PASS_RENDER_SMOKE | `./logs/sac_render_3m_r3/render_seed0_det.mp4` |
+| Fixed-command 3M render helper smoke | PASS_RENDER_SMOKE | `./logs/sac_render_3m_r3_fixedcmd/`, commands `[0.5, 0.0, 0.0]`, `[0.0, 0.0, 0.0]`, and `[0.0, 0.0, 0.5]` |
 | 10M training | NOT VALIDATED | Requires visual inspection, entropy/alpha decision review, resource plan, and stop conditions |
 
 ## Completed Outcomes
@@ -159,6 +160,13 @@ Runtime artifacts are local and ignored. Do not commit `logs/`, `.venv/`,
   reward `4.084568977355957`, and `done=false`. Main sampled-frame inspection
   found a nonblank upright humanoid with no obvious fall. Render reward should
   not be compared numerically with vectorized eval reward.
+- Added fixed-command render support to `scripts/render_sac_checkpoint.py`.
+  The helper can force explicit joystick commands through `--fixed_command`,
+  `--command_x`, `--command_y`, and `--command_yaw` without changing default
+  reset-sampled behavior. Three 3M R3 fixed-command smokes under ignored
+  `./logs/sac_render_3m_r3_fixedcmd/` all returned `RENDER_OK`, `done=false`,
+  and `600` frames for forward `[0.5, 0.0, 0.0]`, stand
+  `[0.0, 0.0, 0.0]`, and yaw `[0.0, 0.0, 0.5]`.
 
 ### Full Action Diagnostic Summary
 

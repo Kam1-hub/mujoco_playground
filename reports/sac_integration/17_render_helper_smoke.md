@@ -16,6 +16,8 @@ Static validation:
 
 - `uv run --no-sync python -m compileall scripts learning/sac_lift`: PASS.
 - `uv run --no-sync python scripts/render_sac_checkpoint.py --help`: PASS.
+- Fixed-command help flags: `--fixed_command`, `--command_x`, `--command_y`,
+  and `--command_yaw`: PASS.
 
 Render smoke:
 
@@ -47,6 +49,41 @@ Result:
 | done | false |
 
 The MP4 is under ignored `logs/` and must not be committed.
+
+## Fixed-Command Render Support
+
+The render helper now supports explicit joystick commands for visual
+diagnostics:
+
+- `--fixed_command`
+- `--command_x`
+- `--command_y`
+- `--command_yaw`
+
+This is intended to separate command-following inspection from videos that use
+the random command sampled by env reset/resampling. Default behavior is
+unchanged when `--fixed_command false`.
+
+Implementation review found no blockers:
+
+- Fixed mode updates `state.info["command"]`.
+- Fixed mode updates command slice `9:12` in both `obs["state"]` and
+  `obs["privileged_state"]` after reset and after each step.
+- The command slice matches the G1 joystick observation layout.
+- No SAC training/loss/reward/action_scale/Kp/env/PPO/RSL/checkpoint schema
+  changes were made.
+
+Fixed-command 3M R3 smoke artifacts:
+
+| Command | Status | Done | Frames | MP4 | JSON |
+|---|---|---:|---:|---|---|
+| `[0.5, 0.0, 0.0]` | `RENDER_OK` | false | 600 | `./logs/sac_render_3m_r3_fixedcmd/render_cmd_x0p5_y0_yaw0_seed0_det_600.mp4` | `./logs/sac_render_3m_r3_fixedcmd/render_cmd_x0p5_y0_yaw0_seed0_det_600.json` |
+| `[0.0, 0.0, 0.0]` | `RENDER_OK` | false | 600 | `./logs/sac_render_3m_r3_fixedcmd/render_cmd_x0_y0_yaw0_seed0_det_600.mp4` | `./logs/sac_render_3m_r3_fixedcmd/render_cmd_x0_y0_yaw0_seed0_det_600.json` |
+| `[0.0, 0.0, 0.5]` | `RENDER_OK` | false | 600 | `./logs/sac_render_3m_r3_fixedcmd/render_cmd_x0_y0_yaw0p5_seed0_det_600.mp4` | `./logs/sac_render_3m_r3_fixedcmd/render_cmd_x0_y0_yaw0p5_seed0_det_600.json` |
+
+These files are under ignored `logs/` and must not be committed. Fixed command
+values are not range-checked by the CLI, so out-of-distribution command values
+remain caller responsibility.
 
 ## Review Notes
 
@@ -86,7 +123,7 @@ quality or stable SAC integration. It provides the required visual-inspection
 artifact for deciding whether the 3M deterministic reward recovery represents
 meaningful motion or reward exploitation.
 
-Next action: inspect
-`./logs/sac_render_3m_r3/render_seed0_det.mp4` visually. After inspection,
-choose between entropy/alpha ablation design, a bounded longer run, or further
-render/reward diagnostics. Do not jump directly to 10M.
+Next action: inspect the fixed-command MP4s under
+`./logs/sac_render_3m_r3_fixedcmd/` visually. After inspection, choose between
+entropy/alpha ablation design, a bounded longer run, or further render/reward
+diagnostics. Do not jump directly to 10M.

@@ -1,6 +1,38 @@
 # Smoke Results
 
-Status: updated on 2026-05-14 after the deterministic 3M render helper smoke.
+Status: updated on 2026-05-14 after the fixed-command 3M render helper smoke.
+
+## 2026-05-14 Fixed-Command 3M Render Helper Smoke
+
+- Scope: eval-only render helper increment for command-specific visual
+  inspection.
+- Code changed: `scripts/render_sac_checkpoint.py` adds `--fixed_command`,
+  `--command_x`, `--command_y`, and `--command_yaw`.
+- Purpose: distinguish joystick-command behavior from a render that only uses
+  the random command sampled by env reset/resampling.
+- No training, eval benchmark, SAC math, reward, `action_scale`, Kp, env
+  behavior, PPO/RSL, or checkpoint schema change was made.
+- Static checks: `git diff --check` PASS; render helper `--help` PASS with the
+  new fixed-command flags.
+- Review: no blockers. Default rollout behavior is unchanged when
+  `--fixed_command false`; fixed mode updates `state.info["command"]` and the
+  command slice `9:12` in both `obs["state"]` and
+  `obs["privileged_state"]`.
+- Smoke checkpoint:
+  `./logs/sac_lift_gpu_3m_env1024_r3_b256_g16_replay1m/sac_lift_step_2999296.pkl`
+- Fixed-command smoke artifacts under ignored `logs/`:
+  - Forward `[0.5, 0.0, 0.0]`:
+    `./logs/sac_render_3m_r3_fixedcmd/render_cmd_x0p5_y0_yaw0_seed0_det_600.mp4`
+    and matching `.json`, `RENDER_OK`, `done=false`, `600` frames.
+  - Stand `[0.0, 0.0, 0.0]`:
+    `./logs/sac_render_3m_r3_fixedcmd/render_cmd_x0_y0_yaw0_seed0_det_600.mp4`
+    and matching `.json`, `RENDER_OK`, `done=false`, `600` frames.
+  - Yaw `[0.0, 0.0, 0.5]`:
+    `./logs/sac_render_3m_r3_fixedcmd/render_cmd_x0_y0_yaw0p5_seed0_det_600.mp4`
+    and matching `.json`, `RENDER_OK`, `done=false`, `600` frames.
+- Caveat: fixed-command videos remain diagnostic visual evidence, not a
+  benchmark. Command values are not range-checked by the CLI, and logs must not
+  be committed.
 
 ## 2026-05-14 Deterministic 3M Render Helper Smoke
 

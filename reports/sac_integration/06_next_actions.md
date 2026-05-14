@@ -1,6 +1,6 @@
 # Next Actions
 
-Status: updated on 2026-05-14 after the deterministic 3M render helper smoke.
+Status: updated on 2026-05-14 after the fixed-command 3M render helper smoke.
 
 ## Immediate State
 
@@ -195,14 +195,21 @@ Status: updated on 2026-05-14 after the deterministic 3M render helper smoke.
   `./logs/sac_render_3m_r3/render_seed0_det.mp4` with `RENDER_OK`, `300`
   frames, `10s`, H.264 MP4, and `done=false`. Main sampled-frame inspection
   found a nonblank upright humanoid with no obvious fall.
+- Fixed-command render support is available in
+  `scripts/render_sac_checkpoint.py` through `--fixed_command`,
+  `--command_x`, `--command_y`, and `--command_yaw`. Three 3M R3 fixed-command
+  smokes have local ignored artifacts under `./logs/sac_render_3m_r3_fixedcmd/`:
+  forward `[0.5, 0.0, 0.0]`, stand `[0.0, 0.0, 0.0]`, and yaw
+  `[0.0, 0.0, 0.5]`. All reported `RENDER_OK`, `done=false`, and `600`
+  frames.
 
 ## Current Recommendation
 
 - Do not jump directly to 10M.
 - Do not declare stable SAC integration from the 3M result.
-- Next step should be visual inspection of
-  `./logs/sac_render_3m_r3/render_seed0_det.mp4`, followed by an
-  entropy/alpha decision review before any 10M run:
+- Next step should use the fixed-command MP4s under
+  `./logs/sac_render_3m_r3_fixedcmd/` for command-specific visual inspection,
+  followed by an entropy/alpha decision review before any longer run:
   - decide whether alpha/log_std need a floor or another entropy-handling
     ablation;
   - decide whether to run a bounded entropy ablation before longer training;

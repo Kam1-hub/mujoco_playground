@@ -1,6 +1,6 @@
 # G1 SAC Integration Status And Roadmap
 
-Status: updated on 2026-05-14 after the deterministic 3M render helper smoke.
+Status: updated on 2026-05-14 after the fixed-command 3M render helper smoke.
 
 ## 1. Mission
 
@@ -192,16 +192,19 @@ Validation ladder:
 28. Bounded 1024-env 1M run
 29. Bounded 1024-env 3M run
 30. Deterministic checkpoint render helper smoke
-31. 10M-scale training
+31. Fixed-command checkpoint render helper smoke
+32. 10M-scale training
 
 Status:
 
-- Steps 1 through 30 are complete.
+- Steps 1 through 31 are complete.
 - Step 29 is runtime/checkpoint/eval PASS with the first strong deterministic
   policy improvement signal, but not a clean stable-SAC declaration because
   stochastic eval degraded and alpha/std collapsed.
 - Step 30 produced a deterministic 3M MP4 render smoke for visual inspection.
-- Step 31 remains `NOT VALIDATED` and requires human/video inspection, an
+- Step 31 added fixed-command render support and produced three 600-frame
+  fixed-command 3M R3 smokes for forward, stand, and yaw commands.
+- Step 32 remains `NOT VALIDATED` and requires human/video inspection, an
   entropy/alpha decision review, resource plan, and stop conditions.
 
 ### Phase 6: Reports, Commits, Migration Handoff
@@ -260,9 +263,9 @@ WSL2 target workspace state:
 - Branch: `sac-integration...origin/sac-integration`
 - Latest recorded validation state before this report update: bounded
   `1024`-env 3M R3 runtime/checkpoint/eval PASS, with deterministic recovery
-  and a deterministic render helper smoke producing
-  `./logs/sac_render_3m_r3/render_seed0_det.mp4`.
-  and entropy-collapse caveat.
+  plus deterministic and fixed-command render helper smokes. Fixed-command
+  artifacts are under `./logs/sac_render_3m_r3_fixedcmd/`, with the
+  entropy-collapse caveat still open.
 - Menagerie: present at `1b86ece576591213e2b666ebf59508454200ca97`
 - Python env: present under ignored `.venv`
 - CUDA JAX: validated, backend `gpu`, device `cuda:0`
