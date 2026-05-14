@@ -1,6 +1,6 @@
 # G1 SAC Integration Status And Roadmap
 
-Status: updated on 2026-05-15 after the fresh env1024 R3 100k feet-air-time command-mask diagnostic.
+Status: updated on 2026-05-15 after the eval-only 100k termination/contact diagnostic sweep.
 
 ## 1. Mission
 
@@ -201,7 +201,8 @@ Validation ladder:
 37. Fresh env1024 R3 100k `--env_push_enable False` diagnostic
 38. Fresh env1024 R3 100k `--env_zero_command_phase_freeze True` diagnostic
 39. Fresh env1024 R3 100k `--env_feet_air_time_command_mask True` diagnostic
-40. 10M-scale training
+40. Eval-only 100k termination/contact diagnostic sweep
+41. 10M-scale training
 
 Status:
 
@@ -264,7 +265,15 @@ Status:
   `reward/termination=-100` remained saturated for `fwd0.5`, `fwd1.0`, and
   stand; `fwd1.0` tracking was worse than push-disable and phase-freeze, and
   stand did not improve.
-- Step 40 remains `NOT VALIDATED` and requires reward/prior targeted audit,
+- Step 40 passed as an eval-only diagnostic and identified the current 100k
+  failure mode. The sweep covered push-disable, phase-freeze, and
+  feet-air-time-mask checkpoints with fixed `fwd0.5`, `fwd1.0`, and stand
+  commands in deterministic and stochastic modes. All `9` JSON outputs under
+  `./logs/sac_eval_termination_diag_100k/` returned `EVAL_OK`; all NaN flags
+  were false; `reward/termination=-100` appeared in all 18 mode cases; first
+  done happened around `51-55` steps; and failure was fall-dominated rather
+  than contact-dominated or numerical.
+- Step 41 remains `NOT VALIDATED` and requires reward/prior targeted audit,
   resource plan, and stop conditions.
 
 ### Phase 6: Reports, Commits, Migration Handoff
@@ -334,6 +343,8 @@ WSL2 target workspace state:
   `--env_feet_slip_scale 0.0` gate also passed and confirmed
   `reward/feet_slip=0.0` in inherited eval after `442d297`, but `fwd1.0`
   tracking remained weak and `termination=-100` remained present.
+  The latest termination/contact sweep now indicates those 100k failures are
+  early torso fall/upright failures, not illegal contact or NaN.
 - Menagerie: present at `1b86ece576591213e2b666ebf59508454200ca97`
 - Python env: present under ignored `.venv`
 - CUDA JAX: validated, backend `gpu`, device `cuda:0`

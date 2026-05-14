@@ -18,8 +18,9 @@ domain randomization, or fine-tuning as part of the current validation phase.
 
 - Path: `/home/admin/projects/mujoco_playground/g1_sac_dev`
 - Branch: `sac-integration`
-- Latest recorded diagnostic state: fresh env1024 R3 100k feet-air-time
-  command-mask diagnostic after the zero-command phase-freeze, push-disable,
+- Latest recorded diagnostic state: eval-only 100k termination/contact
+  diagnostic sweep after the fresh env1024 R3 100k feet-air-time command-mask
+  diagnostic, zero-command phase-freeze, push-disable,
   `feet_slip_scale=0`,
   `foot_velocity`, `fixed_alpha=0.03`, and `fixed_alpha=0.05` gates,
   fixed-command forward eval gate, fixed-command eval support, alpha sign audit,
@@ -294,6 +295,19 @@ Current validated ladder:
   weaker than push-disable and phase-freeze, and stand did not improve
   (`stand_still=-143.5669` deterministic). Do not extend this variant to
   250k/5M/10M.
+- Eval-only 100k termination/contact diagnostic sweep: PASS diagnostic,
+  failure mode identified. The sweep used existing 100k push-disable,
+  phase-freeze, and feet-air-time-mask checkpoints under fixed `fwd0.5`,
+  `fwd1.0`, and stand commands, deterministic and stochastic modes. All `9`
+  JSON outputs under `./logs/sac_eval_termination_diag_100k/` returned
+  `EVAL_OK`, all action/reward/obs NaN flags were false, and
+  `reward/termination=-100` appeared in all 18 mode cases. First done happened
+  early, mostly around `51-55` steps. qpos/qvel NaN counts were always `0`;
+  illegal contact appeared only once (`feet_air_time_mask fwd1.0 stochastic`,
+  `right_foot_left_foot=1`) while fall remained dominant. Terminal torso-up z
+  was negative or near threshold with high torso angular velocity, pointing to
+  early torso fall/upright instability rather than contact or numerical
+  failure.
 - Action joint mapping diagnostic: PASS.
 
 Still not validated:
@@ -457,6 +471,13 @@ All paths below are runtime artifacts and should remain ignored:
   - `TRAIN_OK`; checkpoint readiness PASS; feasible but slower than 1024.
 - `./logs/sac_lift_schema_dry_run/sac_lift_step_0.pkl`
   - Dry-run schema validation artifact, if still present.
+- `./logs/sac_eval_termination_diag_100k/`
+  - Eval-only termination/contact sweep over 100k push-disable, phase-freeze,
+    and feet-air-time-mask checkpoints.
+  - Contains `9` JSON outputs.
+  - All evals returned `EVAL_OK`; all action/reward/obs NaN flags were false.
+  - The result is fall-dominated early termination, not contact-dominated or
+    numerical failure.
 
 Never commit:
 

@@ -1,7 +1,7 @@
 # Next Actions
 
-Status: updated on 2026-05-15 after the fresh env1024 R3 100k
-feet-air-time command-mask diagnostic.
+Status: updated on 2026-05-15 after the eval-only 100k
+termination/contact diagnostic sweep.
 
 ## Immediate State
 
@@ -291,6 +291,15 @@ feet-air-time command-mask diagnostic.
   `fwd1.0`, and stand. `fwd1.0` deterministic tracking was weaker than
   push-disable and phase-freeze (`4.1466` vs `5.2440` and `5.4434`), and stand
   did not improve (`stand_still=-143.5669`).
+- Eval-only termination/contact diagnostics are committed at
+  `fe69d8d Add SAC termination eval diagnostics` and the completed sweep is
+  recorded under ignored `./logs/sac_eval_termination_diag_100k/` with `9` JSON
+  outputs. The sweep covered the existing 100k push-disable, phase-freeze, and
+  feet-air-time-mask checkpoints for `fwd0.5`, `fwd1.0`, and stand. All evals
+  returned `EVAL_OK`, all NaN flags were false, and `reward/termination=-100`
+  appeared in all 18 variant/command/mode cases. Failures are fall-dominated:
+  first done happens around `51-55` steps, qpos/qvel NaN counts are always `0`,
+  and illegal contact appears only once while fall remains the dominant reason.
 
 ## Current Recommendation
 
@@ -310,8 +319,10 @@ feet-air-time command-mask diagnostic.
   saturated. The phase-freeze gate was runtime-valid but also left termination
   saturated and did not improve stand. The feet-air-time command-mask gate
   correctly zeroed `reward/feet_air_time` on stand but also failed termination
-  and did not improve stand. Move to component-level termination/contact
-  analysis next. Keep
+  and did not improve stand. The termination/contact sweep now shows the
+  immediate failure is early torso fall/upright instability, not illegal
+  contact or NaN. Move to torso fall/orientation/base-stability diagnostics or
+  controlled stabilization/curriculum design next. Keep
   `alpha_floor=0.03` only as a secondary alpha/entropy diagnostic. Do not patch
   alpha sign blindly; the sign audit found no direct Brax-style sign bug.
 - A fixed-command `fwd1.0` render/video review is useful to inspect whether the
@@ -598,20 +609,20 @@ CPU, stop and report the CUDA/JAX blocker.
 The bounded 1024-env 3M R3 result, fixed-forward eval gate, two short
 fixed-alpha diagnostics, the `foot_velocity` feet-slip gate, the
 `feet_slip_scale=0` gate, the push-disable gate, the zero-command phase-freeze
-gate, and the feet-air-time command-mask gate have now been executed and
-recorded. Do not automatically run 250k, 5M, or 10M. The next useful step is
-component-level termination/contact analysis, with alpha-floor only as a
-secondary diagnostic:
+gate, the feet-air-time command-mask gate, and the eval-only
+termination/contact sweep have now been executed and recorded. Do not
+automatically run 250k, 5M, or 10M. The next useful step is torso
+fall/orientation/base-stability diagnosis or a controlled stabilization
+curriculum design, with alpha-floor only as a secondary diagnostic:
 
-1. Reward/prior path: inspect termination and contact-related components. The
-   feet-air-time mask works on stand (`reward/feet_air_time=0.0`) but still
-   leaves `termination=-100` saturated, so the standalone zero-command
-   `feet_air_time` hypothesis is weakened.
+1. Termination path: inspect why the torso falls around `51-55` steps across
+   all 100k reward/prior variants. Current evidence points to upright/base
+   instability, not illegal contact and not qpos/qvel NaN.
 2. Fixed-command path: inspect or render `fwd1.0` if visual evidence is needed,
    because deterministic `tracking_lin_vel` collapsed from `183.95` at
    `fwd0.5` to `25.94` at `fwd1.0`.
-3. Reward/prior follow-up: do not touch broader reward terms until the
-   termination/contact source is understood.
+3. Reward/prior follow-up: do not touch broader reward terms, `action_scale`,
+   or Kp until the torso fall source is understood.
 4. Entropy path: keep `alpha_floor=0.03` as a secondary diagnostic; do not keep
    increasing fixed alpha blindly.
 5. Training path: only after that review, decide whether a carefully gated

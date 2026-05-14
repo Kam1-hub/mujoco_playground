@@ -10,7 +10,7 @@ continue without relying on chat history.
 - Path: `/home/admin/projects/mujoco_playground/g1_sac_dev`
 - Branch: `sac-integration`
 - Current diagnostic/report baseline before this report update:
-  `d353fe6 Add SAC feet air time command mask override`
+  `fe69d8d Add SAC termination eval diagnostics`
 - Remote: `origin https://github.com/Kam1-hub/mujoco_playground.git`
 - External menagerie commit: `1b86ece576591213e2b666ebf59508454200ca97`
 
@@ -66,6 +66,7 @@ Runtime artifacts are local and ignored. Do not commit `logs/`, `.venv/`,
 | Fresh env1024 R3 100k push-disable diagnostic | PASS_RUNTIME_WEAK_FIXED_COMMAND | `./logs/sac_lift_gpu_100k_env1024_r3_push_disable/sac_lift_step_99328.pkl`, `--env_push_enable False`, `TRAIN_OK`, readiness PASS, inherited eval reports `push_config.enable=false`, deterministic tracking improves versus prior 100k gates, but `reward/termination=-100` remains saturated |
 | Fresh env1024 R3 100k zero-command phase-freeze diagnostic | PASS_RUNTIME_WEAK_FIXED_COMMAND | `./logs/sac_lift_gpu_100k_env1024_r3_phase_freeze/sac_lift_step_99328.pkl`, `--env_zero_command_phase_freeze True`, `TRAIN_OK`, readiness PASS, inherited eval reports `zero_command_phase_freeze=true`, forward tracking similar to push-disable, but `reward/termination=-100` remains saturated for fwd0.5, fwd1.0, and stand |
 | Fresh env1024 R3 100k feet-air-time command-mask diagnostic | PASS_RUNTIME_WEAK_FIXED_COMMAND | `./logs/sac_lift_gpu_100k_env1024_r3_feet_air_time_mask/sac_lift_step_99328.pkl`, `--env_feet_air_time_command_mask True`, `TRAIN_OK`, readiness PASS, inherited eval reports `feet_air_time_command_mask=true`, stand eval correctly reports `reward/feet_air_time=0.0`, but `reward/termination=-100` remains saturated for fwd0.5, fwd1.0, and stand |
+| Eval-only 100k termination/contact diagnostic sweep | PASS_EVAL_FALL_DOMINATED | `./logs/sac_eval_termination_diag_100k/`, `9` JSON outputs; push-disable, phase-freeze, and feet-air-time-mask checkpoints; fixed `fwd0.5`, `fwd1.0`, and stand; all `EVAL_OK`, NaN flags false, `reward/termination=-100` in all 18 mode cases, first done mostly around `51-55` steps, fall-dominated rather than contact-dominated or numerical |
 | 10M training | NOT VALIDATED | Blocked by fixed-forward weakness and stochastic collapse; requires alpha/entropy decision review, resource plan, and stop conditions |
 
 ## Completed Outcomes
@@ -256,6 +257,16 @@ Runtime artifacts are local and ignored. Do not commit `logs/`, `.venv/`,
   `reward/termination=-100` remained saturated for `fwd0.5`, `fwd1.0`, and
   stand. Stand did not improve; deterministic `stand_still=-140.0983`. This
   does not justify extending the variant to 250k, 5M, or 10M.
+- Recorded the eval-only termination/contact diagnostic sweep over the existing
+  100k push-disable, phase-freeze, and feet-air-time-mask checkpoints. The
+  sweep produced `9` JSON files under
+  `./logs/sac_eval_termination_diag_100k/`; all evals returned `EVAL_OK`, all
+  NaN flags were false, and all 18 variant/command/mode cases had
+  `reward/termination=-100`. First done happened early, mostly around `51-55`
+  steps. qpos/qvel NaN counts were always `0`, illegal contact appeared in
+  only one stochastic fwd1.0 case, and terminal states showed torso-up z
+  negative or near threshold with high torso angular velocity. This identifies
+  early torso fall/upright instability as the 100k blocker.
 
 ### Full Action Diagnostic Summary
 

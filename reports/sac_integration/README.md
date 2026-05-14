@@ -31,6 +31,7 @@ Required reports:
 - `21_push_disable_diagnostic.md`
 - `22_phase_freeze_diagnostic.md`
 - `23_feet_air_time_mask_diagnostic.md`
+- `24_termination_contact_diagnostics.md`
 
 Repo-root continuation handoff:
 

@@ -1,7 +1,45 @@
 # Smoke Results
 
-Status: updated on 2026-05-15 after the fresh env1024 R3 100k
-feet-air-time command-mask diagnostic.
+Status: updated on 2026-05-15 after the eval-only 100k
+termination/contact diagnostic sweep.
+
+## 2026-05-15 Eval-Only 100k Termination/Contact Diagnostic Sweep
+
+- Scope: eval-only sweep over existing 100k `push_disable`,
+  `phase_freeze`, and `feet_air_time_mask` checkpoints; no training, eval
+  rerun beyond the already completed sweep, preflight, code change, reward,
+  `action_scale`, Kp, PPO/RSL, or checkpoint schema change was made for this
+  report update.
+- Related code commit: `fe69d8d Add SAC termination eval diagnostics`.
+- Output directory: `./logs/sac_eval_termination_diag_100k/`.
+- JSON count: `9`.
+- Commands: `fwd0.5`, `fwd1.0`, and `stand`.
+- Modes: deterministic and stochastic.
+- All evals returned `EVAL_OK`.
+- All action/reward/obs NaN flags were false.
+- `reward/termination=-100` in all 18 variant/command/mode cases.
+- `no_done_count=0` everywhere.
+- First-done means are mostly around `51` to `55` steps.
+- qpos/qvel NaN counts are always `0`.
+- Illegal contact counts are `0` except
+  `feet_air_time_mask fwd1.0 stochastic`, which had
+  `contact_any=1` / `right_foot_left_foot=1` while fall count was `3`.
+- Terminal states consistently point to early torso fall/upright failure:
+  torso-up z is negative or near the fall threshold, root height is often
+  negative, and terminal torso angular velocity in XY is high.
+
+Conclusion:
+
+- The 100k gate failures are fall-dominated, not contact-dominated or
+  numerical.
+- Push-disable, zero-command phase-freeze, and feet-air-time command mask do
+  not meaningfully delay first termination.
+- Do not continue to 250k, 5M, or 10M from these results.
+- Next targeted work should be torso fall, orientation, base-stability, and
+  terminal-state diagnostics or controlled stabilization/curriculum design.
+
+See `reports/sac_integration/24_termination_contact_diagnostics.md` for the
+focused record.
 
 ## 2026-05-15 Fresh Env1024 R3 100k Feet-Air-Time Command-Mask Diagnostic
 
