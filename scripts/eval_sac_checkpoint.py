@@ -130,6 +130,17 @@ def _merged_config(payload_config: Any, env_name: str, impl: str) -> dict[str, A
   return config
 
 
+def _eval_env_overrides(config: Mapping[str, Any], impl: str) -> dict[str, Any]:
+  overrides: dict[str, Any] = {"impl": impl}
+  env_feet_slip_mode = config.get("env_feet_slip_mode")
+  if env_feet_slip_mode is not None:
+    overrides["feet_slip_mode"] = str(env_feet_slip_mode)
+  env_feet_slip_scale = config.get("env_feet_slip_scale")
+  if env_feet_slip_scale is not None:
+    overrides["reward_config.scales.feet_slip"] = float(env_feet_slip_scale)
+  return overrides
+
+
 def _obs_size(obs_size: Any, key: str) -> int:
   if isinstance(obs_size, Mapping):
     if key not in obs_size:
@@ -699,10 +710,11 @@ def evaluate_checkpoint(args: argparse.Namespace) -> dict[str, Any]:
     raise ValueError("--episode_length must be >= 1")
 
   env_cfg = registry.get_default_config(env_name)
+  env_overrides = _eval_env_overrides(config, impl)
   env = registry.load(
       env_name,
       config=env_cfg,
-      config_overrides={"impl": impl},
+      config_overrides=env_overrides,
   )
   env = wrapper.wrap_for_brax_training(
       env,
@@ -776,6 +788,7 @@ def evaluate_checkpoint(args: argparse.Namespace) -> dict[str, Any]:
         reward_component_keys=reward_component_keys,
         fixed_command=bool(args.fixed_command),
         command=command,
+        env_overrides=env_overrides,
     )
 
   if args.policy_mode == "both":
@@ -790,6 +803,7 @@ def evaluate_checkpoint(args: argparse.Namespace) -> dict[str, Any]:
         "policy_mode": "both",
         "fixed_command": bool(args.fixed_command),
         "command": command,
+        "env_overrides": env_overrides,
         "results": {
             "deterministic": run_policy_mode("deterministic", True),
             "stochastic": run_policy_mode("stochastic", False),
@@ -813,6 +827,7 @@ def _format_eval_result(
     reward_component_keys: tuple[str, ...],
     fixed_command: bool,
     command: list[float],
+    env_overrides: dict[str, Any],
 ) -> dict[str, Any]:
   eval_env_steps = int(args.num_eval_envs * episode_length)
   result = {
@@ -827,6 +842,7 @@ def _format_eval_result(
       "deterministic": bool(deterministic),
       "fixed_command": bool(fixed_command),
       "command": command,
+      "env_overrides": env_overrides,
       "eval_env_steps": eval_env_steps,
       "episode_reward_mean": _as_float(metrics["episode_reward_mean"]),
       "episode_reward_std": _as_float(metrics["episode_reward_std"]),
