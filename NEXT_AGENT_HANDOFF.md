@@ -18,8 +18,9 @@ domain randomization, or fine-tuning as part of the current validation phase.
 
 - Path: `/home/admin/projects/mujoco_playground/g1_sac_dev`
 - Branch: `sac-integration`
-- Latest recorded diagnostic state: fresh env1024 R3 100k `foot_velocity`
-  feet-slip diagnostic after `fixed_alpha=0.03` and `fixed_alpha=0.05` gates,
+- Latest recorded diagnostic state: fresh env1024 R3 100k
+  `feet_slip_scale=0` diagnostic plus eval override inheritance after the
+  `foot_velocity`, `fixed_alpha=0.03`, and `fixed_alpha=0.05` gates,
   fixed-command forward eval gate, fixed-command eval support, alpha sign audit,
   fixed-command 3M render helper smoke, deterministic 3M render helper smoke,
   bounded 1024-env 3M R3 run, high-parallel 512/1024/2048 capacity benchmark,
@@ -822,14 +823,25 @@ Both-mode eval diagnostic:
   The alternate feet-slip branch works, but fixed-command smoke remains weak:
   `fwd0.5` deterministic reward `-3.8426`, `fwd1.0` deterministic reward
   `-3.8702`, low `tracking_lin_vel`, and `termination=-100`.
+- Eval override inheritance is committed at
+  `442d297 Apply SAC eval env overrides from checkpoint`. Eval now applies
+  checkpoint overrides such as `env_feet_slip_scale` and
+  `env_feet_slip_mode`; check `env_overrides` before interpreting
+  reward-component diagnostics for ablation checkpoints.
+- Fresh env1024 R3 100k `--env_feet_slip_scale 0.0` has run and passed
+  runtime/checkpoint gates. Checkpoint:
+  `./logs/sac_lift_gpu_100k_env1024_r3_feet_slip_scale_0/sac_lift_step_99328.pkl`.
+  Inherited fixed-command eval confirms `reward/feet_slip=0.0` and NaN flags
+  false, but fixed-forward behavior remains weak: `fwd1.0` deterministic
+  reward `-3.4952`, `tracking_lin_vel=2.4967`, and `termination=-100`.
 
 ## Recommended Next Step
 
 1. Do read-only status checks.
 2. Read this file and `reports/sac_integration/09_phase_summary_and_risks.md`.
 3. Review `reports/sac_integration/19_alpha_entropy_and_fixed_eval_gate.md`.
-4. Plan the next short reward/prior gate, currently
-   `--env_feet_slip_scale 0.0`, before any longer run.
+4. Plan the next short reward/prior gate, currently default-off push-disable if
+   feasible, before any longer run.
 5. Do not draft or execute 10M automatically.
 
 Do not start long training automatically. Do not modify reward, action scale,
@@ -922,10 +934,13 @@ explicitly asked. The latest short gates show `fixed_alpha=0.03` and
 tracking; `0.05` also introduced a critic-loss watch item. Next recommended
 tracking; `0.05` also introduced a critic-loss watch item. The
 `foot_velocity` feet-slip gate also passed runtime/checkpoint checks but did
-not solve fixed-command smoke. Next recommended work is a short
-`--env_feet_slip_scale 0.0` gate; push-disable is the next reward/prior
-alternative, and `alpha_floor=0.03` is only a secondary diagnostic. Do not run
-fixed-alpha or foot-velocity 250k, 5M, or 10M from these results. A
+not solve fixed-command smoke. The `--env_feet_slip_scale 0.0` gate also
+passed and, after eval override inheritance in `442d297`, correctly reports
+`reward/feet_slip=0.0`; however `fwd1.0` still has low tracking and
+`termination=-100`. Next recommended work is default-off push-disable if
+feasible, with phase / `feet_air_time` prior ablation as the next design path;
+`alpha_floor=0.03` is only a secondary diagnostic. Do not run fixed-alpha,
+foot-velocity, or feet-slip-scale-zero 250k, 5M, or 10M from these results. A
 fixed-command `fwd1.0` render/video review is useful, and remaining command
 coverage for `[0,0.3,0]`, `[0,0,0.5]`, and `[0,0,0]` remains useful, but
 neither should justify 5M/10M without resolving forward tracking weakness and

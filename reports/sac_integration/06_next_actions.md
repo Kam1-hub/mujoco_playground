@@ -1,7 +1,7 @@
 # Next Actions
 
 Status: updated on 2026-05-15 after the fresh env1024 R3 100k
-`foot_velocity` feet-slip diagnostic.
+`feet_slip_scale=0` diagnostic and eval override inheritance fix.
 
 ## Immediate State
 
@@ -248,6 +248,17 @@ Status: updated on 2026-05-15 after the fresh env1024 R3 100k
   fixed-forward tracking. Small smoke showed `fwd0.5` deterministic reward
   `-3.8426`, `fwd1.0` deterministic reward `-3.8702`, low
   `tracking_lin_vel` (`8.2117` and `2.1329`), and `termination=-100`.
+- Eval override inheritance is committed at
+  `442d297 Apply SAC eval env overrides from checkpoint`; eval now applies
+  checkpoint overrides such as `env_feet_slip_scale` and
+  `env_feet_slip_mode`.
+- Fresh env1024 R3 100k with `--env_feet_slip_scale 0.0` passed runtime and
+  checkpoint gates. Checkpoint:
+  `./logs/sac_lift_gpu_100k_env1024_r3_feet_slip_scale_0/sac_lift_step_99328.pkl`.
+- Inherited fixed-command eval confirmed `reward/feet_slip=0.0` with
+  `EVAL_OK` and NaN flags false, but fixed-forward tracking is still weak:
+  `fwd1.0` deterministic reward `-3.4952`, `tracking_lin_vel=2.4967`, and
+  `termination=-100`.
 
 ## Current Recommendation
 
@@ -260,11 +271,13 @@ Status: updated on 2026-05-15 after the fresh env1024 R3 100k
   `fixed_alpha=0.03` and `fixed_alpha=0.05` both preserve alpha but remain too
   weak for 100k fixed-forward tracking, and `0.05` adds a critic-loss watch
   item. The `foot_velocity` feet-slip gate verified that branch but also
-  failed to improve the 100k fixed-forward smoke. Prefer a short
-  `--env_feet_slip_scale 0.0` gate next to remove the suspect penalty entirely;
-  use push-disable as the next targeted reward/prior ablation and
-  `alpha_floor=0.03` only as a secondary alpha/entropy diagnostic. Do not patch
-  alpha sign blindly; the sign audit found no direct Brax-style sign bug.
+  failed to improve the 100k fixed-forward smoke. The
+  `--env_feet_slip_scale 0.0` gate successfully removed the penalty in
+  inherited eval, but tracking and termination remained weak. Prefer a
+  default-off push-disable diagnostic next if feasible; otherwise design a
+  phase / `feet_air_time` prior ablation. Keep `alpha_floor=0.03` only as a
+  secondary alpha/entropy diagnostic. Do not patch alpha sign blindly; the sign
+  audit found no direct Brax-style sign bug.
 - A fixed-command `fwd1.0` render/video review is useful to inspect whether the
   policy is upright shuffling or producing partial locomotion, but it should
   not be used to justify 5M/10M by itself.
@@ -547,20 +560,19 @@ CPU, stop and report the CUDA/JAX blocker.
 ## Recommended Next Step
 
 The bounded 1024-env 3M R3 result, fixed-forward eval gate, two short
-fixed-alpha diagnostics, and the `foot_velocity` feet-slip gate have now been
-executed and recorded. Do not automatically run 5M or 10M. The next useful step
-is a targeted reward/prior ablation, with alpha-floor only as a secondary
-diagnostic:
+fixed-alpha diagnostics, the `foot_velocity` feet-slip gate, and the
+`feet_slip_scale=0` gate have now been executed and recorded. Do not
+automatically run 5M or 10M. The next useful step is a targeted reward/prior
+ablation, with alpha-floor only as a secondary diagnostic:
 
-1. Reward/prior path: run a short `--env_feet_slip_scale 0.0` gate first,
-   because `foot_velocity` mode reduced the suspect formulation risk but did
-   not improve `tracking_lin_vel` or remove `termination=-100` in the 100k
-   smokes.
+1. Reward/prior path: run a default-off push-disable diagnostic first if
+   feasible, because removing `feet_slip` improved score accounting but did not
+   improve `tracking_lin_vel` or remove `termination=-100` in the 100k smokes.
 2. Fixed-command path: inspect or render `fwd1.0` if visual evidence is needed,
    because deterministic `tracking_lin_vel` collapsed from `183.95` at
    `fwd0.5` to `25.94` at `fwd1.0`.
-3. Reward/prior follow-up: if feet-slip removal is still weak, design a
-   push-disable gate before touching broader reward terms.
+3. Reward/prior follow-up: if push-disable is still weak, design a phase /
+   `feet_air_time` prior ablation before touching broader reward terms.
 4. Entropy path: keep `alpha_floor=0.03` as a secondary diagnostic; do not keep
    increasing fixed alpha blindly.
 5. Training path: only after that review, decide whether a carefully gated

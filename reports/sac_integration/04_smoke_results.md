@@ -1,7 +1,80 @@
 # Smoke Results
 
 Status: updated on 2026-05-15 after the fresh env1024 R3 100k
-`foot_velocity` feet-slip diagnostic.
+`feet_slip_scale=0` diagnostic and eval override inheritance fix.
+
+## 2026-05-15 Fresh Env1024 R3 100k Feet-Slip Scale Zero Diagnostic
+
+- Scope: short reward/prior diagnostic using `--env_feet_slip_scale 0.0`;
+  no 250k, 5M, 10M, render, code, reward, `action_scale`, Kp, PPO/RSL, or
+  checkpoint schema change was made for this report update.
+- Related code commits:
+  - `51c91c8 Add SAC feet slip ablation controls`
+  - `442d297 Apply SAC eval env overrides from checkpoint`
+- Status: `TRAIN_OK`.
+- Checkpoint:
+  `./logs/sac_lift_gpu_100k_env1024_r3_feet_slip_scale_0/sac_lift_step_99328.pkl`
+- Checkpoint readiness: PASS.
+- Env steps: `99328`.
+- Gradient steps: `1312`.
+- Wall time: `73.8268s`.
+- SPS: `1345.4198`.
+- Actor loss: `-5.78947`.
+- Critic loss: `0.20850`.
+- Q / target Q: `4.95647 / 4.94161`.
+- Reward mean: `-0.12537`.
+- Done fraction: `0.01953125`.
+- Discount mean: `0.98046875`.
+- Alpha / log alpha / effective alpha:
+  `0.043785 / -3.12846 / 0.043785`.
+
+Actor drift summary:
+
+| Metric | Final |
+|---|---:|
+| actor policy mean abs mean | 0.14590 |
+| actor policy mean abs max | 1.29871 |
+| actor log_std mean/min/max | -0.14949 / -0.56515 / 0.07885 |
+| actor policy std mean | 0.86332 |
+| sampled action abs mean | 0.52383 |
+| deterministic action abs mean | 0.13972 |
+
+Eval caveat and corrected inherited smoke:
+
+- Initial eval before `442d297` did not inherit env overrides, so
+  `reward/feet_slip` appeared nonzero despite training with
+  `--env_feet_slip_scale 0.0`; treat that pre-override eval as superseded for
+  reward-component interpretation.
+- Inherited `fwd0.5` JSON:
+  `./logs/sac_eval_feet_slip_100k_smoke/eval_fwd0p5_seed0_both_4x200_scale0_inherited.json`
+- Inherited `fwd1.0` JSON:
+  `./logs/sac_eval_feet_slip_100k_smoke/eval_fwd1p0_seed0_both_4x200_scale0_inherited.json`
+- Both inherited eval outputs returned `EVAL_OK`, inherited
+  `reward_config.scales.feet_slip: 0.0`, reported `reward/feet_slip=0.0`,
+  and had no action/reward/obs NaN flags.
+
+Small fixed-command inherited smoke:
+
+| Command | Mode | Reward | tracking_lin_vel | termination | feet_slip |
+|---|---|---:|---:|---:|---:|
+| `[0.5,0,0]` | deterministic | -3.4454 | n/a | n/a | 0.0 |
+| `[0.5,0,0]` | stochastic | -5.6693 | n/a | n/a | 0.0 |
+| `[1.0,0,0]` | deterministic | -3.4952 | 2.4967 | -100 | 0.0 |
+| `[1.0,0,0]` | stochastic | -5.7831 | 3.0799 | -100 | 0.0 |
+
+Conclusion:
+
+- `--env_feet_slip_scale 0.0` successfully removes the feet-slip penalty in
+  inherited eval and improves score accounting.
+- Fixed-forward behavior is still weak: tracking is low and termination remains
+  high in the `[1.0,0,0]` smoke.
+- Feet slip is not the sole blocker.
+- Do not continue to 250k, 5M, or 10M from this result.
+- Next targeted gate should be default-off push-disable if feasible; otherwise
+  design a phase / `feet_air_time` prior ablation.
+
+See `reports/sac_integration/20_feet_slip_scale_zero_diagnostic.md` for the
+focused record.
 
 ## 2026-05-15 Fresh Env1024 R3 100k Foot-Velocity Feet-Slip Diagnostic
 
