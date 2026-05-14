@@ -101,6 +101,7 @@ def default_config() -> config_dict.ConfigDict:
       feet_slip_mode="body_velocity",
       zero_command_phase_freeze=False,
       feet_air_time_command_mask=False,
+      termination_diagnostics=False,
       lin_vel_x=[-1.0, 1.0],
       lin_vel_y=[-0.5, 0.5],
       ang_vel_yaw=[-1.0, 1.0],
@@ -338,6 +339,8 @@ class Joystick(g1_base.G1Env):
     for k in self._config.reward_config.scales.keys():
       metrics[f"reward/{k}"] = jp.zeros(())
     metrics["swing_peak"] = jp.zeros(())
+    if self._config.termination_diagnostics:
+      metrics.update(self._zero_termination_diagnostic_metrics())
 
     contact = jp.array([
         data.sensordata[self._mj_model.sensor_adr[sensorid]] > 0
@@ -426,28 +429,109 @@ class Joystick(g1_base.G1Env):
     for k, v in rewards.items():
       state.metrics[f"reward/{k}"] = v
     state.metrics["swing_peak"] = jp.mean(state.info["swing_peak"])
+    if self._config.termination_diagnostics:
+      state.metrics.update(
+          self._termination_diagnostic_metrics(data, state.info["command"], contact)
+      )
 
     done = done.astype(reward.dtype)
     state = state.replace(data=data, obs=obs, reward=reward, done=done)
     return state
 
-  def _get_termination(self, data: mjx.Data) -> jax.Array:
-    fall_termination = self.get_gravity(data, "torso")[-1] < 0.0
-    contact_termination = data.sensordata[
+  def _termination_info(self, data: mjx.Data) -> dict[str, jax.Array]:
+    torso_up_z = self.get_gravity(data, "torso")[-1]
+    right_foot_left_foot = data.sensordata[
         self._mj_model.sensor_adr[self._right_foot_left_foot_found_sensor]
     ] > 0
-    contact_termination |= data.sensordata[
+    left_foot_right_shin = data.sensordata[
         self._mj_model.sensor_adr[self._left_foot_right_shin_found_sensor]
     ] > 0
-    contact_termination |= data.sensordata[
+    right_foot_left_shin = data.sensordata[
         self._mj_model.sensor_adr[self._right_foot_left_shin_found_sensor]
     ] > 0
-    return (
-        fall_termination
-        | contact_termination
-        | jp.isnan(data.qpos).any()
-        | jp.isnan(data.qvel).any()
+    contact_termination = (
+        right_foot_left_foot | left_foot_right_shin | right_foot_left_shin
     )
+    return {
+        "fall_torso_up_z_lt_0": torso_up_z < 0.0,
+        "contact/right_foot_left_foot": right_foot_left_foot,
+        "contact/left_foot_right_shin": left_foot_right_shin,
+        "contact/right_foot_left_shin": right_foot_left_shin,
+        "contact_any": contact_termination,
+        "qpos_nan": jp.isnan(data.qpos).any(),
+        "qvel_nan": jp.isnan(data.qvel).any(),
+    }
+
+  def _get_termination(self, data: mjx.Data) -> jax.Array:
+    info = self._termination_info(data)
+    return (
+        info["fall_torso_up_z_lt_0"]
+        | info["contact_any"]
+        | info["qpos_nan"]
+        | info["qvel_nan"]
+    )
+
+  def _zero_termination_diagnostic_metrics(self) -> dict[str, jax.Array]:
+    return {
+        "termination/fall_torso_up_z_lt_0": jp.zeros(()),
+        "termination/contact/right_foot_left_foot": jp.zeros(()),
+        "termination/contact/left_foot_right_shin": jp.zeros(()),
+        "termination/contact/right_foot_left_shin": jp.zeros(()),
+        "termination/contact_any": jp.zeros(()),
+        "termination/qpos_nan": jp.zeros(()),
+        "termination/qvel_nan": jp.zeros(()),
+        "termination/torso_up_z": jp.zeros(()),
+        "termination/root_height": jp.zeros(()),
+        "termination/orientation_cost": jp.zeros(()),
+        "termination/torso_up_xy_norm": jp.zeros(()),
+        "termination/torso_ang_vel_xy_norm": jp.zeros(()),
+        "termination/command_x": jp.zeros(()),
+        "termination/command_y": jp.zeros(()),
+        "termination/command_yaw": jp.zeros(()),
+        "termination/pelvis_local_linvel_x": jp.zeros(()),
+        "termination/pelvis_local_linvel_y": jp.zeros(()),
+        "termination/pelvis_local_linvel_z": jp.zeros(()),
+        "termination/tracking_lin_vel_error": jp.zeros(()),
+        "termination/tracking_yaw_error": jp.zeros(()),
+        "termination/feet_floor_contact_left": jp.zeros(()),
+        "termination/feet_floor_contact_right": jp.zeros(()),
+    }
+
+  def _termination_diagnostic_metrics(
+      self, data: mjx.Data, command: jax.Array, feet_floor_contact: jax.Array
+  ) -> dict[str, jax.Array]:
+    info = self._termination_info(data)
+    torso_gravity = self.get_gravity(data, "torso")
+    pelvis_local_linvel = self.get_local_linvel(data, "pelvis")
+    pelvis_gyro = self.get_gyro(data, "pelvis")
+    torso_angvel = self.get_global_angvel(data, "torso")
+    lin_vel_error = jp.linalg.norm(command[:2] - pelvis_local_linvel[:2])
+    yaw_error = jp.abs(command[2] - pelvis_gyro[2])
+
+    metrics = {
+        "termination/torso_up_z": torso_gravity[-1],
+        "termination/root_height": data.qpos[2],
+        "termination/orientation_cost": self._cost_orientation(torso_gravity),
+        "termination/torso_up_xy_norm": jp.linalg.norm(torso_gravity[:2]),
+        "termination/torso_ang_vel_xy_norm": jp.linalg.norm(torso_angvel[:2]),
+        "termination/command_x": command[0],
+        "termination/command_y": command[1],
+        "termination/command_yaw": command[2],
+        "termination/pelvis_local_linvel_x": pelvis_local_linvel[0],
+        "termination/pelvis_local_linvel_y": pelvis_local_linvel[1],
+        "termination/pelvis_local_linvel_z": pelvis_local_linvel[2],
+        "termination/tracking_lin_vel_error": lin_vel_error,
+        "termination/tracking_yaw_error": yaw_error,
+        "termination/feet_floor_contact_left": feet_floor_contact[0].astype(
+            jp.float32
+        ),
+        "termination/feet_floor_contact_right": feet_floor_contact[1].astype(
+            jp.float32
+        ),
+    }
+    for key, value in info.items():
+      metrics[f"termination/{key}"] = value.astype(jp.float32)
+    return metrics
 
   def _get_obs(
       self, data: mjx.Data, info: dict[str, Any], contact: jax.Array

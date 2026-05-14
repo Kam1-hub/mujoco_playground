@@ -24,6 +24,62 @@ from learning.sac_lift import networks
 from learning.sac_lift import normalizer
 
 
+TERMINATION_REASON_METRICS: tuple[tuple[str, str], ...] = (
+    ("fall", "termination/fall_torso_up_z_lt_0"),
+    ("contact/right_foot_left_foot", "termination/contact/right_foot_left_foot"),
+    ("contact/left_foot_right_shin", "termination/contact/left_foot_right_shin"),
+    ("contact/right_foot_left_shin", "termination/contact/right_foot_left_shin"),
+    ("contact_any", "termination/contact_any"),
+    ("qpos_nan", "termination/qpos_nan"),
+    ("qvel_nan", "termination/qvel_nan"),
+)
+
+TERMINATION_CONDITIONS: tuple[str, ...] = (
+    "fall_torso_up_z_lt_0",
+    "contact/right_foot_left_foot",
+    "contact/left_foot_right_shin",
+    "contact/right_foot_left_shin",
+    "qpos_nan",
+    "qvel_nan",
+)
+
+TERMINATION_SCALAR_STATE_METRICS: tuple[tuple[str, str], ...] = (
+    ("torso_up_z", "termination/torso_up_z"),
+    ("root_height", "termination/root_height"),
+    ("orientation_cost", "termination/orientation_cost"),
+    ("torso_up_xy_norm", "termination/torso_up_xy_norm"),
+    ("torso_ang_vel_xy_norm", "termination/torso_ang_vel_xy_norm"),
+    ("tracking_lin_vel_error", "termination/tracking_lin_vel_error"),
+    ("tracking_yaw_error", "termination/tracking_yaw_error"),
+)
+
+TERMINATION_VECTOR_STATE_METRICS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    (
+        "command",
+        (
+            "termination/command_x",
+            "termination/command_y",
+            "termination/command_yaw",
+        ),
+    ),
+    (
+        "pelvis_local_linvel",
+        (
+            "termination/pelvis_local_linvel_x",
+            "termination/pelvis_local_linvel_y",
+            "termination/pelvis_local_linvel_z",
+        ),
+    ),
+    (
+        "feet_floor_contact",
+        (
+            "termination/feet_floor_contact_left",
+            "termination/feet_floor_contact_right",
+        ),
+    ),
+)
+
+
 def _str_to_bool(value: str | bool) -> bool:
   if isinstance(value, bool):
     return value
@@ -66,6 +122,11 @@ def _parse_args() -> argparse.Namespace:
       "--reward_components",
       action="store_true",
       help="Include per-component episode sums from state.metrics reward/* keys.",
+  )
+  parser.add_argument(
+      "--termination_diagnostics",
+      action="store_true",
+      help="Include first-done termination reason and terminal-state summaries.",
   )
   parser.add_argument(
       "--top_k_actions",
@@ -190,6 +251,126 @@ def _metric_to_env_vector(value: Any, reference: jax.Array) -> jax.Array:
     reduce_axes = tuple(range(reference.ndim, value.ndim))
     return jnp.mean(value, axis=reduce_axes)
   return jnp.broadcast_to(jnp.mean(value), reference.shape)
+
+
+def _metric_to_env_matrix(value: Any, reference: jax.Array, width: int) -> jax.Array:
+  value = jnp.asarray(value, dtype=jnp.float32)
+  target_shape = reference.shape + (width,)
+  if value.shape == target_shape:
+    return value
+  if value.shape == (width,):
+    return jnp.broadcast_to(value, target_shape)
+  if value.shape == reference.shape:
+    return jnp.broadcast_to(value[..., None], target_shape)
+  return jnp.broadcast_to(jnp.mean(value), target_shape)
+
+
+def _empty_termination_diag(
+    num_eval_envs: int, episode_length: int
+) -> dict[str, Any]:
+  scalar_template = {
+      name: {
+          "sum": jnp.asarray(0.0, dtype=jnp.float32),
+          "min": jnp.asarray(jnp.inf, dtype=jnp.float32),
+          "max": jnp.asarray(-jnp.inf, dtype=jnp.float32),
+      }
+      for name, _ in TERMINATION_SCALAR_STATE_METRICS
+  }
+  vector_template = {
+      name: {
+          "sum": jnp.zeros((len(metric_keys),), dtype=jnp.float32),
+          "min": jnp.full((len(metric_keys),), jnp.inf, dtype=jnp.float32),
+          "max": jnp.full((len(metric_keys),), -jnp.inf, dtype=jnp.float32),
+      }
+      for name, metric_keys in TERMINATION_VECTOR_STATE_METRICS
+  }
+  return {
+      "available": jnp.asarray(True),
+      "done_seen": jnp.zeros((num_eval_envs,), dtype=bool),
+      "first_done_step": jnp.full(
+          (num_eval_envs,), episode_length, dtype=jnp.int32
+      ),
+      "reason_counts": {
+          name: jnp.asarray(0.0, dtype=jnp.float32)
+          for name, _ in TERMINATION_REASON_METRICS
+      },
+      "terminal_count": jnp.asarray(0.0, dtype=jnp.float32),
+      "scalar_state": scalar_template,
+      "vector_state": vector_template,
+  }
+
+
+def _update_termination_diag(
+    termination_diag: dict[str, Any],
+    metrics: Mapping[str, Any],
+    new_done: jax.Array,
+    step_index: jax.Array,
+) -> dict[str, Any]:
+  new_done = jnp.asarray(new_done, dtype=bool)
+  new_done_f = new_done.astype(jnp.float32)
+  terminal_count = termination_diag["terminal_count"] + jnp.sum(new_done_f)
+  first_done_step = jnp.where(
+      new_done, step_index.astype(jnp.int32), termination_diag["first_done_step"]
+  )
+  done_seen = jnp.logical_or(termination_diag["done_seen"], new_done)
+
+  reason_counts = {}
+  for name, metric_key in TERMINATION_REASON_METRICS:
+    values = _metric_to_env_vector(metrics[metric_key], new_done_f)
+    reason_counts[name] = termination_diag["reason_counts"][name] + jnp.sum(
+        values * new_done_f
+    )
+
+  scalar_state = {}
+  for name, metric_key in TERMINATION_SCALAR_STATE_METRICS:
+    values = jnp.nan_to_num(_metric_to_env_vector(metrics[metric_key], new_done_f))
+    scalar_state[name] = {
+        "sum": termination_diag["scalar_state"][name]["sum"]
+        + jnp.sum(values * new_done_f),
+        "min": jnp.minimum(
+            termination_diag["scalar_state"][name]["min"],
+            jnp.min(jnp.where(new_done, values, jnp.inf)),
+        ),
+        "max": jnp.maximum(
+            termination_diag["scalar_state"][name]["max"],
+            jnp.max(jnp.where(new_done, values, -jnp.inf)),
+        ),
+    }
+
+  vector_state = {}
+  vector_mask = new_done_f[..., None]
+  for name, metric_keys in TERMINATION_VECTOR_STATE_METRICS:
+    values = jnp.nan_to_num(
+        jnp.stack(
+            [
+                _metric_to_env_vector(metrics[metric_key], new_done_f)
+                for metric_key in metric_keys
+            ],
+            axis=-1,
+        )
+    )
+    vector_state[name] = {
+        "sum": termination_diag["vector_state"][name]["sum"]
+        + jnp.sum(values * vector_mask, axis=0),
+        "min": jnp.minimum(
+            termination_diag["vector_state"][name]["min"],
+            jnp.min(jnp.where(vector_mask.astype(bool), values, jnp.inf), axis=0),
+        ),
+        "max": jnp.maximum(
+            termination_diag["vector_state"][name]["max"],
+            jnp.max(jnp.where(vector_mask.astype(bool), values, -jnp.inf), axis=0),
+        ),
+    }
+
+  return {
+      **termination_diag,
+      "done_seen": done_seen,
+      "first_done_step": first_done_step,
+      "reason_counts": reason_counts,
+      "terminal_count": terminal_count,
+      "scalar_state": scalar_state,
+      "vector_state": vector_state,
+  }
 
 
 def _broadcast_command(command: jax.Array, target: jax.Array) -> jax.Array:
@@ -511,6 +692,72 @@ def _format_reward_components(
   }
 
 
+def _format_termination_diagnostics(
+    stats: dict[str, Any], episode_length: int
+) -> dict[str, Any]:
+  if not stats:
+    return {"available": False}
+
+  done_seen = jax.device_get(stats["done_seen"]).reshape(-1)
+  first_done = jax.device_get(stats["first_done_step"]).reshape(-1)
+  terminal_count = int(round(_as_float(stats["terminal_count"])))
+  no_done_count = int(done_seen.size - int(done_seen.sum()))
+  by_env = [int(value) for value in first_done.tolist()]
+  done_steps = [by_env[index] for index, seen in enumerate(done_seen.tolist()) if seen]
+  if done_steps:
+    first_done_summary = {
+        "by_env": by_env,
+        "mean": float(sum(done_steps) / len(done_steps)),
+        "min": int(min(done_steps)),
+        "max": int(max(done_steps)),
+        "no_done_count": no_done_count,
+    }
+  else:
+    first_done_summary = {
+        "by_env": by_env,
+        "mean": None,
+        "min": None,
+        "max": None,
+        "no_done_count": no_done_count,
+    }
+
+  reason_counts = {
+      name: int(round(_as_float(stats["reason_counts"][name])))
+      for name, _ in TERMINATION_REASON_METRICS
+  }
+  reason_counts["fall"] = reason_counts["fall"]
+  reason_counts["contact_any"] = reason_counts["contact_any"]
+  reason_counts["qpos_nan"] = reason_counts["qpos_nan"]
+  reason_counts["qvel_nan"] = reason_counts["qvel_nan"]
+
+  terminal_state: dict[str, Any] = {"count": terminal_count}
+  if terminal_count > 0:
+    count = float(max(terminal_count, 1))
+    for name, _ in TERMINATION_SCALAR_STATE_METRICS:
+      value = stats["scalar_state"][name]
+      terminal_state[name] = {
+          "mean": _as_float(value["sum"]) / count,
+          "min": _as_float(value["min"]),
+          "max": _as_float(value["max"]),
+      }
+    for name, _ in TERMINATION_VECTOR_STATE_METRICS:
+      value = stats["vector_state"][name]
+      terminal_state[name] = {
+          "mean": [item / count for item in _as_float_list(value["sum"])],
+          "min": _as_float_list(value["min"]),
+          "max": _as_float_list(value["max"]),
+      }
+
+  return {
+      "available": _as_bool(stats["available"]),
+      "termination_conditions": list(TERMINATION_CONDITIONS),
+      "episode_length": int(episode_length),
+      "first_done_step": first_done_summary,
+      "reason_counts": reason_counts,
+      "terminal_state": terminal_state,
+  }
+
+
 def _run_eval(
     env: Any,
     sac_networks: networks.SACNetworks,
@@ -524,6 +771,7 @@ def _run_eval(
     deterministic: bool,
     action_diagnostics: bool,
     component_keys: tuple[str, ...],
+    termination_diagnostics: bool,
     fixed_command: jax.Array | None,
 ) -> dict[str, Any]:
   reset_key, rollout_key = jax.random.split(rng)
@@ -534,7 +782,9 @@ def _run_eval(
   truncation_present = isinstance(state.info, Mapping) and "truncation" in state.info
   action_size = int(env.action_size)
 
-  def step_fn(carry: tuple[Any, ...], _: Any) -> tuple[tuple[Any, ...], Any]:
+  def step_fn(
+      carry: tuple[Any, ...], step_index: jax.Array
+  ) -> tuple[tuple[Any, ...], Any]:
     (
         current_state,
         total_reward,
@@ -550,6 +800,7 @@ def _run_eval(
         action_saturation_sum,
         action_diag,
         component_sums,
+        termination_diag,
         current_key,
     ) = carry
     policy_obs = evaluator.select_obs(current_state.obs, policy_obs_key)
@@ -586,6 +837,7 @@ def _run_eval(
       next_state = _set_state_command(next_state, fixed_command)
     reward_nan = jnp.logical_or(reward_nan, jnp.any(jnp.isnan(next_state.reward)))
     active = 1.0 - done_any
+    new_done = jnp.logical_and(next_state.done > 0.0, done_any <= 0.0)
     total_reward = total_reward + next_state.reward * active
     if component_keys:
       component_values = jnp.stack(
@@ -596,6 +848,10 @@ def _run_eval(
           axis=0,
       )
       component_sums = component_sums + component_values * active[None, :]
+    if termination_diagnostics:
+      termination_diag = _update_termination_diag(
+          termination_diag, next_state.metrics, new_done, step_index + 1
+      )
     done_any = jnp.maximum(done_any, next_state.done)
     if truncation_present:
       truncation_sum = truncation_sum + jnp.sum(
@@ -616,6 +872,7 @@ def _run_eval(
         action_saturation_sum,
         action_diag,
         component_sums,
+        termination_diag,
         current_key,
     ), None
 
@@ -624,6 +881,11 @@ def _run_eval(
   action_diag = _empty_action_diag(action_size)
   component_sums = jnp.zeros(
       (len(component_keys),) + rewards.shape, dtype=jnp.float32
+  )
+  termination_diag = (
+      _empty_termination_diag(num_eval_envs, episode_length)
+      if termination_diagnostics
+      else {}
   )
   initial = (
       state,
@@ -640,6 +902,7 @@ def _run_eval(
       jnp.asarray(0.0, dtype=jnp.float32),
       action_diag,
       component_sums,
+      termination_diag,
       rollout_key,
   )
   (
@@ -657,8 +920,11 @@ def _run_eval(
       action_saturation_sum,
       action_diag,
       component_sums,
+      termination_diag,
       _,
-  ), _ = jax.lax.scan(step_fn, initial, None, length=episode_length)
+  ), _ = jax.lax.scan(
+      step_fn, initial, jnp.arange(episode_length, dtype=jnp.int32)
+  )
 
   eval_env_steps = num_eval_envs * episode_length
   action_log_prob_count = jnp.maximum(action_log_prob_count, 1.0)
@@ -689,6 +955,8 @@ def _run_eval(
         "episode_sum_min": jnp.min(component_sums, axis=1),
         "episode_sum_max": jnp.max(component_sums, axis=1),
     }
+  if termination_diagnostics:
+    result["termination_diagnostics"] = termination_diag
   return result
 
 
@@ -724,6 +992,8 @@ def evaluate_checkpoint(args: argparse.Namespace) -> dict[str, Any]:
 
   env_cfg = registry.get_default_config(env_name)
   env_overrides = _eval_env_overrides(config, impl)
+  if args.termination_diagnostics:
+    env_overrides["termination_diagnostics"] = True
   env = registry.load(
       env_name,
       config=env_cfg,
@@ -780,6 +1050,7 @@ def evaluate_checkpoint(args: argparse.Namespace) -> dict[str, Any]:
             deterministic,
             bool(args.action_diagnostics),
             reward_component_keys,
+            bool(args.termination_diagnostics),
             jnp.asarray(command, dtype=jnp.float32) if args.fixed_command else None,
         )
     )
@@ -884,6 +1155,10 @@ def _format_eval_result(
   if args.reward_components:
     result["reward_components"] = _format_reward_components(
         metrics.get("reward_components", {}), reward_component_keys
+    )
+  if args.termination_diagnostics:
+    result["termination_diagnostics"] = _format_termination_diagnostics(
+        metrics.get("termination_diagnostics", {}), episode_length
     )
   return result
 
