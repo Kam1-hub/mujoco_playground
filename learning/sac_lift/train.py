@@ -166,6 +166,17 @@ def train(config: Any) -> dict[str, Any]:
   env_overrides = {}
   if config.get("impl", None):
     env_overrides["impl"] = config.impl
+  env_feet_slip_mode = config.get("env_feet_slip_mode", None)
+  if env_feet_slip_mode is not None:
+    if env_feet_slip_mode not in sac_config.FEET_SLIP_MODES:
+      raise ValueError(
+          "env_feet_slip_mode must be one of "
+          f"{sac_config.FEET_SLIP_MODES}, got {env_feet_slip_mode!r}."
+      )
+    env_overrides["feet_slip_mode"] = env_feet_slip_mode
+  env_feet_slip_scale = config.get("env_feet_slip_scale", None)
+  if env_feet_slip_scale is not None:
+    env_overrides["reward_config.scales.feet_slip"] = float(env_feet_slip_scale)
   env = registry.load(
       config.env_name,
       config=env_cfg,

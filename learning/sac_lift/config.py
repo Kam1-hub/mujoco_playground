@@ -13,6 +13,9 @@ DEFAULT_ACTOR_MEAN_L2_COEF = 0.0
 DEFAULT_FIXED_ALPHA = 0.0
 DEFAULT_ALPHA_FLOOR = 0.0
 DEFAULT_ALPHA_LOSS_TYPE = "exp_alpha"
+DEFAULT_ENV_FEET_SLIP_MODE = None
+DEFAULT_ENV_FEET_SLIP_SCALE = None
+FEET_SLIP_MODES = ("body_velocity", "foot_velocity")
 ALPHA_LOSS_TYPE_IDS = {
     "exp_alpha": 0,
     "log_alpha": 1,

@@ -98,6 +98,7 @@ def default_config() -> config_dict.ConfigDict:
           # Probability of not zeroing out new command.
           b=[0.9, 0.25, 0.5],
       ),
+      feet_slip_mode="body_velocity",
       lin_vel_x=[-1.0, 1.0],
       lin_vel_y=[-0.5, 0.5],
       ang_vel_yaw=[-1.0, 1.0],
@@ -222,6 +223,11 @@ class Joystick(g1_base.G1Env):
 
     self._cmd_a = jp.array(self._config.command_config.a)
     self._cmd_b = jp.array(self._config.command_config.b)
+    if self._config.feet_slip_mode not in ("body_velocity", "foot_velocity"):
+      raise ValueError(
+          "feet_slip_mode must be 'body_velocity' or 'foot_velocity', got "
+          f"{self._config.feet_slip_mode!r}."
+      )
 
     self._left_hand_geom_id = self._mj_model.geom("left_hand_collision").id
     self._right_hand_geom_id = self._mj_model.geom("right_hand_collision").id
@@ -736,6 +742,10 @@ class Joystick(g1_base.G1Env):
       self, data: mjx.Data, contact: jax.Array, info: dict[str, Any]
   ) -> jax.Array:
     del info  # Unused.
+    if self._config.feet_slip_mode == "foot_velocity":
+      feet_vel = data.sensordata[self._foot_linvel_sensor_adr]
+      vel_xy = feet_vel[..., :2]
+      return jp.sum(jp.linalg.norm(vel_xy, axis=-1) * contact)
     body_vel = self.get_global_linvel(data, "pelvis")[:2]
     reward = jp.sum(jp.linalg.norm(body_vel, axis=-1) * contact)
     return reward

@@ -71,6 +71,8 @@ def lift_sac_config(
       fixed_alpha=0.0,
       alpha_floor=0.0,
       alpha_loss_type="exp_alpha",
+      env_feet_slip_mode=None,
+      env_feet_slip_scale=None,
       normalize_observations=True,
       deterministic_eval=True,
       num_envs=128,

@@ -66,6 +66,24 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
       choices=tuple(sac_config.ALPHA_LOSS_TYPE_IDS),
       default=None,
   )
+  parser.add_argument(
+      "--env_feet_slip_mode",
+      choices=sac_config.FEET_SLIP_MODES,
+      default=None,
+      help=(
+          "Optional G1 env feet_slip implementation override. Defaults to the "
+          "env behavior when unset."
+      ),
+  )
+  parser.add_argument(
+      "--env_feet_slip_scale",
+      type=float,
+      default=None,
+      help=(
+          "Optional override for reward_config.scales.feet_slip. Leave unset "
+          "to preserve the env default."
+      ),
+  )
   parser.add_argument("--normalize_observations", type=_str_to_bool, default=None)
   parser.add_argument("--deterministic_eval", type=_str_to_bool, default=None)
   parser.add_argument("--logdir", default=None)
@@ -99,6 +117,10 @@ def _build_config(args: argparse.Namespace):
     config.alpha_floor = sac_config.DEFAULT_ALPHA_FLOOR
   if "alpha_loss_type" not in config:
     config.alpha_loss_type = sac_config.DEFAULT_ALPHA_LOSS_TYPE
+  if "env_feet_slip_mode" not in config:
+    config.env_feet_slip_mode = sac_config.DEFAULT_ENV_FEET_SLIP_MODE
+  if "env_feet_slip_scale" not in config:
+    config.env_feet_slip_scale = sac_config.DEFAULT_ENV_FEET_SLIP_SCALE
   for name in (
       "seed",
       "impl",
@@ -124,6 +146,8 @@ def _build_config(args: argparse.Namespace):
       "fixed_alpha",
       "alpha_floor",
       "alpha_loss_type",
+      "env_feet_slip_mode",
+      "env_feet_slip_scale",
       "normalize_observations",
       "deterministic_eval",
       "logdir",
