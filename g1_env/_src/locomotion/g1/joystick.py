@@ -102,6 +102,8 @@ def default_config() -> config_dict.ConfigDict:
       zero_command_phase_freeze=False,
       feet_air_time_command_mask=False,
       termination_diagnostics=False,
+      reset_joint_noise_scale=1.0,
+      reset_root_qvel_scale=1.0,
       lin_vel_x=[-1.0, 1.0],
       lin_vel_y=[-0.5, 0.5],
       ang_vel_yaw=[-1.0, 1.0],
@@ -275,16 +277,20 @@ class Joystick(g1_base.G1Env):
     new_quat = math.quat_mul(qpos[3:7], quat)
     qpos = qpos.at[3:7].set(new_quat)
 
-    # qpos[7:]=*U(0.5, 1.5)
+    # qpos[7:]*=(1 + scale * U(-0.5, 0.5)); scale=1 preserves U(0.5, 1.5).
     rng, key = jax.random.split(rng)
+    joint_multiplier = 1.0 + self._config.reset_joint_noise_scale * (
+        jax.random.uniform(key, (29,), minval=-0.5, maxval=0.5)
+    )
     qpos = qpos.at[7:].set(
-        qpos[7:] * jax.random.uniform(key, (29,), minval=0.5, maxval=1.5)
+        qpos[7:] * joint_multiplier
     )
 
-    # d(xyzrpy)=U(-0.5, 0.5)
+    # d(xyzrpy)=scale * U(-0.5, 0.5); scale=1 preserves prior behavior.
     rng, key = jax.random.split(rng)
     qvel = qvel.at[0:6].set(
-        jax.random.uniform(key, (6,), minval=-0.5, maxval=0.5)
+        self._config.reset_root_qvel_scale
+        * jax.random.uniform(key, (6,), minval=-0.5, maxval=0.5)
     )
 
     data = mjx_env.make_data(

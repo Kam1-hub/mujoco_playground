@@ -223,6 +223,12 @@ def _render_env_overrides(config: Mapping[str, Any], impl: str) -> dict[str, Any
     overrides["feet_air_time_command_mask"] = _str_to_bool(
         env_feet_air_time_command_mask
     )
+  env_reset_joint_noise_scale = config.get("env_reset_joint_noise_scale")
+  if env_reset_joint_noise_scale is not None:
+    overrides["reset_joint_noise_scale"] = float(env_reset_joint_noise_scale)
+  env_reset_root_qvel_scale = config.get("env_reset_root_qvel_scale")
+  if env_reset_root_qvel_scale is not None:
+    overrides["reset_root_qvel_scale"] = float(env_reset_root_qvel_scale)
   return overrides
 
 

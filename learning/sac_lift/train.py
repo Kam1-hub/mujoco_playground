@@ -192,6 +192,14 @@ def train(config: Any) -> dict[str, Any]:
     env_overrides["feet_air_time_command_mask"] = bool(
         env_feet_air_time_command_mask
     )
+  env_reset_joint_noise_scale = config.get("env_reset_joint_noise_scale", None)
+  if env_reset_joint_noise_scale is not None:
+    env_overrides["reset_joint_noise_scale"] = float(
+        env_reset_joint_noise_scale
+    )
+  env_reset_root_qvel_scale = config.get("env_reset_root_qvel_scale", None)
+  if env_reset_root_qvel_scale is not None:
+    env_overrides["reset_root_qvel_scale"] = float(env_reset_root_qvel_scale)
   env = registry.load(
       config.env_name,
       config=env_cfg,
